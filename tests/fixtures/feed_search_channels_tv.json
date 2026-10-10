@@ -1,0 +1,118 @@
+{
+  "responseContext": {
+    "visitorData": "CgsI0u2ZyQYQ9JWnAQ%3D%3D"
+  },
+  "contents": {
+    "twoColumnSearchResultsRenderer": {
+      "primaryContents": {
+        "sectionListRenderer": {
+          "contents": [
+            {
+              "itemSectionRenderer": {
+                "contents": [
+                  {
+                    "lockupViewModel": {
+                      "contentImage": {
+                        "thumbnailViewModel": {
+                          "image": {
+                            "sources": [
+                              { "url": "https://i.ytimg.com/vi/TVVID000001/hqdefault.jpg", "width": 480, "height": 360 }
+                            ]
+                          },
+                          "overlays": [
+                            {
+                              "thumbnailBottomOverlayViewModel": {
+                                "badges": [
+                                  {
+                                    "thumbnailBadgeViewModel": {
+                                      "text": "9:41",
+                                      "badgeStyle": "THUMBNAIL_OVERLAY_BADGE_STYLE_DEFAULT"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "metadata": {
+                        "lockupMetadataViewModel": {
+                          "title": { "content": "TV Video Eins" },
+                          "metadata": {
+                            "contentMetadataViewModel": {
+                              "metadataRows": [
+                                {
+                                  "metadataParts": [
+                                    { "text": { "content": "Alpha Kanal" } }
+                                  ]
+                                },
+                                {
+                                  "metadataParts": [
+                                    { "text": { "content": "1.2M views" } },
+                                    { "text": { "content": "3 days ago" } }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "contentId": "TVVID000001",
+                      "contentType": "LOCKUP_CONTENT_TYPE_VIDEO"
+                    }
+                  },
+                  {
+                    "lockupViewModel": {
+                      "contentImage": {
+                        "thumbnailViewModel": {
+                          "image": {
+                            "sources": [
+                              {
+                                "url": "//yt3.ggpht.com/w3mTlQRg=s88-c-k-c0x00ffffff-no-rj-mo",
+                                "width": 88,
+                                "height": 88
+                              },
+                              {
+                                "url": "//yt3.ggpht.com/w3mTlQRg=s176-c-k-c0x00ffffff-no-rj-mo",
+                                "width": 176,
+                                "height": 176
+                              }
+                            ]
+                          },
+                          "styling": { "isCircular": true }
+                        }
+                      },
+                      "metadata": {
+                        "lockupMetadataViewModel": {
+                          "title": { "content": "MODDED WARFARE" },
+                          "metadata": {
+                            "contentMetadataViewModel": {
+                              "metadataRows": [
+                                {
+                                  "metadataParts": [
+                                    { "text": { "content": "@MODDEDWARFARE" } }
+                                  ]
+                                },
+                                {
+                                  "metadataParts": [
+                                    { "text": { "content": "565K subscribers" } }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "contentId": "UCm9COMxXKm05BQWNv-IpyPg",
+                      "contentType": "LOCKUP_CONTENT_TYPE_CHANNEL"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

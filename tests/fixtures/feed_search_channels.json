@@ -1,0 +1,125 @@
+{
+  "responseContext": {
+    "visitorData": "CgsI0u2ZyQYQ9JWnAQ%3D%3D"
+  },
+  "contents": {
+    "twoColumnSearchResultsRenderer": {
+      "primaryContents": {
+        "sectionListRenderer": {
+          "contents": [
+            {
+              "itemSectionRenderer": {
+                "contents": [
+                  {
+                    "videoRenderer": {
+                      "videoId": "SEARCH-VID-01",
+                      "title": { "runs": [{ "text": "Kanalvideo Eins" }] },
+                      "ownerText": { "runs": [{ "text": "Alpha Kanal" }] },
+                      "lengthText": { "simpleText": "5:00" },
+                      "thumbnail": {
+                        "thumbnails": [
+                          { "url": "https://i.ytimg.com/vi/SEARCH-VID-01/hqdefault.jpg", "width": 480, "height": 360 }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "channelRenderer": {
+                      "channelId": "UCaaaaaaaaaaaaaaaaaaaaaa",
+                      "title": { "simpleText": "Alpha Kanal" },
+                      "videoCountText": { "simpleText": "1.2M subscribers" },
+                      "thumbnail": {
+                        "thumbnails": [
+                          { "url": "https://yt3.ggpht.com/alpha-sm.jpg", "width": 88, "height": 88 },
+                          { "url": "https://yt3.ggpht.com/alpha-hq.jpg", "width": 176, "height": 176 }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "videoRenderer": {
+                      "videoId": "SEARCH-VID-02",
+                      "title": { "simpleText": "Kanalvideo Zwei" },
+                      "ownerText": { "runs": [{ "text": "Beta Kanal" }] },
+                      "lengthText": { "simpleText": "12:34" },
+                      "thumbnail": {
+                        "thumbnails": [
+                          { "url": "https://i.ytimg.com/vi/SEARCH-VID-02/hqdefault.jpg", "width": 480, "height": 360 }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "channelRenderer": {
+                      "channelId": "UCbbbbbbbbbbbbbbbbbbbbbb",
+                      "title": { "runs": [{ "text": "Beta Kanal" }] },
+                      "subscriberCountText": { "simpleText": "45K subscribers" },
+                      "thumbnail": {
+                        "thumbnails": [
+                          { "url": "https://yt3.ggpht.com/beta.jpg", "width": 176, "height": 176 }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "channelRenderer": {
+                      "channelId": "UCcccccccccccccccccccccc",
+                      "title": { "simpleText": "Gamma Kanal" },
+                      "subscriberCountText": { "runs": [{ "text": "999 subscribers" }] },
+                      "thumbnail": {
+                        "thumbnails": [
+                          { "url": "https://yt3.ggpht.com/gamma.jpg", "width": 176, "height": 176 }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "channelRenderer": {
+                      "channelId": "UCaaaaaaaaaaaaaaaaaaaaaa",
+                      "title": { "simpleText": "Alpha Kanal (Wiederholung)" },
+                      "videoCountText": { "simpleText": "1.2M subscribers" },
+                      "thumbnail": {
+                        "thumbnails": [
+                          { "url": "https://yt3.ggpht.com/alpha-dup.jpg", "width": 176, "height": 176 }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "adSlotRenderer": {
+                      "adSlotMetadata": { "slotId": "search.adSlot0" },
+                      "fulfillmentContent": {
+                        "fulfilledLayoutContent": {
+                          "playerAdRenderer": {
+                            "adVideoId": "AD-VIDEO-SEARCH",
+                            "videoId": "AD-VIDEO-SEARCH",
+                            "title": { "simpleText": "Werbung, die nie erscheint" },
+                            "lengthText": { "simpleText": "0:20" }
+                          }
+                        }
+                      },
+                      "trackingParams": {
+                        "channelRenderer": {
+                          "channelId": "UCadadadadadadadadadadad",
+                          "title": { "simpleText": "Werbung Kanal" },
+                          "videoCountText": { "simpleText": "0 subscribers" }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "continuationItemRenderer": {
+                "continuationEndpoint": {
+                  "continuationCommand": { "token": "CBQSCHNlYXJjaC1jaGFubmVscy0x" }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

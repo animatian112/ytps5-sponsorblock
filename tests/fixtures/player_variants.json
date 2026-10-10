@@ -1,0 +1,64 @@
+{
+  "contents": {
+    "sectionListRenderer": {
+      "contents": [
+        {
+          "itemSectionRenderer": {
+            "contents": [
+              {
+                "channelRenderer": {
+                  "channelId": "UCproto0000000000000000",
+                  "title": { "simpleText": "Proto Kanal" },
+                  "videoCountText": { "simpleText": "3 subscribers" },
+                  "thumbnail": {
+                    "thumbnails": [
+                      { "url": "//yt3.ggpht.com/proto-small.jpg", "width": 88, "height": 88 },
+                      { "url": "//yt3.ggpht.com/proto-hq.jpg", "width": 176, "height": 176 }
+                    ]
+                  }
+                }
+              },
+              {
+                "videoRenderer": {
+                  "videoId": "PROTO-VID-01",
+                  "title": { "simpleText": "Protokollvideo" },
+                  "ownerText": { "runs": [{ "text": "Proto Kanal" }] },
+                  "thumbnail": {
+                    "thumbnails": [
+                      {
+                        "url": "//i.ytimg.com/vi/PROTO-VID-01/hqdefault.jpg",
+                        "width": 480,
+                        "height": 360
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "lockupViewModel": {
+                  "contentId": "PROTO-LOCK1",
+                  "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+                  "metadata": {
+                    "lockupMetadataViewModel": { "title": { "content": "Lockup Video" } }
+                  },
+                  "contentImage": {
+                    "thumbnailViewModel": {
+                      "image": {
+                        "sources": [
+                          {
+                            "url": "//i.ytimg.com/vi/PROTO-LOCK1/hqdefault.jpg",
+                            "width": 480
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

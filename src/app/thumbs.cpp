@@ -1,0 +1,257 @@
+// youtube-tv - Thumbnail cache: two download workers, frame-side upload.
+// Copyright (C) 2026 BlackBearReloaded
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include "app/thumbs.hpp"
+
+#include "gfx/gl_batch.hpp"
+#include "yt/http.hpp"
+#include "yt/image.hpp"
+
+#include <pthread.h>
+
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+
+namespace hui::app
+{
+namespace
+{
+
+constexpr std::size_t kWorkerStack = 1u << 20; // 1 MiB, like every worker
+constexpr int kWorkers = 2;
+// A thumbnail is small; refuse anything that looks like a video.
+constexpr std::size_t kMaxBytes = 2u << 20;
+
+bool spawn(pthread_t *thread, void *(*entry)(void *), void *argument)
+{
+    pthread_attr_t attributes;
+    if (pthread_attr_init(&attributes) != 0)
+        return false;
+    pthread_attr_setstacksize(&attributes, kWorkerStack);
+    const int created = pthread_create(thread, &attributes, entry, argument);
+    pthread_attr_destroy(&attributes);
+    return created == 0;
+}
+
+struct Entry
+{
+    std::uint32_t texture = 0;
+    std::uint64_t last_used = 0;
+    bool failed = false;
+};
+
+} // namespace
+
+struct ThumbCache::Impl
+{
+    gfx::GlBatch &batch;
+    Destroy destroy;
+    std::size_t capacity;
+
+    // ---- frame side ----
+    std::unordered_map<std::string, Entry> entries;
+    // Queue of keys waiting for a download slot, and the ones in flight.
+    std::deque<std::string> pending;
+    std::unordered_map<std::string, bool> in_flight;
+    std::uint64_t clock = 0;
+    // A decoded image the workers produced; uploaded by pump().
+    struct Ready
+    {
+        std::string key;
+        int width = 0;
+        int height = 0;
+        std::vector<std::uint8_t> rgba;
+        bool failed = false;
+    };
+    std::vector<Ready> ready;
+
+    // ---- worker side ----
+    mutable std::mutex mutex;
+    std::condition_variable wake;
+    bool quit = false;
+    std::deque<std::string> work;
+    pthread_t threads[kWorkers] = {};
+
+    Impl(gfx::GlBatch &batch_, Destroy destroy_, std::size_t capacity_)
+        : batch(batch_), destroy(destroy_), capacity(capacity_)
+    {
+    }
+
+    void worker_loop()
+    {
+        for (;;)
+        {
+            std::string key;
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                wake.wait(lock, [this] { return quit || !work.empty(); });
+                if (quit)
+                    return;
+                key = std::move(work.front());
+                work.pop_front();
+            }
+
+            Ready result;
+            result.key = key;
+            yt::http::Request request;
+            request.url = key;
+            request.timeout_s = 15;
+            request.max_bytes = kMaxBytes;
+            const yt::http::Response response = yt::http::perform(request);
+            std::string error;
+            if (response.ok() && response.status == 200 &&
+                yt::decode_image(response.body, &result.width, &result.height, &result.rgba,
+                                 &error))
+            {
+                const std::size_t cap = static_cast<std::size_t>(kMaxBytes);
+                if (result.width <= 0 || result.height <= 0 ||
+                    static_cast<std::size_t>(result.width) * result.height > cap)
+                {
+                    result.rgba.clear();
+                    result.failed = true;
+                }
+            }
+            else
+            {
+                result.failed = true;
+            }
+
+            std::lock_guard<std::mutex> lock(mutex);
+            ready.push_back(std::move(result));
+        }
+    }
+
+    static void *worker_entry(void *argument)
+    {
+        static_cast<Impl *>(argument)->worker_loop();
+        return nullptr;
+    }
+
+    void evict_if_needed()
+    {
+        while (entries.size() > capacity)
+        {
+            auto victim = entries.begin();
+            for (auto it = entries.begin(); it != entries.end(); ++it)
+            {
+                if (it->second.last_used < victim->second.last_used)
+                    victim = it;
+            }
+            if (victim->second.texture != 0 && destroy != nullptr)
+                destroy(victim->second.texture);
+            entries.erase(victim);
+        }
+    }
+};
+
+ThumbCache::ThumbCache(gfx::GlBatch &batch, Destroy destroy, std::size_t capacity)
+    : impl_(std::make_unique<Impl>(batch, destroy, capacity))
+{
+    for (pthread_t &thread : impl_->threads)
+    {
+        if (!spawn(&thread, &Impl::worker_entry, impl_.get()))
+            thread = 0;
+    }
+}
+
+ThumbCache::~ThumbCache()
+{
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->quit = true;
+    }
+    impl_->wake.notify_all();
+    for (pthread_t &thread : impl_->threads)
+    {
+        if (thread != 0)
+            pthread_join(thread, nullptr);
+    }
+}
+
+std::uint32_t ThumbCache::texture(const std::string &url)
+{
+    if (url.empty())
+        return 0;
+    auto it = impl_->entries.find(url);
+    if (it != impl_->entries.end())
+    {
+        it->second.last_used = ++impl_->clock;
+        return it->second.texture;
+    }
+    if (impl_->in_flight.find(url) == impl_->in_flight.end())
+    {
+        impl_->in_flight[url] = true;
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->work.push_back(url);
+        impl_->wake.notify_one();
+    }
+    return 0;
+}
+
+std::uint32_t ThumbCache::upload(const std::string &key, const std::uint8_t *rgba, int width,
+                                 int height)
+{
+    if (key.empty() || rgba == nullptr || width <= 0 || height <= 0)
+        return 0;
+    auto it = impl_->entries.find(key);
+    if (it != impl_->entries.end() && it->second.texture != 0)
+    {
+        it->second.last_used = ++impl_->clock;
+        return it->second.texture;
+    }
+    const std::uint32_t texture = impl_->batch.create_texture(width, height, rgba);
+    Entry entry;
+    entry.texture = texture;
+    entry.last_used = ++impl_->clock;
+    impl_->entries[key] = entry;
+    impl_->evict_if_needed();
+    return texture;
+}
+
+void ThumbCache::pump()
+{
+    std::vector<Impl::Ready> ready;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        ready.swap(impl_->ready);
+    }
+    for (Impl::Ready &item : ready)
+    {
+        if (item.failed)
+        {
+            Entry entry;
+            entry.failed = true;
+            entry.last_used = ++impl_->clock;
+            impl_->entries[item.key] = entry;
+            continue;
+        }
+        const std::uint32_t texture =
+            impl_->batch.create_texture(item.width, item.height, item.rgba.data());
+        Entry entry;
+        entry.texture = texture;
+        entry.last_used = ++impl_->clock;
+        impl_->entries[item.key] = entry;
+        impl_->evict_if_needed();
+    }
+}
+
+void ThumbCache::clear()
+{
+    for (auto &pair : impl_->entries)
+    {
+        if (pair.second.texture != 0 && impl_->destroy != nullptr)
+            impl_->destroy(pair.second.texture);
+    }
+    impl_->entries.clear();
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->work.clear();
+    impl_->ready.clear();
+}
+
+} // namespace hui::app

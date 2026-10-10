@@ -1,0 +1,112 @@
+{
+  "responseContext": {
+    "visitorData": "CgsI0u2ZyQYQ9JWnAQ%3D%3D"
+  },
+  "header": {
+    "pageHeaderRenderer": {
+      "pageTitle": "Alpha Kanal",
+      "content": {
+        "pageHeaderViewModel": {
+          "title": {
+            "dynamicTextViewModel": {
+              "text": { "content": "Alpha Kanal" }
+            }
+          },
+          "avatar": {
+            "thumbnails": [
+              { "url": "https://yt3.ggpht.com/alpha-small.jpg", "width": 88, "height": 88 },
+              { "url": "https://yt3.ggpht.com/alpha-hq.jpg", "width": 176, "height": 176 }
+            ]
+          },
+          "metadata": {
+            "contentMetadataViewModel": {
+              "metadataRows": [
+                {
+                  "metadataParts": [
+                    { "text": { "content": "@alphakanal" } },
+                    { "text": { "content": "1.2M subscribers" } }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "contents": {
+    "twoColumnBrowseResultsRenderer": {
+      "tabs": [
+        {
+          "tabRenderer": {
+            "title": { "simpleText": "Home" },
+            "selected": true,
+            "endpoint": {
+              "browseEndpoint": {
+                "browseId": "UCaaaaaaaaaaaaaaaaaaaaaa",
+                "params": "EgZob21l"
+              }
+            }
+          }
+        },
+        {
+          "tabRenderer": {
+            "title": { "simpleText": "Videos" },
+            "endpoint": {
+              "browseEndpoint": {
+                "browseId": "UCaaaaaaaaaaaaaaaaaaaaaa",
+                "params": "EgZ2aWRlb3M"
+              }
+            }
+          }
+        },
+        {
+          "tabRenderer": {
+            "title": { "runs": [{ "text": "Live" }] },
+            "endpoint": {
+              "browseEndpoint": {
+                "browseId": "UCaaaaaaaaaaaaaaaaaaaaaa",
+                "params": "EglsaXZlc3RyZWFt"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "sectionListRenderer": {
+      "contents": [
+        {
+          "itemSectionRenderer": {
+            "contents": [
+              {
+                "videoRenderer": {
+                  "videoId": "CHAN-VID-01",
+                  "title": { "runs": [{ "text": "Kanalvideo Eins" }] },
+                  "ownerText": { "runs": [{ "text": "Alpha Kanal" }] },
+                  "lengthText": { "simpleText": "12:34" },
+                  "thumbnail": {
+                    "thumbnails": [
+                      { "url": "https://i.ytimg.com/vi/CHAN-VID-01/hqdefault.jpg", "width": 480, "height": 360 }
+                    ]
+                  }
+                }
+              },
+              {
+                "videoRenderer": {
+                  "videoId": "CHAN-VID-02",
+                  "title": { "simpleText": "Kanalvideo Zwei" },
+                  "shortBylineText": { "runs": [{ "text": "Alpha Kanal" }] },
+                  "thumbnail": {
+                    "thumbnails": [
+                      { "url": "https://i.ytimg.com/vi/CHAN-VID-02/hqdefault.jpg", "width": 480, "height": 360 }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

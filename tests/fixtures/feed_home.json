@@ -1,0 +1,89 @@
+{
+  "responseContext": {
+    "visitorData": "CgsI0u2ZyQYQ9JWnAQ%3D%3D"
+  },
+  "contents": {
+    "tvBrowseRenderer": {
+      "content": {
+        "tvSurfaceContentRenderer": {
+          "content": {
+            "sectionListRenderer": {
+              "contents": [
+                {
+                  "itemSectionRenderer": {
+                    "contents": [
+                      {
+                        "videoRenderer": {
+                          "videoId": "aqz-KE-bpKQ",
+                          "title": { "runs": [{ "text": "Big Buck Bunny" }] },
+                          "ownerText": { "runs": [{ "text": "Blender Foundation" }] },
+                          "lengthText": { "simpleText": "10:34" },
+                          "thumbnail": {
+                            "thumbnails": [
+                              { "url": "https://i.ytimg.com/vi/aqz-KE-bpKQ/default.jpg", "width": 120, "height": 90 },
+                              { "url": "https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg", "width": 480, "height": 360 },
+                              { "url": "https://i.ytimg.com/vi/aqz-KE-bpKQ/maxresdefault.jpg", "width": 1280, "height": 720 }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "videoRenderer": {
+                          "videoId": "LIVE-EXAMPLE1",
+                          "title": { "simpleText": "Live aus dem Studio" },
+                          "shortBylineText": { "runs": [{ "text": "StudioKanal" }] },
+                          "badges": [
+                            { "metadataBadgeRenderer": { "style": "BADGE_STYLE_TYPE_LIVE_NOW" } }
+                          ],
+                          "thumbnail": {
+                            "thumbnails": [
+                              { "url": "https://i.ytimg.com/vi/LIVE-EXAMPLE1/hqdefault_live.jpg", "width": 480, "height": 360 }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "adSlotRenderer": {
+                          "adSlotMetadata": { "slotId": "FEwhat_to_watch.adSlot0" },
+                          "fulfillmentContent": {
+                            "fulfilledLayoutContent": {
+                              "playerAdRenderer": {
+                                "adVideoId": "AD-VIDEO-0001",
+                                "videoId": "AD-VIDEO-0001",
+                                "title": { "simpleText": "Werbung, die nie erscheint" }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "compactVideoRenderer": {
+                          "videoId": "HISTORY-0001",
+                          "title": { "simpleText": "Ältere Folge der Reihe" },
+                          "longBylineText": { "runs": [{ "text": "ReihenKanal" }] },
+                          "lengthSeconds": "1830",
+                          "thumbnail": {
+                            "thumbnails": [
+                              { "url": "https://i.ytimg.com/vi/HISTORY-0001/mqdefault.jpg" }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "continuationItemRenderer": {
+                    "continuationEndpoint": {
+                      "continuationCommand": { "token": "CBQSC2hvbWUtcGFnZS0x" }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

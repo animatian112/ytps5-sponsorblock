@@ -1,0 +1,45 @@
+# Platform-neutral application sources compiled into build/tests/unit_tests.
+# One repository-relative path (or glob) per line; '#' starts a comment.
+# Nothing here may need OpenGL: sources that create textures or GL objects
+# (thumbs, app screens, main) stay out and are covered by the snapshot run.
+# The update transport (host/update_http_stub.cpp) is left out here: update_test.cpp
+# supplies its own stub so a check can be driven against a canned feed answer.
+host/http_host.cpp
+host/self_update_platform_stub.cpp
+host/player_stub.cpp
+host/platform_host.cpp
+src/audio/cues.cpp
+src/audio/mixer.cpp
+src/audio/music.cpp
+src/audio/wav.cpp
+src/core/frame_stats.cpp
+src/core/input.cpp
+src/core/save_file.cpp
+src/core/settings.cpp
+src/core/version.cpp
+src/gfx/draw_list.cpp
+src/gfx/font.cpp
+src/gfx/triangulate.cpp
+src/third_party/stb/vorbis.c
+src/third_party/yyjson/yyjson.c
+src/third_party/qrcodegen/qrcodegen.c
+src/ui/components/*.cpp
+src/ui/confetti.cpp
+src/ui/glyphs.cpp
+src/ui/pixel_font.cpp
+src/ui/theme.cpp
+src/ui/widgets.cpp
+src/update/self_update.c
+src/update/self_update_sha256.c
+src/update/update_check.c
+src/yt/auth.cpp
+src/yt/codec.cpp
+src/yt/decipher.cpp
+src/yt/http.cpp
+src/yt/image.cpp
+src/yt/innertube.cpp
+src/yt/qr.cpp
+src/yt/log.cpp
+src/yt/service.cpp
+src/yt/types.cpp
+src/yt/update.cpp

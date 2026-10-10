@@ -1,0 +1,44 @@
+{
+  "playabilityStatus": { "status": "OK" },
+  "assets": {
+    "js": "https://www.youtube.com/s/player/abc123/tv-player-ias.vflset/tv-player-ias.js"
+  },
+  "streamingData": {
+    "adaptiveFormats": [
+      {
+        "itag": 137,
+        "signatureCipher": "url=https%3A%2F%2Frr1---sn-example.googlevideo.com%2Fvideoplayback%3Fitag%3D137%26n%3Dabcdef&s=abcdef&sp=sig",
+        "mimeType": "video/mp4; codecs=\"avc1.640028\"",
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "bitrate": 4210000,
+        "contentLength": "182000000"
+      },
+      {
+        "itag": 248,
+        "signatureCipher": "url=https%3A%2F%2Frr1---sn-example.googlevideo.com%2Fvideoplayback%3Fitag%3D248&s=0123456789&sp=sig",
+        "mimeType": "video/webm; codecs=\"vp9\"",
+        "width": 1920,
+        "height": 1080,
+        "bitrate": 3100000,
+        "contentLength": "134000000"
+      },
+      {
+        "itag": 251,
+        "url": "https://rr1---sn-example.googlevideo.com/videoplayback?itag=251",
+        "mimeType": "audio/webm; codecs=\"opus\"",
+        "bitrate": 128000,
+        "audioSampleRate": "48000",
+        "contentLength": "5400000"
+      }
+    ]
+  },
+  "videoDetails": {
+    "videoId": "aqz-KE-bpKQ",
+    "title": "Cipher Fixture",
+    "author": "Fixture",
+    "lengthSeconds": "634",
+    "isLiveContent": false
+  }
+}

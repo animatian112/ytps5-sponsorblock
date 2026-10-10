@@ -1,0 +1,1237 @@
+// youtube-tv - The background service implementation.
+// Copyright (C) 2026 BlackBearReloaded
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// One worker thread (1 MiB stack: console threads are never time-sliced and
+// the default stack is small) owns every network call, the InnerTube client,
+// the auth object and the player's start-up. The frame thread posts requests
+// and reads snapshots; a snapshot is copied only when its revision changed.
+
+#include "yt/service.hpp"
+
+#include "core/save_file.hpp"
+#include "yt/auth.hpp"
+#include "yt/log.hpp"
+#include "yt/codec.hpp"
+#include "yt/decipher.hpp"
+#include "yt/innertube.hpp"
+
+#include <pthread.h>
+
+#include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
+#include <thread>
+
+namespace yt
+{
+namespace
+{
+
+constexpr std::size_t kWorkerStack = 1u << 20; // 1 MiB
+constexpr int kLoginPollMs = 200;
+
+// pthread_create with an explicit stack; std::thread cannot size its stack.
+bool spawn(pthread_t *thread, void *(*entry)(void *), void *argument)
+{
+    pthread_attr_t attributes;
+    if (pthread_attr_init(&attributes) != 0)
+        return false;
+    pthread_attr_setstacksize(&attributes, kWorkerStack);
+    const int created = pthread_create(thread, &attributes, entry, argument);
+    pthread_attr_destroy(&attributes);
+    return created == 0;
+}
+
+} // namespace
+
+struct Service::Impl
+{
+    // ---- shared between the frame and the worker ----
+    mutable std::mutex mutex;
+    std::condition_variable wake;
+    bool quit = false;
+
+    // Requests. Values are overwritten by newer ones (latest wins).
+    struct Job
+    {
+        bool home = false;
+        bool home_force = false;
+        bool subscriptions = false;
+        bool more = false;
+        FeedKind more_kind = FeedKind::home;
+        bool channel = false;
+        std::string channel_id;
+        bool channel_tab = false;
+        int channel_tab_index = 0;
+        bool search = false;
+        std::string search_query;
+        bool video = false;
+        std::string video_id;
+        CodecChoice choice;
+        std::uint64_t video_generation = 0;
+        bool close_video = false;
+        bool sign_in = false;
+        bool cancel_sign_in = false;
+        bool sign_out = false;
+        bool refresh = false;
+        bool import_token = false;
+    } job;
+
+    // Results.
+    FeedView home;
+    FeedView subscriptions;
+    FeedView search;
+    FeedView related;
+    FeedView channel_feed; // one channel's videos, opened from search
+    ChannelView channel;
+    std::string search_query;
+    VideoView video;
+    LoginView login;
+    // Bumped by every new request and by the watchdog: a worker whose
+    // generation is stale publishes nothing.
+    std::uint64_t video_generation = 0;
+    float video_wait_s = 0.0f;
+    bool video_running = false;
+    // The device flow runs on the worker; `login_running` tells the frame
+    // thread that it is still in flight and `login_cancel` is the frame's
+    // request to stop it (the job flags are consumed by the dispatch loop and
+    // cannot be used for this: doing so aborted every sign-in after 200 ms).
+    bool login_running = false;
+    bool login_cancel = false;
+    std::unique_ptr<Player> player;
+    bool signed_in = false;
+    std::string last_error;
+
+    // ---- worker-only ----
+    std::string install_root;
+    Auth auth;
+    InnerTube tube;
+    // One descrambler per Service, prepared once per player JS file and reused
+    // across the client chain; descrambler_js_url keys that cache.
+    Descrambler descrambler;
+    std::string descrambler_js_url;
+    AudioSink *audio = nullptr;
+    pthread_t worker{};
+    std::atomic<bool> running{false};
+    bool player_open = false;
+    std::string opened_video;
+    CodecChoice opened_choice;
+    // The channel whose page is open; a tab switch reuses it.
+    std::string open_channel_id;
+
+    Impl(std::string token_path, std::string install_root_path, AudioSink *sink)
+        : install_root(std::move(install_root_path)), auth(std::move(token_path)), audio(sink)
+    {
+    }
+
+    std::string bundled_token_path() const
+    {
+        return install_root.empty() ? std::string() : install_root + "/yt-token.json";
+    }
+
+    std::string sandbox_backup_path() const
+    {
+        return auth.token_path() + ".backup";
+    }
+
+    void do_import_token()
+    {
+        if (auth.signed_in())
+            return;
+        const std::string path = bundled_token_path();
+        if (path.empty())
+            return;
+        std::string data;
+        if (!hui::save::read_file(path, &data, 64u << 10))
+            return;
+
+        std::string error;
+        if (!auth.adopt_token_json(data, &error))
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            login.state = Load::failed;
+            login.error = error;
+            login.revision++;
+            return;
+        }
+        refresh_token_locked();
+    }
+
+    FeedView *slot(FeedKind kind)
+    {
+        switch (kind)
+        {
+        case FeedKind::home:
+            return &home;
+        case FeedKind::subscriptions:
+            return &subscriptions;
+        case FeedKind::related:
+            return &related;
+        case FeedKind::channel:
+            return &channel_feed;
+        default:
+            return &search;
+        }
+    }
+
+    void publish(FeedKind kind, Load state, std::vector<FeedItem> items, std::string continuation,
+                 std::string error)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        FeedView &view = *slot(kind);
+        view.state = state;
+        if (!items.empty() || state != Load::loading)
+            view.items = std::move(items);
+        view.continuation = std::move(continuation);
+        view.error = std::move(error);
+        view.revision++;
+    }
+
+    void publish_error(FeedKind kind, const std::string &error)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        FeedView &view = *slot(kind);
+        view.state = Load::failed;
+        view.error = error;
+        view.revision++;
+    }
+
+    // ---- jobs ----
+    void do_channel_page(const std::string &channel_id)
+    {
+        log::line("channel: request id=%s", channel_id.c_str());
+        open_channel_id = channel_id;
+
+        ChannelPage page;
+        if (!tube.channel_page(channel_id, &page))
+        {
+            log::line("channel: page failed status=%ld error=%s", tube.last_status(),
+                      tube.last_error().c_str());
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                channel.state = Load::failed;
+                channel.error = tube.last_error();
+                channel.revision++;
+            }
+            publish_error(FeedKind::channel, tube.last_error());
+            return;
+        }
+
+        int selected = 0;
+        for (std::size_t i = 0; i < page.tabs.size(); i++)
+        {
+            if (page.tabs[i].selected)
+            {
+                selected = static_cast<int>(i);
+                break;
+            }
+        }
+        log::line("channel: page tabs=%zu items=%zu", page.tabs.size(), page.items.size());
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            channel.state = Load::ready;
+            channel.channel = std::move(page.channel);
+            channel.tabs = std::move(page.tabs);
+            channel.selected_tab = selected;
+            channel.error.clear();
+            channel.revision++;
+        }
+        publish(FeedKind::channel, Load::ready, std::move(page.items), std::move(page.continuation),
+                {});
+    }
+
+    void do_channel_tab(int index)
+    {
+        std::string channel_id;
+        std::string params;
+        std::string title;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            channel_id = open_channel_id;
+            if (index >= 0 && index < static_cast<int>(channel.tabs.size()))
+            {
+                params = channel.tabs[static_cast<std::size_t>(index)].params;
+                title = channel.tabs[static_cast<std::size_t>(index)].title;
+            }
+        }
+        if (channel_id.empty() || params.empty())
+        {
+            log::line("channel: tab %d unavailable", index);
+            return;
+        }
+
+        FeedPage page;
+        if (!tube.channel_tab(channel_id, params, &page))
+        {
+            log::line("channel: tab %d \"%s\" failed status=%ld error=%s", index, title.c_str(),
+                      tube.last_status(), tube.last_error().c_str());
+            // Keep the items already on screen; only the error is published.
+            publish_error(FeedKind::channel, tube.last_error());
+            return;
+        }
+
+        log::line("channel: tab %d \"%s\" items=%zu", index, title.c_str(), page.items.size());
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            channel.selected_tab = index;
+            channel.error.clear();
+            channel.revision++;
+        }
+        publish(FeedKind::channel, Load::ready, std::move(page.items), std::move(page.continuation),
+                {});
+    }
+
+    void do_feed(FeedKind kind, const std::string &query, bool more)
+    {
+        if (!more)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            FeedView &view = *slot(kind);
+            view.state = Load::loading;
+            view.revision++;
+        }
+
+        std::string continuation;
+        if (more)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            continuation = slot(kind)->continuation;
+            if (continuation.empty())
+                return;
+        }
+
+        FeedPage page;
+        bool ok = false;
+        switch (kind)
+        {
+        case FeedKind::home:
+            ok = tube.home(&page, continuation);
+            break;
+        case FeedKind::subscriptions:
+            ok = tube.subscriptions(&page, continuation);
+            break;
+        default:
+            ok = tube.search(query, &page, continuation);
+            break;
+        }
+
+        if (!ok)
+        {
+            // A stale token: refresh once and retry.
+            if (tube.last_status() == 401 && refresh_token_locked())
+            {
+                switch (kind)
+                {
+                case FeedKind::home:
+                    ok = tube.home(&page, continuation);
+                    break;
+                case FeedKind::subscriptions:
+                    ok = tube.subscriptions(&page, continuation);
+                    break;
+                default:
+                    ok = tube.search(query, &page, continuation);
+                    break;
+                }
+            }
+        }
+        if (!ok)
+        {
+            publish_error(kind, tube.last_error());
+            return;
+        }
+
+        std::vector<FeedItem> items;
+        if (more)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            FeedView &view = *slot(kind);
+            items = view.items;
+            if (page.items.empty() && page.continuation.empty())
+            {
+                view.state = Load::ready;
+                view.continuation.clear();
+                view.revision++;
+                return;
+            }
+        }
+        items.insert(items.end(), page.items.begin(), page.items.end());
+        publish(kind, Load::ready, std::move(items), page.continuation, {});
+        if (!page.channels.empty())
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            slot(kind)->channels = std::move(page.channels);
+        }
+    }
+
+    bool refresh_token_locked()
+    {
+        std::string error;
+        if (!auth.refresh(&error))
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            signed_in = false;
+            last_error = error;
+            login.revision++;
+            return false;
+        }
+        tube.set_access_token(auth.access_token());
+        std::lock_guard<std::mutex> lock(mutex);
+        signed_in = true;
+        return true;
+    }
+
+    // Publishes a video failure, but only while this job is still the current
+    // one: the watchdog may have thrown the request away in the meantime.
+    void cancel_login_now()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        login_cancel = true;
+        if (!login_running && login.state != Load::idle)
+        {
+            login.state = Load::idle;
+            login.error.clear();
+            login.revision++;
+        }
+    }
+
+    bool fail_video(std::uint64_t generation, const std::string &reason)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (generation != video_generation)
+            return false;
+        video.state = Load::failed;
+        video.error = reason;
+        video.stage.clear();
+        video_running = false;
+        video.revision++;
+        return true;
+    }
+
+    void set_stage(std::uint64_t generation, const char *stage)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (generation != video_generation)
+            return;
+        video.stage = stage;
+        video.revision++;
+    }
+
+    // Records one stream the worker could not play, so a failure can name
+    // every client that was tried.
+    void add_attempt(std::uint64_t generation, const std::string &line)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (generation != video_generation)
+            return;
+        video.attempts.push_back(line);
+        video.revision++;
+    }
+
+    // Prepares the descrambler for this answer's player JS, cached across the
+    // client chain by JS URL. False leaves *error as the reason.
+    bool ensure_descrambler(const VideoInfo &info, std::string *error)
+    {
+        if (info.player_js_url.empty())
+        {
+            *error = "no player JS URL in the answer";
+            return false;
+        }
+        if (info.player_js_url == descrambler_js_url && descrambler.ready())
+            return true;
+        std::string reason;
+        if (!descrambler.prepare(info.player_js_url, &reason))
+        {
+            descrambler_js_url.clear();
+            *error = "player JS: " + reason;
+            return false;
+        }
+        descrambler_js_url = info.player_js_url;
+        log::line("video: descrambler ready js=%s", descrambler_js_url.c_str());
+        return true;
+    }
+
+    // Why nothing played, with the census of the first answer: the log and the
+    // player screen both read the "no_stream (...)" text, whose prefix is the
+    // marker the screen keys on.
+    std::string no_stream_reason(const std::vector<VideoInfo> &variants, const CodecChoice &choice)
+    {
+        const VideoInfo &first = variants.front();
+        const std::string summary = format_summary(first.formats);
+        const std::size_t total = first.formats.size();
+        std::size_t ciphered = 0;
+        std::size_t enabled = 0;
+        std::size_t in_cap = 0;
+        for (const Format &format : first.formats)
+        {
+            if (format.ciphered)
+                ++ciphered;
+            // Mirror select_video_format: an enabled codec alone is not enough,
+            // the format also needs a known height and to be inside the cap.
+            if (!is_video_codec(format.codec) || !codec_enabled(choice, format.codec))
+                continue;
+            if (format.height <= 0)
+                continue;
+            ++enabled;
+            if (choice.max_height <= 0 || format.height <= choice.max_height)
+                ++in_cap;
+        }
+        std::string cause;
+        if (total == 0)
+            cause = "no formats in the client answer";
+        else if (ciphered == total && !descrambler.ready())
+            cause = "only ciphered formats and no player JS";
+        else if (enabled == 0)
+            cause = "all filtered by the codec switches";
+        else if (in_cap == 0)
+            cause = "all filtered by the height cap";
+        else
+            cause = "the cipher could not be descrambled";
+        return "no_stream (" + summary + "; " + cause + ")";
+    }
+
+    void do_video(const std::string &video_id, const CodecChoice &choice, std::uint64_t generation)
+    {
+        log::line("video: request id=%s cap=%d codecs avc=%d vp9=%d av1=%d", video_id.c_str(),
+                  choice.max_height, choice.avc ? 1 : 0, choice.vp9 ? 1 : 0, choice.av1 ? 1 : 0);
+        set_stage(generation, "Player info");
+        tube.set_timeout(12); // each client answer is bounded; the chain runs a few
+
+        // Every client that answered, in chain order: one may hand out a URL
+        // googlevideo refuses (403) while another's plays, so try them all
+        // instead of giving up on the first.
+        std::vector<VideoInfo> variants;
+        std::string player_error;
+        if (!tube.player_variants(video_id, &variants, &player_error))
+        {
+            log::line("video: player info failed status=%ld error=%s", tube.last_status(),
+                      player_error.c_str());
+            if (tube.last_status() == 401 && refresh_token_locked())
+            {
+                variants.clear();
+                player_error.clear();
+                if (tube.player_variants(video_id, &variants, &player_error))
+                {
+                    // recovered
+                }
+                else
+                {
+                    fail_video(generation, player_error);
+                    return;
+                }
+            }
+            else
+            {
+                fail_video(generation, player_error);
+                return;
+            }
+        }
+        if (variants.empty())
+        {
+            // player_variants answers true only with an entry; stay safe.
+            fail_video(generation, player_error.empty()
+                                       ? std::string("no_stream (no formats in the client answer)")
+                                       : player_error);
+            return;
+        }
+        log::line("video: player info ok id=%s title=%s clients=%zu", video_id.c_str(),
+                  variants.front().title.c_str(), variants.size());
+
+        set_stage(generation, "Streams");
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (generation != video_generation)
+                return;
+            video.info = variants.front(); // the title, before anything plays
+        }
+
+        // The first client's player error is the interesting one: if every
+        // client failed it becomes the published error.
+        std::string first_error;
+        bool any_format = false;
+
+        for (const VideoInfo &info : variants)
+        {
+            // The watchdog or a newer request drops the whole loop: checked
+            // before each client's stream is opened.
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (generation != video_generation)
+                    return;
+            }
+
+            const Format *video_format = select_video_format(info.formats, choice);
+            const Format *audio_format = select_audio_format(info.formats);
+            if (video_format == nullptr)
+            {
+                log::line("video: try %s no stream matches the codec switches",
+                          info.client.c_str());
+                add_attempt(generation, info.client + ": no matching video format");
+                continue;
+            }
+            any_format = true;
+            log::line("video: selected client=%s itag=%d %dx%d %s audio=%d ciphered=%d",
+                      info.client.c_str(), video_format->itag, video_format->width,
+                      video_format->height, codec_label(video_format->codec),
+                      audio_format != nullptr ? audio_format->itag : 0,
+                      video_format->ciphered ? 1 : 0);
+
+            // A ciphered format arrives with its unsigned base URL; the player
+            // JS has to descramble it before it plays. Without that JS, or when
+            // descrambling fails, this client is an ordinary failed attempt.
+            std::string video_url = video_format->url;
+            std::string audio_url = audio_format != nullptr ? audio_format->url : std::string();
+            if (video_format->ciphered || (audio_format != nullptr && audio_format->ciphered))
+            {
+                std::string cipher_error;
+                if (!ensure_descrambler(info, &cipher_error))
+                {
+                    log::line("video: try %s cipher: %s", info.client.c_str(),
+                              cipher_error.c_str());
+                    add_attempt(generation, info.client + ": " + cipher_error);
+                    continue;
+                }
+                if (video_format->ciphered)
+                {
+                    video_url = descrambler.descramble(video_format->url, video_format->cipher_s,
+                                                       video_format->cipher_sp, &cipher_error);
+                    if (video_url.empty())
+                    {
+                        log::line("video: try %s descramble: %s", info.client.c_str(),
+                                  cipher_error.c_str());
+                        add_attempt(generation, info.client + " itag " +
+                                                    std::to_string(video_format->itag) +
+                                                    " descramble: " + cipher_error);
+                        set_stage(generation, "Streams");
+                        continue;
+                    }
+                }
+                if (audio_format != nullptr && audio_format->ciphered)
+                {
+                    audio_url = descrambler.descramble(audio_format->url, audio_format->cipher_s,
+                                                       audio_format->cipher_sp, &cipher_error);
+                    if (audio_url.empty())
+                    {
+                        // The picture can still play without sound.
+                        log::line("video: audio descramble failed: %s", cipher_error.c_str());
+                        audio_url.clear();
+                    }
+                }
+            }
+
+            set_stage(generation, "Decoder");
+            std::unique_ptr<Player> fresh = make_player();
+            log::line("video: open begin client=%s", info.client.c_str());
+            const bool opened = fresh->open(video_url, audio_url, audio);
+            log::line("video: try %s itag=%d %dx%d -> %s", info.client.c_str(), video_format->itag,
+                      video_format->width, video_format->height,
+                      opened ? "ok" : fresh->error().c_str());
+            if (!opened)
+            {
+                if (first_error.empty())
+                    first_error = fresh->error();
+                add_attempt(generation,
+                            info.client + " itag " + std::to_string(video_format->itag) + " " +
+                                std::to_string(video_format->height) + "p: " + fresh->error());
+                set_stage(generation, "Streams");
+                continue;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (generation != video_generation)
+                    return; // the watchdog gave up while the demuxers opened
+                player = std::move(fresh);
+                player_open = true;
+                opened_video = video_id;
+                opened_choice = choice;
+                video.info = info;
+                video.state = Load::ready;
+                video.stage.clear();
+                video.source_client = info.client;
+                video.attempts.clear();
+                video_running = false;
+                video.revision++;
+            }
+
+            log::line("video: playing via %s", info.client.c_str());
+            // The related row under the player; best effort, a failure leaves
+            // the previous row in place.
+            FeedPage related_page;
+            if (tube.related(video_id, &related_page))
+                publish(FeedKind::related, Load::ready, related_page.items, {}, {});
+            else
+                publish(FeedKind::related, Load::failed, {}, {}, tube.last_error());
+            return;
+        }
+
+        if (!any_format)
+        {
+            const std::string reason = no_stream_reason(variants, choice);
+            log::line("video: %s", reason.c_str());
+            fail_video(generation, reason);
+            return;
+        }
+        log::line("video: every client failed, first error=%s", first_error.c_str());
+        fail_video(generation, first_error.empty() ? std::string("unavailable") : first_error);
+    }
+
+    void finish_login(Load state, const std::string &error)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        login_running = false;
+        login.state = state;
+        login.error = error;
+        login.revision++;
+    }
+
+    void do_login()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            login_running = true;
+            login_cancel = false;
+        }
+        DeviceCode code = auth.begin();
+        if (!code.ok())
+        {
+            finish_login(Load::failed, code.error);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            login.state = Load::loading;
+            login.user_code = code.user_code;
+            login.verification_url = code.verification_url;
+            login.error.clear();
+            login.revision++;
+        }
+
+        for (;;)
+        {
+            // Sleep in slices so a cancel is seen quickly.
+            for (int waited = 0; waited < std::max(1, code.interval_s) * 1000;
+                 waited += kLoginPollMs)
+            {
+                if (quit)
+                    return;
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    if (login_cancel)
+                    {
+                        login_cancel = false;
+                        login_running = false;
+                        login.state = Load::idle;
+                        login.error.clear();
+                        login.revision++;
+                        return;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(kLoginPollMs));
+            }
+
+            std::string error;
+            const Poll poll = auth.poll(code, &error);
+            if (poll == Poll::pending)
+                continue;
+            if (poll == Poll::slow_down)
+            {
+                code.interval_s += 5;
+                continue;
+            }
+            if (poll == Poll::done)
+                tube.set_access_token(auth.access_token());
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (poll == Poll::done)
+                    signed_in = true;
+            }
+            log::line("login: poll -> %d (%s)", static_cast<int>(poll), error.c_str());
+            finish_login(poll == Poll::done ? Load::ready : Load::failed,
+                         poll == Poll::done ? std::string() : error);
+            return;
+        }
+    }
+
+    void loop()
+    {
+        for (;;)
+        {
+            Job taken;
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                wake.wait(lock, [this] { return quit || any_request(); });
+                if (quit)
+                    return;
+                taken = job;
+                job = Job{};
+            }
+
+            if (taken.sign_out)
+            {
+                auth.sign_out();
+                tube.set_access_token({});
+                std::lock_guard<std::mutex> lock(mutex);
+                signed_in = false;
+                login = LoginView{};
+                login.revision++;
+            }
+            if (taken.cancel_sign_in)
+            {
+                // Sets the worker's cancel flag; a running flow stops on its
+                // next slice, an idle one is answered directly.
+                cancel_login_now();
+            }
+            if (taken.refresh)
+                refresh_token_locked();
+            if (taken.import_token)
+                do_import_token();
+            if (taken.close_video)
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                player.reset();
+                player_open = false;
+            }
+            if (taken.home)
+                do_feed(FeedKind::home, {}, false);
+            if (taken.subscriptions)
+                do_feed(FeedKind::subscriptions, {}, false);
+            if (taken.channel)
+                do_channel_page(taken.channel_id);
+            if (taken.channel_tab)
+                do_channel_tab(taken.channel_tab_index);
+            if (taken.search)
+            {
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    search_query = taken.search_query;
+                }
+                do_feed(FeedKind::search, taken.search_query, false);
+            }
+            if (taken.more)
+                do_feed(taken.more_kind, taken.search_query, true);
+            if (taken.video)
+                do_video(taken.video_id, taken.choice, taken.video_generation);
+            if (taken.sign_in)
+                do_login();
+        }
+    }
+
+    bool any_request()
+    {
+        return job.home || job.subscriptions || job.more || job.search || job.channel ||
+               job.channel_tab || job.video || job.close_video || job.sign_in ||
+               job.cancel_sign_in || job.sign_out || job.refresh || job.import_token;
+    }
+};
+
+Service::Service(std::string token_path, std::string install_root, AudioSink *audio)
+    : impl_(std::make_unique<Impl>(std::move(token_path), std::move(install_root), audio))
+{
+}
+
+Service::~Service()
+{
+    stop();
+}
+
+void Service::start()
+{
+    if (impl_->running.exchange(true))
+        return;
+    if (!spawn(
+            &impl_->worker,
+            [](void *argument) -> void *
+            {
+                static_cast<Impl *>(argument)->loop();
+                return nullptr;
+            },
+            impl_.get()))
+    {
+        impl_->running = false;
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->last_error = "worker thread failed";
+    }
+}
+
+void Service::stop()
+{
+    if (!impl_->running.exchange(false))
+        return;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->quit = true;
+    }
+    impl_->wake.notify_all();
+    pthread_join(impl_->worker, nullptr);
+}
+
+void Service::request_home(bool force)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.home = true;
+    impl_->job.home_force = force;
+    impl_->wake.notify_all();
+}
+
+void Service::request_subscriptions(bool force)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.subscriptions = true;
+    (void)force;
+    impl_->wake.notify_all();
+}
+
+void Service::request_more(FeedKind kind)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.more = true;
+    impl_->job.more_kind = kind;
+    impl_->job.search_query = impl_->search_query;
+    impl_->wake.notify_all();
+}
+
+void Service::request_search(std::string query)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.search = true;
+    impl_->job.search_query = std::move(query);
+    impl_->job.channel = false;
+    impl_->job.channel_tab = false;
+    // The search screen reads any open channel through channel_view(); a new
+    // query dismisses it.
+    const std::uint64_t revision = impl_->channel.revision + 1;
+    impl_->channel = ChannelView{};
+    impl_->channel.revision = revision;
+    impl_->wake.notify_all();
+}
+
+void Service::request_channel(std::string channel_id)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.channel = true;
+    impl_->job.channel_id = std::move(channel_id);
+    impl_->job.channel_tab = false;
+    impl_->channel.state = Load::loading;
+    impl_->channel.error.clear();
+    impl_->channel.revision++;
+    impl_->wake.notify_all();
+}
+
+void Service::request_channel_tab(int tab_index)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.channel = false;
+    impl_->job.channel_tab = true;
+    impl_->job.channel_tab_index = tab_index;
+    impl_->wake.notify_all();
+}
+
+void Service::request_video(std::string video_id, CodecChoice choice)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.video = true;
+    impl_->job.video_id = std::move(video_id);
+    impl_->job.choice = choice;
+    impl_->video_generation++;
+    impl_->job.video_generation = impl_->video_generation;
+    impl_->video.state = Load::loading;
+    impl_->video.stage = "Warteschlange";
+    impl_->video.error.clear();
+    impl_->video.info = VideoInfo{};
+    impl_->video.source_client.clear();
+    impl_->video.attempts.clear();
+    impl_->video.revision++;
+    impl_->video_wait_s = 0.0f;
+    impl_->video.waiting_s = 0.0f;
+    impl_->video_running = true;
+    impl_->wake.notify_all();
+}
+
+void Service::video_watchdog(float dt)
+{
+    VideoView current;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        if (!impl_->video_running || impl_->video.state != Load::loading)
+        {
+            impl_->video_wait_s = 0.0f;
+            return;
+        }
+        impl_->video_wait_s += dt;
+        impl_->video.waiting_s = impl_->video_wait_s; // progress, no revision bump
+        current = impl_->video;
+    }
+
+    // A request that neither arrives nor fails would leave the player screen
+    // on "loading" forever: after 20 s the frame thread ends it and whatever
+    // the worker reports later is dropped.
+    if (impl_->video_wait_s > 20.0f)
+    {
+        yt::log::line("video: watchdog timeout after %.0f s (stage=%s)", impl_->video_wait_s,
+                      current.stage.c_str());
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->video_generation++;
+        impl_->video.state = Load::failed;
+        impl_->video.error = "timeout";
+        impl_->video.stage.clear();
+        impl_->video_running = false;
+        impl_->video.revision++;
+        impl_->video_wait_s = 0.0f;
+    }
+}
+
+void Service::request_close_video()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    // Dropping the current video also abandons a worker that is still trying
+    // clients: the bumped generation makes it stop before the next stream is
+    // opened and keeps it from publishing the player afterwards.
+    impl_->video_generation++;
+    impl_->video_running = false;
+    impl_->job.close_video = true;
+    impl_->wake.notify_all();
+}
+
+void Service::request_sign_in()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.sign_in = true;
+    impl_->login_cancel = false;
+    impl_->login_running = false;
+    log::line("login: requested");
+    impl_->wake.notify_all();
+}
+
+void Service::cancel_sign_in()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->login_cancel = true;
+    if (!impl_->login_running && impl_->login.state != Load::idle)
+    {
+        // Nothing in flight: answer the frame right away.
+        impl_->login.state = Load::idle;
+        impl_->login.error.clear();
+        impl_->login.revision++;
+    }
+    log::line("login: cancelled (running=%d)", impl_->login_running ? 1 : 0);
+    impl_->wake.notify_all();
+}
+
+void Service::sign_out()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.sign_out = true;
+    impl_->wake.notify_all();
+}
+
+void Service::import_token_file()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.import_token = true;
+    impl_->wake.notify_all();
+}
+
+bool Service::export_token(std::string *where)
+{
+    std::string token;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        token = impl_->auth.token_json();
+    }
+    if (token.empty())
+    {
+        if (where != nullptr)
+            *where = "not signed in";
+        return false;
+    }
+
+    // The install folder first: it survives an uninstall or a wiped sandbox
+    // and the user already copies files there. A sandboxed title usually
+    // cannot write it, which is why the second copy exists.
+    for (const std::string &path : {impl_->bundled_token_path(), impl_->sandbox_backup_path()})
+    {
+        if (path.empty())
+            continue;
+        if (hui::save::write_atomic(path, token).empty())
+        {
+            if (where != nullptr)
+                *where = path;
+            return true;
+        }
+    }
+    if (where != nullptr)
+        *where = impl_->install_root + "/yt-token.json";
+    return false;
+}
+
+void Service::refresh_token()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.refresh = true;
+    impl_->wake.notify_all();
+}
+
+std::uint64_t Service::revision(FeedKind kind) const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    switch (kind)
+    {
+    case FeedKind::home:
+        return impl_->home.revision;
+    case FeedKind::subscriptions:
+        return impl_->subscriptions.revision;
+    case FeedKind::related:
+        return impl_->related.revision;
+    case FeedKind::channel:
+        return impl_->channel_feed.revision;
+    default:
+        return impl_->search.revision;
+    }
+}
+
+FeedView Service::feed(FeedKind kind) const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    switch (kind)
+    {
+    case FeedKind::home:
+        return impl_->home;
+    case FeedKind::subscriptions:
+        return impl_->subscriptions;
+    case FeedKind::related:
+        return impl_->related;
+    case FeedKind::channel:
+        return impl_->channel_feed;
+    default:
+        return impl_->search;
+    }
+}
+
+std::uint64_t Service::search_revision() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->search.revision;
+}
+
+FeedView Service::search_feed() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->search;
+}
+
+std::string Service::search_query() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->search_query;
+}
+
+std::uint64_t Service::channel_revision() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->channel.revision;
+}
+
+ChannelView Service::channel_view() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->channel;
+}
+
+std::uint64_t Service::video_revision() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->video.revision;
+}
+
+VideoView Service::video() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    VideoView view = impl_->video;
+    view.info.formats.clear(); // the frame thread only needs the tags
+    return view;
+}
+
+std::uint64_t Service::login_revision() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->login.revision;
+}
+
+LoginView Service::login() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->login;
+}
+
+void Service::inject_feed(FeedKind kind, std::vector<FeedItem> items, std::string continuation)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    FeedView &view = *impl_->slot(kind);
+    view.state = Load::ready;
+    view.items = std::move(items);
+    view.continuation = std::move(continuation);
+    view.error.clear();
+    view.revision++;
+}
+
+void Service::inject_channels(FeedKind kind, std::vector<ChannelItem> channels)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    FeedView &view = *impl_->slot(kind);
+    view.channels = std::move(channels);
+    view.revision++;
+}
+
+void Service::inject_channel_page(ChannelView view, std::vector<FeedItem> items)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    view.revision = impl_->channel.revision + 1;
+    impl_->channel = std::move(view);
+
+    FeedView &feed = impl_->channel_feed;
+    feed.state = Load::ready;
+    feed.items = std::move(items);
+    feed.continuation.clear();
+    feed.error.clear();
+    feed.revision++;
+}
+
+void Service::inject_login(LoginView view)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    view.revision = impl_->login.revision + 1;
+    impl_->login = std::move(view);
+}
+
+void Service::inject_video(VideoView view, std::unique_ptr<Player> player)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    view.revision = impl_->video.revision + 1;
+    impl_->video = std::move(view);
+    impl_->player = std::move(player);
+    impl_->player_open = impl_->player != nullptr;
+}
+
+std::unique_ptr<Player> Service::take_player()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return std::move(impl_->player);
+}
+
+bool Service::signed_in() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->signed_in;
+}
+
+std::string Service::last_error() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->last_error;
+}
+
+} // namespace yt
