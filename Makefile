@@ -22,7 +22,10 @@ override APP_INCLUDE_PATHS := $(strip src $(OPENGL_SDK)/include $(APP_INCLUDE_PA
 override APP_STATIC_ARCHIVES := $(strip .deps/ps5-opengl/libps5opengl-group.a $(APP_STATIC_ARCHIVES))
 override APP_IMPORT_STUBS := $(strip $(OPENGL_SDK)/lib/libSceAgc.so \
 	$(OPENGL_SDK)/lib/libSceAgcDriver.so $(APP_IMPORT_STUBS))
-PACBREW_PACKAGES ?=
+# The PacBrew packages this app links: curl for the network, OpenSSL for TLS,
+# the ffmpeg libraries for the decoder. A clean checkout (and CI) builds with
+# these; an ignored .env can override the list for a different app.
+PACBREW_PACKAGES ?= libcurl openssl libavformat libavcodec libavutil libswscale libswresample
 PACBREW_INCLUDE_PATHS ?=
 PACBREW_STATIC_ARCHIVES ?=
 PS5_HOST ?=
