@@ -11,6 +11,7 @@
 
 #include "ui/components.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -61,6 +62,7 @@ class PlayerScreen final : public Screen
     int texture_width_ = 0;
     int texture_height_ = 0;
     double last_pts_ = -1.0;
+    std::chrono::steady_clock::time_point last_upload_log_{};
     bool in_related_ = false;
     bool ended_ = false;
     bool consumed_player_ = false;

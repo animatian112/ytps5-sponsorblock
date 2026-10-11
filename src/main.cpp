@@ -46,6 +46,9 @@ namespace
 {
 
 constexpr const char *kAssets = "/app0/assets";
+// The folder the app was started from: the install folder holds yt-token.json
+// (the token backup a user carries over a re-upload) next to the app files.
+constexpr const char *kInstallRoot = "/app0";
 constexpr const char *kDataRoot = "/download0/hui";
 constexpr const char *kDevRoot = "/download0/hui/dev";
 constexpr const char *kRequestPath = "/app0/dev/request.txt";
@@ -54,7 +57,10 @@ constexpr int kCaptureWidth = 960;
 constexpr int kCaptureHeight = 540;
 
 // The video's sound goes into the mixer's second stream slot; the player
-// writes decoded 48 kHz stereo float frames into it.
+// writes decoded 48 kHz stereo float frames into it. write/buffered/drain run
+// on the frame thread (the player's own thread) while Mixer::render_chunk
+// reads the ring on the audio thread; the ring keeps one writer per index, so
+// the two sides never touch the same step.
 class RingSink final : public yt::AudioSink
 {
   public:
@@ -63,7 +69,19 @@ class RingSink final : public yt::AudioSink
     }
     std::size_t write(const float *stereo, std::size_t frames) override
     {
-        return ring_.write(stereo, frames);
+        const std::size_t written = ring_.write(stereo, frames);
+        // The first batch at once, then one line a second at most: the ring's
+        // write and read counts name where it stood when yt.log stops around a
+        // crash, without logging every decoded batch.
+        const std::int64_t now = hui::sys::monotonic_us();
+        if (now - last_ring_log_us_ >= 1000000)
+        {
+            last_ring_log_us_ = now;
+            yt::log::line("ffmpeg: audio ring write=%llu read=%llu buffered=%zu",
+                          static_cast<unsigned long long>(ring_.total_written()),
+                          static_cast<unsigned long long>(ring_.total_read()), ring_.available());
+        }
+        return written;
     }
     std::size_t buffered() const override
     {
@@ -76,6 +94,7 @@ class RingSink final : public yt::AudioSink
 
   private:
     hui::audio::StreamRing &ring_;
+    std::int64_t last_ring_log_us_ = 0;
 };
 
 bool open_display(hui::ps5::Display &display, int *resolution)
@@ -208,7 +227,7 @@ int main()
     RingSink sink(video_ring);
     // The install folder (/app0) holds the token backup a user can carry over
     // a re-upload; the sandbox copy lives in /download0 and survives reboots.
-    yt::Service service(std::string(kDataRoot) + "/auth.json", kAssets, &sink);
+    yt::Service service(std::string(kDataRoot) + "/auth.json", kInstallRoot, &sink);
     app::App application(fonts, saved, kDataRoot, renderer.batch(), service);
     const std::string version = read_content_version("/app0/sce_sys/param.json");
     application.set_version(version.empty() ? std::string(yt::log::build_stamp())
@@ -269,7 +288,7 @@ int main()
     bool splash_hidden = false;
     for (;;)
     {
-        const std::int64_t now = sys::monotonic_us();
+        const std::int64_t now = hui::sys::monotonic_us();
         float dt = frames == 0 ? 1.0f / 60.0f : static_cast<float>(now - last_frame_start) / 1e6f;
         last_frame_start = now;
         if (dt > 0.05f)

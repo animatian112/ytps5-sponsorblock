@@ -38,16 +38,16 @@ extern "C"
 }
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <deque>
 #include <memory>
+#include <new>
 #include <string>
-#include <vector>
 
 namespace yt
 {
@@ -107,6 +107,10 @@ constexpr std::size_t kVideoQueueDepth = 12;
 constexpr std::size_t kVideoPoolBudgetBytes = 192u * 1024u * 1024u;
 constexpr std::size_t kVideoPoolHeadroom = 2;
 constexpr std::size_t kVideoMinQueueDepth = 4;
+// The pool table itself is fixed: the queue never exceeds kVideoQueueDepth
+// pictures and only the picture on screen and the one being converted live
+// outside it, so kVideoQueueDepth + kVideoPoolHeadroom slots always suffice.
+constexpr std::size_t kVideoPoolSlots = kVideoQueueDepth + kVideoPoolHeadroom;
 // A video frame this far behind the audio clock is stale: converting and
 // queueing it cannot catch up, so it is dropped.
 constexpr double kLateFrameToleranceS = 0.10;
@@ -319,6 +323,18 @@ class FfmpegPlayer final : public Player
     // A silent audio path must name its reason in yt.log: the first line at
     // once, then at most one per second, and only when the reason changes.
     void note_audio_silence(const char *reason);
+    // The buffer pool's transitions are logged the first time and then at most
+    // once a second each: yt.log's last lines must name the pool step a crash
+    // happened in without logging every frame.
+    void note_buffer_acquire(int index, std::size_t size);
+    void note_buffer_release(int index, std::size_t size);
+    // One line a second when a picture was dropped for lack of memory.
+    void note_no_memory(int width, int height, std::size_t size);
+    // An allocation failure, not a resolution, sets the real picture budget:
+    // the queue target drops to the slots already in use (at least one).
+    void lower_queue_depth();
+    // Frees every pool slot and forgets the free list.
+    void clear_video_pool();
 
     void release_demuxer(Demuxer &demuxer);
     void release();
@@ -353,14 +369,67 @@ class FfmpegPlayer final : public Player
     // reallocated per frame) and the queue pairs a buffer with its pts; the
     // presentation gate scans it against the clock. exposed_buffer_ is the pool
     // slot currently on screen, valid until the next picture is presented.
+    //
+    // The whole frame path is allocation-safe in this -fno-exceptions build:
+    // the slot table and the queue are fixed-size and the picture bytes come
+    // from nothrow new, so a heap that cannot produce a width*height*4 slot
+    // drops the picture (see emit_video) instead of calling std::terminate.
     struct QueuedPicture
     {
         int buffer = -1;
         double pts = 0.0;
     };
-    std::vector<std::vector<std::uint8_t>> video_buffers_;
-    std::vector<int> video_free_buffers_;
-    std::deque<QueuedPicture> video_queue_;
+    // Fixed-capacity FIFO of decoded pictures; never allocates.
+    struct PictureQueue
+    {
+        std::array<QueuedPicture, kVideoQueueDepth> slots{};
+        std::size_t head = 0;
+        std::size_t count = 0;
+
+        bool empty() const
+        {
+            return count == 0;
+        }
+        std::size_t size() const
+        {
+            return count;
+        }
+        void clear()
+        {
+            head = 0;
+            count = 0;
+        }
+        QueuedPicture &front()
+        {
+            return slots[head];
+        }
+        void pop()
+        {
+            head = (head + 1) % kVideoQueueDepth;
+            --count;
+        }
+        bool push(const QueuedPicture &picture)
+        {
+            if (count >= kVideoQueueDepth)
+            {
+                return false;
+            }
+            slots[(head + count) % kVideoQueueDepth] = picture;
+            ++count;
+            return true;
+        }
+    };
+    // One reusable RGBA picture; the bytes come from nothrow new.
+    struct VideoBuffer
+    {
+        std::unique_ptr<std::uint8_t[]> bytes;
+        std::size_t size = 0;
+    };
+    std::array<VideoBuffer, kVideoPoolSlots> video_buffers_{};
+    std::size_t video_buffer_count_ = 0; // slots ever handed out
+    std::array<int, kVideoPoolSlots> video_free_buffers_{};
+    std::size_t video_free_count_ = 0;
+    PictureQueue video_queue_;
     // Effective queue bound, recomputed from the pool budget when the
     // resolution is known (see emit_video); kVideoQueueDepth until then.
     std::size_t video_queue_depth_ = kVideoQueueDepth;
@@ -372,8 +441,13 @@ class FfmpegPlayer final : public Player
     int video_height_ = 0;
     bool frame_seen_ = false;
 
-    std::vector<std::uint8_t> audio_scratch_;
-    std::vector<float> carry_;
+    // Resampler output and the sink-overflow carry, both grown with nothrow
+    // new for the same reason as the picture slots: out of memory drops that
+    // audio, it does not abort the app.
+    std::unique_ptr<std::uint8_t[]> audio_scratch_;
+    std::size_t audio_scratch_size_ = 0;
+    std::unique_ptr<float[]> carry_;
+    std::size_t carry_capacity_ = 0; // floats
     std::size_t carry_frames_ = 0;
     std::uint64_t audio_frames_written_ = 0;
     std::uint64_t audio_frames_decoded_ = 0;
@@ -390,6 +464,9 @@ class FfmpegPlayer final : public Player
     std::chrono::steady_clock::time_point last_decode_log_{};
     std::chrono::steady_clock::time_point last_drop_log_{};
     std::chrono::steady_clock::time_point last_drift_log_{};
+    std::chrono::steady_clock::time_point last_acquire_log_{};
+    std::chrono::steady_clock::time_point last_release_log_{};
+    std::chrono::steady_clock::time_point last_nomem_log_{};
 
     // Software by default; set_decode_mode() overrides it before open(). The
     // session is created only when a mode other than software asked for it, so
@@ -905,6 +982,62 @@ void FfmpegPlayer::note_audio_silence(const char *reason)
     log::line("ffmpeg: audio silent: %s", reason);
 }
 
+void FfmpegPlayer::note_buffer_acquire(int index, std::size_t size)
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_acquire_log_ < std::chrono::seconds(1))
+    {
+        return;
+    }
+    last_acquire_log_ = now;
+    log::line("ffmpeg: video buffer acquired index=%d size=%zu pool=%zu free=%zu", index, size,
+              video_buffer_count_, video_free_count_);
+}
+
+void FfmpegPlayer::note_buffer_release(int index, std::size_t size)
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_release_log_ < std::chrono::seconds(1))
+    {
+        return;
+    }
+    last_release_log_ = now;
+    log::line("ffmpeg: video buffer released index=%d size=%zu pool=%zu free=%zu", index, size,
+              video_buffer_count_, video_free_count_);
+}
+
+void FfmpegPlayer::note_no_memory(int width, int height, std::size_t size)
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_nomem_log_ < std::chrono::seconds(1))
+    {
+        return;
+    }
+    last_nomem_log_ = now;
+    log::line("ffmpeg: picture dropped, no memory for a %dx%d slot (%zu MB)", width, height,
+              size / (1024u * 1024u));
+}
+
+void FfmpegPlayer::lower_queue_depth()
+{
+    // The queue holds at most kVideoQueueDepth entries, so the depth must stay
+    // within it: in_use can reach the queue plus the exposed picture (13), and
+    // a depth above the capacity would make the drop-oldest guard unreachable.
+    const std::size_t in_use = video_buffer_count_ - video_free_count_;
+    video_queue_depth_ = std::clamp<std::size_t>(in_use, 1u, kVideoQueueDepth);
+}
+
+void FfmpegPlayer::clear_video_pool()
+{
+    for (VideoBuffer &slot : video_buffers_)
+    {
+        slot.bytes.reset();
+        slot.size = 0;
+    }
+    video_buffer_count_ = 0;
+    video_free_count_ = 0;
+}
+
 void FfmpegPlayer::pump_video(int budget)
 {
     if (video_.format == nullptr || video_.drained)
@@ -1227,9 +1360,10 @@ void FfmpegPlayer::emit_video(AVFrame *frame)
     {
         // A resolution change invalidates everything decoded so far (and the
         // pool: the buffers are reallocated at the new size on demand).
+        log::line("ffmpeg: video resolution %dx%d -> %dx%d", video_width_, video_height_, width,
+                  height);
         video_queue_.clear();
-        video_free_buffers_.clear();
-        video_buffers_.clear();
+        clear_video_pool();
         exposed_buffer_ = -1;
         exposed_pts_ = kNoPts;
         picture_presented_ = false;
@@ -1249,6 +1383,28 @@ void FfmpegPlayer::emit_video(AVFrame *frame)
     }
 
     const int target = acquire_video_buffer(size);
+    if (target < 0)
+    {
+        // The pool could not produce a width*height*4 slot (see
+        // acquire_video_buffer): the picture is dropped and playback continues
+        // on what is already queued. One line a second names the drop.
+        note_no_memory(width, height, size);
+        return;
+    }
+
+    // Failure scenario: a pool slot smaller than the frame's width*height*4
+    // would let sws_scale write past it (height rows at stride width*4), so
+    // the convert refuses to run unless the slot is provably big enough. The
+    // pool sizes every slot from the frame itself (see acquire_video_buffer),
+    // never from the stream's advertised dimensions.
+    if (static_cast<std::size_t>(target) >= video_buffer_count_ ||
+        video_buffers_[target].size < size)
+    {
+        release_video_buffer(target);
+        log::line("ffmpeg: video buffer %d too small for %dx%d (defect)", target, width, height);
+        error_ = "video buffer pool returned an undersized slot";
+        return;
+    }
 
     sws_ =
         sws_getCachedContext(sws_, width, height, static_cast<AVPixelFormat>(frame->format), width,
@@ -1260,7 +1416,7 @@ void FfmpegPlayer::emit_video(AVFrame *frame)
         return;
     }
 
-    std::uint8_t *destination[4] = {video_buffers_[target].data(), nullptr, nullptr, nullptr};
+    std::uint8_t *destination[4] = {video_buffers_[target].bytes.get(), nullptr, nullptr, nullptr};
     const int destination_stride[4] = {width * 4, 0, 0, 0};
     sws_scale(sws_, frame->data, frame->linesize, 0, height, destination, destination_stride);
 
@@ -1270,9 +1426,15 @@ void FfmpegPlayer::emit_video(AVFrame *frame)
         // Defensive: pump_video holds before the queue is full, but the open()
         // probe converts frames without that guard. Never grow past the bound.
         release_video_buffer(video_queue_.front().buffer);
-        video_queue_.pop_front();
+        video_queue_.pop();
     }
-    video_queue_.push_back(QueuedPicture{target, pts});
+    if (!video_queue_.push(QueuedPicture{target, pts}))
+    {
+        // Proven unreachable: the guard above leaves room in the fixed queue
+        // and video_queue_depth_ never exceeds its capacity.
+        release_video_buffer(target);
+        return;
+    }
     last_video_pts_ = pts;
     if (!frame_seen_)
         log::line("ffmpeg: first frame %dx%d pts=%.2f", width, height, pts);
@@ -1281,26 +1443,62 @@ void FfmpegPlayer::emit_video(AVFrame *frame)
 
 int FfmpegPlayer::acquire_video_buffer(std::size_t size)
 {
-    if (!video_free_buffers_.empty())
+    while (video_free_count_ > 0)
     {
-        const int index = video_free_buffers_.back();
-        video_free_buffers_.pop_back();
-        if (video_buffers_[index].size() != size)
+        const int index = video_free_buffers_[--video_free_count_];
+        // Failure scenario: an index left in the free list from a pool that
+        // has since shrunk (the resolution-change clear) would index past
+        // video_buffers_; stale entries are dropped instead of used.
+        if (index < 0 || static_cast<std::size_t>(index) >= video_buffer_count_)
         {
-            video_buffers_[index].assign(size, 0u);
+            continue;
         }
+        VideoBuffer &slot = video_buffers_[static_cast<std::size_t>(index)];
+        if (slot.size != size)
+        {
+            // nothrow new: an allocation that throws would std::terminate this
+            // -fno-exceptions build, so a failed slot drops the picture instead.
+            std::unique_ptr<std::uint8_t[]> fresh(new (std::nothrow) std::uint8_t[size]);
+            if (fresh == nullptr)
+            {
+                video_free_buffers_[video_free_count_++] = index;
+                lower_queue_depth();
+                return -1;
+            }
+            slot.bytes = std::move(fresh);
+            slot.size = size;
+        }
+        note_buffer_acquire(index, size);
         return index;
     }
-    video_buffers_.emplace_back();
-    video_buffers_.back().assign(size, 0u);
-    return static_cast<int>(video_buffers_.size()) - 1;
+    if (video_buffer_count_ >= kVideoPoolSlots)
+    {
+        // Proven unreachable: the queue holds at most video_queue_depth_
+        // pictures and only two live outside it. The frame is dropped rather
+        // than handed a slot past the table.
+        lower_queue_depth();
+        return -1;
+    }
+    VideoBuffer &slot = video_buffers_[video_buffer_count_];
+    slot.bytes.reset(new (std::nothrow) std::uint8_t[size]);
+    if (slot.bytes == nullptr)
+    {
+        lower_queue_depth();
+        return -1;
+    }
+    slot.size = size;
+    const int index = static_cast<int>(video_buffer_count_++);
+    note_buffer_acquire(index, size);
+    return index;
 }
 
 void FfmpegPlayer::release_video_buffer(int index)
 {
-    if (index >= 0 && index < static_cast<int>(video_buffers_.size()))
+    if (index >= 0 && static_cast<std::size_t>(index) < video_buffer_count_ &&
+        video_free_count_ < kVideoPoolSlots)
     {
-        video_free_buffers_.push_back(index);
+        video_free_buffers_[video_free_count_++] = index;
+        note_buffer_release(index, video_buffers_[index].size);
     }
 }
 
@@ -1317,7 +1515,7 @@ bool FfmpegPlayer::present_due_picture()
         ++video_frames_dropped_;
         ++late_drop_run_;
         release_video_buffer(video_queue_.front().buffer);
-        video_queue_.pop_front();
+        video_queue_.pop();
         note_video_drop();
     }
     if (video_queue_.empty())
@@ -1343,7 +1541,7 @@ bool FfmpegPlayer::present_due_picture()
     }
     exposed_buffer_ = video_queue_.front().buffer;
     exposed_pts_ = pts;
-    video_queue_.pop_front();
+    video_queue_.pop();
     picture_presented_ = true;
     late_drop_run_ = 0;
 
@@ -1406,12 +1604,22 @@ void FfmpegPlayer::emit_audio(AVFrame *frame)
         return;
     }
     const std::size_t needed = static_cast<std::size_t>(capacity) * 2u * sizeof(float);
-    if (audio_scratch_.size() < needed)
+    if (audio_scratch_size_ < needed)
     {
-        audio_scratch_.resize(needed);
+        // Grown with nothrow new like the picture slots: a heap that cannot
+        // spare the resampler buffer drops this batch's audio instead of
+        // calling std::terminate in this -fno-exceptions build.
+        std::unique_ptr<std::uint8_t[]> fresh(new (std::nothrow) std::uint8_t[needed]);
+        if (fresh == nullptr)
+        {
+            note_audio_silence("no memory for the resampler buffer");
+            return;
+        }
+        audio_scratch_ = std::move(fresh);
+        audio_scratch_size_ = needed;
     }
 
-    std::uint8_t *out[1] = {audio_scratch_.data()};
+    std::uint8_t *out[1] = {audio_scratch_.get()};
     const std::uint8_t *const *in =
         frame->extended_data != nullptr ? frame->extended_data : frame->data;
     const int converted = swr_convert(swr_, out, capacity, in, frame->nb_samples);
@@ -1420,7 +1628,7 @@ void FfmpegPlayer::emit_audio(AVFrame *frame)
         note_audio_silence("resampler produced no frames");
         return;
     }
-    push_audio(reinterpret_cast<const float *>(audio_scratch_.data()),
+    push_audio(reinterpret_cast<const float *>(audio_scratch_.get()),
                static_cast<std::size_t>(converted));
 }
 
@@ -1467,13 +1675,29 @@ void FfmpegPlayer::push_audio(const float *stereo, std::size_t frames)
         {
             drop = carry_frames_;
         }
-        std::memmove(carry_.data(), carry_.data() + drop * 2,
+        std::memmove(carry_.get(), carry_.get() + drop * 2,
                      (carry_frames_ - drop) * 2 * sizeof(float));
         carry_frames_ -= drop;
     }
     const std::size_t offset = carry_frames_ * 2;
-    carry_.resize(offset + rest * 2);
-    std::memcpy(carry_.data() + offset, stereo + written * 2, rest * 2 * sizeof(float));
+    if (carry_capacity_ < offset + rest * 2)
+    {
+        // Grown with nothrow new like the picture slots: out of memory drops
+        // this carried audio instead of aborting the app.
+        std::unique_ptr<float[]> fresh(new (std::nothrow) float[offset + rest * 2]);
+        if (fresh == nullptr)
+        {
+            note_audio_silence("no memory for the carry buffer");
+            return;
+        }
+        if (carry_frames_ > 0)
+        {
+            std::memcpy(fresh.get(), carry_.get(), carry_frames_ * 2 * sizeof(float));
+        }
+        carry_ = std::move(fresh);
+        carry_capacity_ = offset + rest * 2;
+    }
+    std::memcpy(carry_.get() + offset, stereo + written * 2, rest * 2 * sizeof(float));
     carry_frames_ += rest;
 }
 
@@ -1489,7 +1713,7 @@ bool FfmpegPlayer::flush_carry()
         carry_frames_ = 0;
         return true;
     }
-    const std::size_t written = sink_->write(carry_.data(), carry_frames_);
+    const std::size_t written = sink_->write(carry_.get(), carry_frames_);
     audio_frames_written_ += written;
     if (written >= carry_frames_)
     {
@@ -1498,7 +1722,7 @@ bool FfmpegPlayer::flush_carry()
     }
     if (written > 0)
     {
-        std::memmove(carry_.data(), carry_.data() + written * 2,
+        std::memmove(carry_.get(), carry_.get() + written * 2,
                      (carry_frames_ - written) * 2 * sizeof(float));
         carry_frames_ -= written;
     }
@@ -1544,9 +1768,15 @@ VideoFrameView FfmpegPlayer::poll_frame()
     note_drift();
 
     VideoFrameView view;
-    if (exposed_buffer_ >= 0 && !video_buffers_[exposed_buffer_].empty())
+    // Failure scenario: an exposed index that outlived a pool shrink would
+    // index past video_buffers_, so the index is bounds-checked before use.
+    // The view's width*height*4 is exactly the slot's size: the slot was
+    // acquired for the same frame that set video_width_/video_height_, and a
+    // resolution change clears the pool and resets exposed_buffer_ first.
+    if (exposed_buffer_ >= 0 && static_cast<std::size_t>(exposed_buffer_) < video_buffer_count_ &&
+        video_buffers_[exposed_buffer_].bytes != nullptr)
     {
-        view.rgba = video_buffers_[exposed_buffer_].data();
+        view.rgba = video_buffers_[exposed_buffer_].bytes.get();
         view.width = video_width_;
         view.height = video_height_;
         view.pts = exposed_pts_;
@@ -1603,16 +1833,21 @@ void FfmpegPlayer::seek(double seconds)
         sink_->drain();
     }
 
+    std::size_t dropped = 0;
     while (!video_queue_.empty())
     {
         release_video_buffer(video_queue_.front().buffer);
-        video_queue_.pop_front();
+        video_queue_.pop();
+        ++dropped;
     }
     release_video_buffer(exposed_buffer_);
     exposed_buffer_ = -1;
     exposed_pts_ = kNoPts;
     picture_presented_ = false;
     late_drop_run_ = 0;
+    // One line per seek: the clear is a risky transition and a crash right
+    // after it must still be nameable in yt.log.
+    log::line("ffmpeg: seek %.2fs cleared %zu queued pictures", seconds, dropped);
     last_video_pts_ = seconds;
     clock_ = seconds;
     wall_anchor_ = true;
@@ -1708,10 +1943,11 @@ void FfmpegPlayer::release()
     release_demuxer(audio_);
 
     video_queue_.clear();
-    video_buffers_.clear();
-    video_free_buffers_.clear();
-    audio_scratch_.clear();
-    carry_.clear();
+    clear_video_pool();
+    audio_scratch_.reset();
+    audio_scratch_size_ = 0;
+    carry_.reset();
+    carry_capacity_ = 0;
     carry_frames_ = 0;
 
     sink_ = nullptr;
@@ -1743,6 +1979,9 @@ void FfmpegPlayer::release()
     last_decode_log_ = std::chrono::steady_clock::time_point{};
     last_drop_log_ = std::chrono::steady_clock::time_point{};
     last_drift_log_ = std::chrono::steady_clock::time_point{};
+    last_acquire_log_ = std::chrono::steady_clock::time_point{};
+    last_release_log_ = std::chrono::steady_clock::time_point{};
+    last_nomem_log_ = std::chrono::steady_clock::time_point{};
 
     clock_ = 0.0;
     wall_anchor_ = false;

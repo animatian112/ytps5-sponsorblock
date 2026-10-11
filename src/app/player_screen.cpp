@@ -17,6 +17,8 @@
 
 #include <GL/glcorearb.h>
 
+#include <chrono>
+
 namespace hui::app
 {
 namespace
@@ -207,6 +209,16 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             texture_width_ = frame.width;
             texture_height_ = frame.height;
             last_pts_ = frame.pts;
+            // The upload reads width*height*4 bytes out of the player's pool
+            // slot. The first one is logged at once and afterwards one line a
+            // second at most, so yt.log's last lines name this step when the
+            // run dies around it without logging every frame.
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last_upload_log_ >= std::chrono::seconds(1))
+            {
+                last_upload_log_ = now;
+                yt::log::line("ffmpeg: texture upload %dx%dx4", frame.width, frame.height);
+            }
         }
         ended_ = player_->ended();
     }

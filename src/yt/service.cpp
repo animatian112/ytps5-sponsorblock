@@ -143,6 +143,10 @@ struct Service::Impl
     bool login_cancel = false;
     std::unique_ptr<Player> player;
     bool signed_in = false;
+    // Set when import_token_file() really restored a token from the install
+    // folder and loaded it; taken once by the frame (take_token_restored) so
+    // the restore message runs exactly then.
+    bool token_restored = false;
     std::string last_error;
 
     // ---- worker-only ----
@@ -197,7 +201,31 @@ struct Service::Impl
             login.revision++;
             return;
         }
-        refresh_token_locked();
+        // The flag goes up before the signed-in flip inside
+        // refresh_token_locked(): the frame reads the one-shot flag in the
+        // same frame it first sees signed_in() == true, and a frame that
+        // catches the flip before the flag was published would consume it as
+        // false and lose the "Account stored" toast.
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            token_restored = true;
+        }
+        // A token that was adopted but never loaded (the server or the
+        // network refused the exchange) is not a restore: no message, no
+        // signed-in state.
+        if (!refresh_token_locked())
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            token_restored = false;
+            return;
+        }
+        log::line("login: token restored from %s", path.c_str());
+        std::lock_guard<std::mutex> lock(mutex);
+        // The feeds must be requested with the token: queue both so Home and
+        // Subscriptions load the signed-in answer instead of whatever was
+        // published while the account was still missing.
+        job.home = true;
+        job.subscriptions = true;
     }
 
     FeedView *slot(FeedKind kind)
@@ -239,6 +267,17 @@ struct Service::Impl
         view.revision++;
     }
 
+    // The account is gone (signed out, or a token the server rejects): the
+    // account feeds go with it, so no screen shows old content or claims to
+    // lack it for the wrong reason. Callers hold the mutex.
+    void reset_account_feeds()
+    {
+        home = FeedView{};
+        home.revision++;
+        subscriptions = FeedView{};
+        subscriptions.revision++;
+    }
+
     // ---- jobs ----
     void do_channel_page(const std::string &channel_id)
     {
@@ -246,7 +285,16 @@ struct Service::Impl
         open_channel_id = channel_id;
 
         ChannelPage page;
-        if (!tube.channel_page(channel_id, &page))
+        bool ok = tube.channel_page(channel_id, &page);
+        if (!ok)
+        {
+            // A stale token: refresh once and retry, as do_feed and do_video
+            // do - a public channel must not go blank over an access token
+            // the server would have renewed.
+            if (tube.last_status() == 401 && refresh_token_locked())
+                ok = tube.channel_page(channel_id, &page);
+        }
+        if (!ok)
         {
             log::line("channel: page failed status=%ld error=%s", tube.last_status(),
                       tube.last_error().c_str());
@@ -304,7 +352,16 @@ struct Service::Impl
         }
 
         FeedPage page;
-        if (!tube.channel_tab(channel_id, params, &page))
+        bool ok = tube.channel_tab(channel_id, params, &page);
+        if (!ok)
+        {
+            // A stale token: refresh once and retry, as do_feed and do_video
+            // do - a tab must not go blank over an access token the server
+            // would have renewed.
+            if (tube.last_status() == 401 && refresh_token_locked())
+                ok = tube.channel_tab(channel_id, params, &page);
+        }
+        if (!ok)
         {
             log::line("channel: tab %d \"%s\" failed status=%ld error=%s", index, title.c_str(),
                       tube.last_status(), tube.last_error().c_str());
@@ -358,11 +415,13 @@ struct Service::Impl
             break;
         }
 
+        bool retried = false;
         if (!ok)
         {
             // A stale token: refresh once and retry.
             if (tube.last_status() == 401 && refresh_token_locked())
             {
+                retried = true;
                 switch (kind)
                 {
                 case FeedKind::home:
@@ -379,6 +438,25 @@ struct Service::Impl
         }
         if (!ok)
         {
+            // The server rejects the account token even after a refresh: end
+            // in the sign-in state (the screens then name the cause) instead
+            // of passing the refusal off as an empty feed. Only a retry that
+            // ran and still came back with 401 says that: when the refresh
+            // itself failed the 401 never got a second chance, and the verdict
+            // refresh_token_locked() already made stands - a transport failure
+            // keeps the token and the session and names the network problem, a
+            // rejected grant was already signed out there with its reason.
+            if (retried && tube.last_status() == 401)
+            {
+                log::line("login: token rejected (%s)", tube.last_error().c_str());
+                const std::string why = tube.last_error();
+                tube.set_access_token({});
+                std::lock_guard<std::mutex> lock(mutex);
+                signed_in = false;
+                last_error = why;
+                login.revision++;
+                reset_account_feeds();
+            }
             publish_error(kind, tube.last_error());
             return;
         }
@@ -412,9 +490,19 @@ struct Service::Impl
         if (!auth.refresh(&error))
         {
             std::lock_guard<std::mutex> lock(mutex);
-            signed_in = false;
             last_error = error;
-            login.revision++;
+            // The auth object drops a token the server rejects; with it gone
+            // the account is signed out and the screens must say so. A
+            // transport failure keeps the token and the session: the next
+            // request reports the network error instead of telling the
+            // player to sign in again.
+            if (!auth.signed_in())
+            {
+                signed_in = false;
+                tube.set_access_token({});
+                login.revision++;
+                reset_account_feeds();
+            }
             return false;
         }
         tube.set_access_token(auth.access_token());
@@ -750,9 +838,11 @@ struct Service::Impl
                 {
                     if (first_error.empty())
                         first_error = fresh->error();
-                    add_attempt(generation,
-                                info.client + " itag " + std::to_string(video_format->itag) + " " +
-                                    std::to_string(video_format->height) + "p: " + fresh->error());
+                    // The failure names the format and its URL kind: a 403 on a
+                    // ciphered format means the descrambled URL was refused,
+                    // which reads very differently from a decoder error.
+                    add_attempt(generation, info.client + " " + yt::describe_format(video_format) +
+                                                ": " + fresh->error());
                     set_stage(generation, "Streams");
                     // This itag, and the codec of a format this build cannot
                     // open at all, are not tried again in this client.
@@ -906,8 +996,10 @@ struct Service::Impl
                 tube.set_access_token({});
                 std::lock_guard<std::mutex> lock(mutex);
                 signed_in = false;
+                token_restored = false;
                 login = LoginView{};
                 login.revision++;
+                reset_account_feeds();
             }
             if (taken.cancel_sign_in)
             {
@@ -1163,6 +1255,14 @@ void Service::import_token_file()
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->job.import_token = true;
     impl_->wake.notify_all();
+}
+
+bool Service::take_token_restored()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    const bool restored = impl_->token_restored;
+    impl_->token_restored = false;
+    return restored;
 }
 
 bool Service::export_token(std::string *where)

@@ -1,132 +1,129 @@
-# Hardware-Video-Decode (Videodec2) — Stand und Weg
+# Hardware video decode (Videodec2) — status and path
 
-Diese Seite hält fest, was auf der PS5 **bewiesen** ist, was in dieser App
-**gebaut** ist und was für die vollständige Integration noch fehlt. Sie ist
-bewusst konservativ: nichts gilt als möglich, was nicht auf einer Konsole
-gelaufen ist.
+This page records what is **proven** on the PS5, what is **built** in this app
+and what is still missing for the full integration. It is deliberately
+conservative: nothing counts as possible that has not run on a console.
 
-## Was bewiesen ist
+## What is proven
 
-Die PS5 dekodiert Video nicht auf den Shader-Kernen, sondern im
-Fixed-Function-Block **Videodec2**. Konsolen-validierte Messungen liegen im
-Research-Projekt [ps5-hardware-video-decoding-research](https://github.com/blackbearreloaded/ps5-hardware-video-decoding-research)
-vor (H.264 High, HEVC Main/Main10, VP9 Profile 0/2; 1080p–4K; Zero-Copy der
-Dekoder-Fläche in AGC; VP9 4K60 stabil bei 59,95 fps). **AV1 ist dort nicht
-etabliert** — für AV1 gibt es bislang keinen Nachweis, also bleibt es bei
-Software (ffmpeg) mit dem Auflösungs-Cap.
+The PS5 decodes video not on the shader cores but in the fixed-function block
+**Videodec2**. Console-validated measurements are in the research project
+[ps5-hardware-video-decoding-research](https://github.com/blackbearreloaded/ps5-hardware-video-decoding-research)
+(H.264 High, HEVC Main/Main10, VP9 Profile 0/2; 1080p–4K; zero-copy of the
+decoder surface into AGC; VP9 4K60 stable at 59.95 fps). **AV1 is not
+established there** — there is no proof for AV1 so far, so it stays on
+software (ffmpeg) with the resolution cap.
 
-Für diese App ist damit die Zielreihenfolge klar: **VP9 zuerst**, dann
-AVC/HEVC; AV1 spielt für den Hardware-Pfad keine Rolle.
+For this app the target order is therefore clear: **VP9 first**, then
+AVC/HEVC; AV1 plays no role in the hardware path.
 
-## Was in dieser App gebaut ist
+## What is built in this app
 
-Die Argument-Layouts sind keine Rekonstruktion mehr. Die Session in
-`src/platform/ps5/videodec.cpp` folgt der öffentlich auf Hardware
-verifizierten Sequenz und nennt ihre Quellen selbst:
+The argument layouts are no longer a reconstruction. The session in
+`src/platform/ps5/videodec.cpp` follows the sequence publicly verified on
+hardware and names its own sources:
 
 - **EVO-PLAYER-PS5** (`sainsaji`),
-  `projects/evoplayer/media/include/sce/sce_videodec2.h` — Struct-Layouts,
-  Codec-/Level-Konstanten und die Speicher-Typisierung.
-- **`docs/evo-pro/videodec2-abi.md`** — die exakte Bring-up-Reihenfolge und die
-  Protection-Tabelle je Region (hardware-verifiziert auf PS5 12.70 am
-  2026-09-01: 1080p-H.264-IDR bis NV12-Frame, jeder Aufruf `rc=0`).
-- Beide schreiben ihrerseits **blackbearreloaded/ProsperoLight** fort, den
-  Moonlight-Client, der auf dem VCN-Block dekodiert.
+  `projects/evoplayer/media/include/sce/sce_videodec2.h` — struct layouts,
+  codec/level constants and the memory typing.
+- **`docs/evo-pro/videodec2-abi.md`** — the exact bring-up order and the
+  protection table per region (hardware-verified on PS5 12.70 on 2026-09-01:
+  1080p H.264 IDR up to an NV12 frame, every call `rc=0`).
+- Both in turn build on **blackbearreloaded/ProsperoLight**, the Moonlight
+  client that decodes on the VCN block.
 
-Gebaut ist damit:
+What is built from that:
 
-- **Import-Kette unverändert:** `tooling/stubs/libSceVideodec2.c` bleibt der
-  Stub mit allen 26 öffentlich bekannten Einstiegspunkten; `make` bindet ihn
-  über `APP_IMPORT_STUBS` ein, alle 26 NIDs stehen im
-  `dist/PPSA99350/eboot.bin`.
-- **Kernel-gemappte Regionen (Typ 12):** Der CPU-Workspace liegt in **named
-  flexible memory** (Protection `0x03`), alle übrigen Regionen (compute, gpu,
-  cpu_gpu, frame pool) werden mit
+- **Import chain unchanged:** `tooling/stubs/libSceVideodec2.c` remains the
+  stub with all 26 publicly known entry points; `make` links it in via
+  `APP_IMPORT_STUBS`, all 26 NIDs are in `dist/PPSA99350/eboot.bin`.
+- **Kernel-mapped regions (type 12):** the CPU workspace lies in **named
+  flexible memory** (protection `0x03`), all remaining regions (compute, gpu,
+  cpu_gpu, frame pool) are mapped with
   `sceKernelAllocateDirectMemory(…, type 12, alignment 0x4000)` +
-  `sceKernelMapDirectMemory` gemappt — mit eigener Protection je Region
+  `sceKernelMapDirectMemory` — each with its own protection
   (`0x33` CPU r/w + GPU, `0x32` GPU).
-- **Compute-Queue zuerst:** `QueryComputeMemoryInfo` → Größe mappen →
-  `AllocateComputeQueue` mit `resource_type = Compute`; der Handle steckt
-  anschließend in der Decoder-Konfiguration.
-- **Explizites Profil/Level je Codec:** AVC `profile_idc 100` (High) und VP9
-  Profile 0, Level x10 je Auflösung (AVC 51/52, VP9 41/51), Geometrie auf 16
-  gerundet (1080p als 1920×1088), `pipeline_depth = 1`, `cpu_affinity 0x3F`,
+- **Compute queue first:** `QueryComputeMemoryInfo` → map the size →
+  `AllocateComputeQueue` with `resource_type = Compute`; the handle then goes
+  into the decoder configuration.
+- **Explicit profile/level per codec:** AVC `profile_idc 100` (High) and VP9
+  profile 0, level x10 per resolution (AVC 51/52, VP9 41/51), geometry rounded
+  to 16 (1080p as 1920×1088), `pipeline_depth = 1`, `cpu_affinity 0x3F`,
   `cpu_priority 700`.
-- **`Reset` nach `CreateDecoder`:** Die Session meldet sich erst danach als
-  bereit.
-- **Validierter `Decode`:** Ein Bild zählt nur bei
-  `out.valid && !out.error && picture_count > 0` als Erfolg, und die
-  zurückgegebene Fläche muss ein exaktes Mitglied des caller-eigenen
-  Frame-Pools sein; liefert die erste AU bei Depth 1 keins, folgt `Flush`.
-- **Jeder Schritt loggt:** Jede Phase schreibt genau eine Zeile mit Name,
-  Rückgabewert und Import-Zählung; der **erste Fehlschlag nennt den Schritt**
-  in der Fehlermeldung, und die Session ruft nie einen null-Import auf.
-- **Startup-Probe bleibt:** `videodec_probe.cpp` schreibt beim Start
-  `[YTV] videodec2 imports: <n>/26 reachable` — die erste Antwort auf „ist
-  libSceVideodec2 für einen Homebrew-Titel ladbar?“.
-- **`videodec_supports()` = AVC + VP9:** nur für diese beiden ist ein
-  konsolen-bewiesener Pfad vorhanden; AV1 bleibt ohne Nachweis bei Software.
-  (HEVC hat einen belegten Pfad, `yt::Codec` führt HEVC aber nicht.)
+- **`Reset` after `CreateDecoder`:** the session reports itself ready only
+  after that.
+- **Validated `Decode`:** a picture counts as a success only at
+  `out.valid && !out.error && picture_count > 0`, and the returned surface must
+  be an exact member of the caller's own frame pool; if the first AU at depth 1
+  yields none, `Flush` follows.
+- **Every step logs:** every phase writes exactly one line with name, return
+  value and import count; the **first failure names the step** in the error
+  message, and the session never calls a null import.
+- **Startup probe stays:** `videodec_probe.cpp` writes
+  `[YTV] videodec2 imports: <n>/26 reachable` at startup — the first answer to
+  "is libSceVideodec2 loadable for a homebrew title?".
+- **`videodec_supports()` = AVC + VP9:** only for these two is there a
+  console-proven path; AV1 stays without proof on software. (HEVC has a proven
+  path, but `yt::Codec` does not carry HEVC.)
 
-Nicht bewiesen bleibt die **Präsentation**: Die Session beschreibt ein
-dekodiertes Bild, bindet es aber nicht selbst. Ob eine Dekoder-Fläche als
-GL-Textur importierbar ist (Mesa-Interop, `mesa_glinterop.h`, Nutzung
-unbestätigt), ist weiterhin offen — der Player behandelt genau diesen fehlenden
-Import als Hardware-Fehlschlag und fällt auf Software zurück.
+**Presentation** remains unproven: the session describes a decoded picture but
+does not bind it itself. Whether a decoder surface can be imported as a GL
+texture (Mesa interop, `mesa_glinterop.h`, use unconfirmed) is still open —
+the player treats exactly this missing import as a hardware failure and falls
+back to software.
 
-## Was ein Konsolen-Lauf zeigt
+## What a console run shows
 
-Mit `Decoding: Auto` oder `Hardware` und einem AVC-/VP9-Stream schreibt der
-Lauf der Reihe nach in `yt.log`:
+With `Decoding: Auto` or `Hardware` and an AVC/VP9 stream the run writes the
+following into `yt.log` in order:
 
-1. **Startup:** `[YTV] videodec2 imports: <n>/26 reachable`. `26/26` heißt: die
-   Bibliothek ist für Homebrew ladbar und die NID-Kette stimmt; `0/26` heißt:
-   kein Symbol gebunden, die Session verweigert dann jeden Schritt *namentlich*,
-   statt einen Null-Zeiger zu rufen.
-2. **Compute-Queue:** die Zeile `[YTV] videodec2 compute queue: <ptr> (<bytes>
-   bytes)` — davor `QueryComputeMemoryInfo`, das Mappen der Compute-Region und
-   `AllocateComputeQueue` (`resource_type = Compute`).
-3. **Die vier Direct-Memory-Regionen mit `type=12`:** `region compute: …
+1. **Startup:** `[YTV] videodec2 imports: <n>/26 reachable`. `26/26` means:
+   the library is loadable for homebrew and the NID chain is correct; `0/26`
+   means: no symbol bound, and the session then refuses every step *by name*
+   instead of calling a null pointer.
+2. **Compute queue:** the line `[YTV] videodec2 compute queue: <ptr> (<bytes>
+   bytes)` — before it `QueryComputeMemoryInfo`, mapping the compute region
+   and `AllocateComputeQueue` (`resource_type = Compute`).
+3. **The four direct-memory regions with `type=12`:** `region compute: …
    type=12 prot=0x33`, `region gpu: … type=12 prot=0x32`, `region cpu_gpu: …
-   type=12 prot=0x33`, `region frame: … type=12 prot=0x32` (dazu `region cpu: …
-   prot=0x03` — der CPU-Workspace in flexible memory).
+   type=12 prot=0x33`, `region frame: … type=12 prot=0x32` (plus `region cpu:
+   … prot=0x03` — the CPU workspace in flexible memory).
 4. **`CreateDecoder` / `Reset`:** `[YTV] videodec2 sceVideodec2CreateDecoder:
-   0x00000000 …` und `… sceVideodec2Reset: 0x00000000 …`; jeder Schritt loggt
-   seinen Rückgabewert, ein negativer nennt den Schritt in der Fehlermeldung.
-5. **Entweder ein dekodiertes Bild oder der erste fehlgeschlagene Schritt:**
-   `Decode` gilt nur bei `valid && !error && picture_count > 0` als Erfolg. In
-   diesem Build stoppt der noch fehlende Bild-Import (Dekoder-Fläche →
-   GL-Textur) jedes Hardware-Video, das Log zeigt dann `ffmpeg: hardware decode
-   unavailable: hardware picture import unavailable, using software`, und die
-   Wiedergabe läuft in Software. Ein Hardware-Bild ist erst dann „grün“, wenn
-   diese Zeile ausbleibt.
+   0x00000000 …` and `… sceVideodec2Reset: 0x00000000 …`; every step logs its
+   return value, a negative one names the step in the error message.
+5. **Either a decoded picture or the first failed step:** `Decode` counts as
+   success only at `valid && !error && picture_count > 0`. In this build the
+   still-missing picture import (decoder surface → GL texture) stops every
+   hardware video; the log then shows `ffmpeg: hardware decode unavailable:
+   hardware picture import unavailable, using software`, and playback runs in
+   software. A hardware picture only counts as "green" once that line is
+   absent.
 
-## Warum Software-Decode der Default ist
+## Why software decode is the default
 
-Der Default ist die neue Einstellung **`Decoding: Software`** (in
-`src/core/settings.cpp` als Byte im Save-Format; `Auto` und `Hardware` sind
-opt-in und werden mitgelesen). Gründe:
+The default is the new setting **`Decoding: Software`** (a byte in the save
+format in `src/core/settings.cpp`; `Auto` and `Hardware` are opt-in and read
+along). Reasons:
 
-- Die Argument-Layouts werden auf der Konsole noch validiert: Die Session folgt
-  zwar der veröffentlichten, hardware-verifizierten Sequenz, aber ob *diese
-  App* die Regionen mit den Rechten und Größen der Firmware bekommt, entscheidet
-  erst ein Konsolen-Lauf. Bis dahin bleibt der Default der Pfad, der heute
-  überall trägt.
-- Der Bild-Import (siehe oben) ist noch nicht belegt, also bringt der
-  Hardware-Pfad heute kein Bild auf den Schirm; die automatische Rückfallebene
-  ist Software.
-- AV1 hat keinen Hardware-Pfad: Software ist dort ohnehin Pflicht, und im Modus
-  `Hardware` wird AV1 gar nicht mehr gewählt.
-- Der Software-Weg (ffmpeg → GL-Textur) trägt heute AVC/VP9 bei 1080p. Jeder
-  fehlgeschlagene Hardware-Schritt wird geloggt, und `open()` scheitert nie am
-  Hardware-Pfad — Software übernimmt.
+- The argument layouts are still being validated on the console: the session
+  follows the published, hardware-verified sequence, but whether *this app*
+  gets the regions with the firmware's rights and sizes is only decided by a
+  console run. Until then the default stays the path that carries everywhere
+  today.
+- The picture import (see above) is not proven yet, so the hardware path puts
+  no picture on the screen today; the automatic fallback level is software.
+- AV1 has no hardware path: software is mandatory there anyway, and in
+  `Hardware` mode AV1 is no longer selected at all.
+- The software path (ffmpeg → GL texture) carries AVC/VP9 at 1080p today.
+  Every failed hardware step is logged, and `open()` never fails on the
+  hardware path — software takes over.
 
-## Erwarteter Gewinn (aus den Research-Messungen)
+## Expected gain (from the research measurements)
 
-| Codec | Auflösung | Software (heute) | Hardware (belegt) |
+| Codec | Resolution | Software (today) | Hardware (proven) |
 | --- | --- | --- | --- |
-| H.264 | 1080p60 | trägt | 2,27 ms Dekode, 60,00 fps |
-| VP9 | 1080p60 | trägt | 5,53 ms Dekode, 173 fps Batch |
-| VP9 | 4K60 | grenzwertig | 59,95 fps stabil, 16,7 ms AU→Flip |
-| HEVC | 4K60 | grenzwertig | 60,36 fps, 5,46 ms Dekode |
-| AV1 | jede | Software | kein Nachweis |
+| H.264 | 1080p60 | holds | 2.27 ms decode, 60.00 fps |
+| VP9 | 1080p60 | holds | 5.53 ms decode, 173 fps batch |
+| VP9 | 4K60 | borderline | 59.95 fps stable, 16.7 ms AU→flip |
+| HEVC | 4K60 | borderline | 60.36 fps, 5.46 ms decode |
+| AV1 | any | software | no proof |

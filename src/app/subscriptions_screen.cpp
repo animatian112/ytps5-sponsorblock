@@ -23,7 +23,6 @@ const TourStep kTour[] = {
 SubscriptionsScreen::SubscriptionsScreen(Context &context) : context_(context)
 {
     subs_.grid().style.theme = youtube_theme();
-    subs_.set_empty_text("No subscriptions found");
     subs_.set_bounds({360.0f, 150.0f, 1420.0f, 820.0f});
     subs_.set_active(true);
 
@@ -49,7 +48,18 @@ void SubscriptionsScreen::refresh_from_service()
 {
     const yt::FeedView view = context_.service.feed(yt::FeedKind::subscriptions);
     subs_.set_items(view.items, context_);
-    subs_.set_state(view.state, view.error);
+    if (context_.service.signed_in())
+    {
+        subs_.set_empty_text("No subscriptions found");
+        subs_.set_state(view.state, view.error);
+    }
+    else
+    {
+        // Not signed in: the cause is the missing account, and no text may
+        // claim there are no subscriptions.
+        subs_.set_empty_text("Sign in to see your subscriptions");
+        subs_.set_state(yt::Load::idle, {});
+    }
     more_requested_ = false;
 }
 

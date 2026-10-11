@@ -248,6 +248,13 @@ void Mixer::render(std::int16_t *out, int frames)
 
 void Mixer::render_chunk(std::int16_t *out, int frames)
 {
+    // The per-stream buffers hold exactly kMaxGrain frames and are handed to
+    // StreamRing::read, which fills as many frames as it is asked for.
+    // render() already chunks larger requests; this clamp keeps the sizing
+    // proof local to the hand-out (failure scenario: a caller passing more
+    // than kMaxGrain would let the ring fill past stream_buffer_).
+    if (frames > static_cast<int>(kMaxGrain))
+        frames = static_cast<int>(kMaxGrain);
     // Pull this grain from each music stream; a short read plays silence.
     for (std::size_t s = 0; s < kStreams; ++s)
     {

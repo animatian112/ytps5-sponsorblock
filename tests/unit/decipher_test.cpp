@@ -151,7 +151,8 @@ TEST(Decipher, PlayerResponseKeepsACipheredFormatAndTheJsUrl)
               "https://www.youtube.com/s/player/abc123/tv-player-ias.vflset/tv-player-ias.js");
 
     EXPECT_EQ(yt::format_summary(info.formats),
-              "3 formats: 1 avc, 1 vp9, 0 av1, 1 other, 1 plain, 2 ciphered, max 1080p");
+              "3 formats: 1 avc, 1 vp9, 0 av1, 1 other, 1 plain, 2 ciphered, max 1080p, "
+              "host rr1---sn-example.googlevideo.com");
 
     // The parsed cipher and the trimmed player JS descramble end to end.
     yt::Descrambler descrambler;

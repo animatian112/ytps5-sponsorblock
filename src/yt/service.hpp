@@ -142,6 +142,11 @@ class Service
     // Loads the saved token once at startup and refreshes it in the background.
     void refresh_token();
     std::string last_error() const;
+    // True once when import_token_file() really restored a token from the
+    // install folder and loaded it (the feeds carry it now). Consumed on
+    // read: the frame shows the restore message exactly then, never for a
+    // token that was not restored and loaded.
+    bool take_token_restored();
 
     // ---- offline helpers, used by the PC snapshot run and the console
     // validation tour: publish data without a worker thread ----

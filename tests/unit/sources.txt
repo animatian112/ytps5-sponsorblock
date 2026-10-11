@@ -4,10 +4,12 @@
 # (thumbs, app screens, main) stay out and are covered by the snapshot run.
 # The update transport (host/update_http_stub.cpp) is left out here: update_test.cpp
 # supplies its own stub so a check can be driven against a canned feed answer.
-host/http_host.cpp
+# The HTTP transport (host/http_host.cpp) is left out for the same reason:
+# tests/unit/http_stub.cpp supplies yt::http::perform with canned answers.
 host/self_update_platform_stub.cpp
 host/player_stub.cpp
 host/platform_host.cpp
+tests/unit/http_stub.cpp
 src/audio/cues.cpp
 src/audio/mixer.cpp
 src/audio/music.cpp

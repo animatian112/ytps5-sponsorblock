@@ -1168,6 +1168,18 @@ std::string query_field(std::string_view query, std::string_view key)
     return {};
 }
 
+// The host of a stream URL ("rr1---sn-example.googlevideo.com"): naming the
+// googlevideo node that has to serve - or refuse, 403 - a format is what makes
+// a refusal diagnosable in yt.log. Empty when the URL carries none.
+std::string url_host(std::string_view url)
+{
+    const std::size_t scheme = url.find("://");
+    const std::size_t start = scheme == std::string_view::npos ? 0 : scheme + 3;
+    const std::size_t end = url.find_first_of("/?#", start);
+    return std::string(
+        url.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start));
+}
+
 bool read_format(yyjson_val *obj, Format *format)
 {
     if (!yyjson_is_obj(obj))
@@ -1380,9 +1392,11 @@ bool parse_channel_page(std::string_view json, ChannelPage *page)
 }
 
 // A one-line census of a client's formats: total, the per-codec split, how
-// many carry a plain URL versus only a cipher, and the tallest video. Used
-// both for the per-client log line and the no-stream failure text, so the log
-// and the screen describe the same answer.
+// many carry a plain URL versus only a cipher, the tallest video, and the
+// googlevideo host(s) the URLs point at. Used both for the per-client log line
+// and the no-stream failure text, so the log and the screen describe the same
+// answer - and yt.log shows which kind of URL the formats carry and where it
+// would have to be served from.
 std::string format_summary(const std::vector<Format> &formats)
 {
     std::size_t avc = 0;
@@ -1392,6 +1406,7 @@ std::string format_summary(const std::vector<Format> &formats)
     std::size_t plain = 0;
     std::size_t ciphered = 0;
     int max_height = 0;
+    std::vector<std::string> hosts; // the distinct URL hosts
     for (const Format &format : formats)
     {
         switch (format.codec)
@@ -1415,12 +1430,52 @@ std::string format_summary(const std::vector<Format> &formats)
             ++plain;
         if (is_video_codec(format.codec) && format.height > max_height)
             max_height = format.height;
+        const std::string host = url_host(format.url);
+        if (host.empty())
+            continue;
+        bool known = false;
+        for (const std::string &seen : hosts)
+        {
+            if (seen == host)
+            {
+                known = true;
+                break;
+            }
+        }
+        if (!known)
+            hosts.push_back(host);
     }
+    std::string host_list;
+    for (const std::string &host : hosts)
+    {
+        if (!host_list.empty())
+            host_list += ",";
+        host_list += host;
+    }
+    if (host_list.empty())
+        host_list = "none";
 
     return std::to_string(formats.size()) + " formats: " + std::to_string(avc) + " avc, " +
            std::to_string(vp9) + " vp9, " + std::to_string(av1) + " av1, " + std::to_string(other) +
            " other, " + std::to_string(plain) + " plain, " + std::to_string(ciphered) +
-           " ciphered, max " + std::to_string(max_height) + "p";
+           " ciphered, max " + std::to_string(max_height) + "p, host " + host_list;
+}
+
+// One short line naming a format and the kind of URL it carries:
+// "itag=137 1080p AVC (ciphered)". The service puts it in front of the ffmpeg
+// text when an open fails, so a 403 names the format and its kind instead of
+// the bare demuxer string. nullptr becomes "none".
+std::string describe_format(const Format *format)
+{
+    if (format == nullptr)
+        return "none";
+    std::string text = "itag=" + std::to_string(format->itag);
+    if (format->height > 0)
+        text += " " + std::to_string(format->height) + "p";
+    text += " ";
+    text += codec_label(format->codec);
+    text += format->ciphered ? " (ciphered)" : " (plain)";
+    return text;
 }
 
 // yt-dlp's `(?:signatureTimestamp|sts)\s*:\s*(?P<sts>[0-9]{5})`, by hand: the
@@ -1843,6 +1898,16 @@ struct InnerTube::Impl
 
         std::vector<std::string> reasons;
         reasons.push_back(attempt_reason(attempt, page->error));
+        // A 401 on an authenticated attempt is the server rejecting the
+        // account token, not a stale client version: never paper over it with
+        // the signed-out WEB answer (an empty feed the player would read as
+        // "no subscriptions"). Surface it so the caller can refresh the token
+        // or sign out.
+        if (signed_in_client && attempt.status == 401)
+        {
+            join_reasons(reasons, &error);
+            return false;
+        }
         if (!signed_in_client || !attempt.transport_ok ||
             !(attempt.http_ok || fallback_status(attempt.status)))
         {
@@ -1888,6 +1953,14 @@ struct InnerTube::Impl
 
         std::vector<std::string> reasons;
         reasons.push_back(attempt_reason(attempt, page->error));
+        // As in feed_call: a 401 on an authenticated attempt rejects the
+        // token and reaches the caller; only a stale client drops the page to
+        // the signed-out WEB client below.
+        if (signed_in_client && attempt.status == 401)
+        {
+            join_reasons(reasons, &error);
+            return false;
+        }
         if (!signed_in_client || !attempt.transport_ok ||
             !(attempt.http_ok || fallback_status(attempt.status)))
         {

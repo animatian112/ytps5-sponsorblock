@@ -458,17 +458,40 @@ bool Auth::refresh(std::string *error)
         if (!refresh.empty())
             impl_->refresh_token = refresh;
         impl_->error.clear();
+        // The server may hand out a new refresh token with the access one;
+        // leaving the old one on disk would sign the next launch (and the
+        // next restore) out with a grant the server no longer knows.
+        // poll() persists for the same reason.
+        impl_->persist();
         clear_error(error);
     }
     else
     {
+        const std::string code = string_field(root, "error");
         std::string detail = string_field(root, "error_description");
         if (detail.empty())
-            detail = string_field(root, "error");
+            detail = code;
         if (detail.empty())
             detail = access.empty() ? "no access token" : "http " + std::to_string(response.status);
         impl_->error = detail;
         set_error(error, detail);
+        // Only the grant the server names as dead ("invalid_grant") is beyond
+        // retry: the account is signed out - memory and file - and the app
+        // ends in the sign-in state instead of one that will never work again.
+        // Any other refusal keeps the token. RFC 6749 answers a dead grant as
+        // 400 + invalid_grant and reserves this endpoint's 401 for
+        // invalid_client (the client id/secret pair), so a 401 names the
+        // scraped TV bundle's pair going stale - or a captive portal or proxy
+        // answering 401 - and dropping the grant there would force a re-link
+        // on an account the server never rejected. A transport failure or a
+        // temporary refusal keeps the token too and only reports the error.
+        if (code == "invalid_grant")
+        {
+            if (!impl_->token_path.empty())
+                std::remove(impl_->token_path.c_str());
+            impl_->access_token.clear();
+            impl_->refresh_token.clear();
+        }
     }
 
     if (doc != nullptr)

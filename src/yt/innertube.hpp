@@ -67,8 +67,15 @@ class InnerTube
 bool parse_feed_page(std::string_view json, FeedPage *page);
 bool parse_video_info(std::string_view json, VideoInfo *info);
 // A one-line census of one answer's formats ("24 formats: 12 avc, ...; max
-// 1080p"): the per-client log line and the no-stream failure text both use it.
+// 1080p, host rr5---sn-x.googlevideo.com"): the per-client log line and the
+// no-stream failure text both use it. The plain/ciphered counts and the URL
+// host make the kind of URL the answer carries visible in yt.log.
 std::string format_summary(const std::vector<Format> &formats);
+// One short line naming a format and the kind of URL it carries:
+// "itag=137 1080p AVC (ciphered)". The service puts it in front of the ffmpeg
+// error text when an open fails, so a 403 names the format and its kind
+// instead of the bare demuxer string. nullptr becomes "none".
+std::string describe_format(const Format *format);
 // The player's signature timestamp (sts): yt-dlp's pattern over the player JS
 // ("signatureTimestamp":12345 or "sts":12345), without pulling in <regex>.
 // Empty when the snippet carries none. Exposed for the unit tests.

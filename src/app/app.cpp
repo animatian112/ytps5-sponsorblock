@@ -575,12 +575,22 @@ void App::update(const InputFrame &input, float dt)
     const bool signed_in = service_.signed_in();
     if (signed_in && !was_signed_in_)
     {
+        // The feeds the screens asked for while the account was still missing
+        // carry no content: request both again now that the token is loaded.
         service_.request_home(true);
+        service_.request_subscriptions(true);
         if (login_return_ < screens_.size() && current_ == 4)
             show(login_return_); // the player picks the video up again by itself
+        // The restore message only appears when the install-folder token was
+        // really restored and loaded, never on a plain boot or a sign-in
+        // where nothing was restored.
+        const bool restored = service_.take_token_restored();
         std::string where;
         if (service_.export_token(&where))
-            toasts_.push(ui::StatusKind::success, "Account stored", where);
+        {
+            if (restored)
+                toasts_.push(ui::StatusKind::success, "Account stored", where);
+        }
         else
             toasts_.push(ui::StatusKind::warning, "Account only in the sandbox",
                          "Store a copy: " + where);

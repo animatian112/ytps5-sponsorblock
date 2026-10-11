@@ -45,7 +45,9 @@ class Auth
 
     DeviceCode begin();
     Poll poll(const DeviceCode &code, std::string *error);
-    // Exchanges the saved refresh token for an access token.
+    // Exchanges the saved refresh token for an access token. A grant the
+    // server rejects signs the account out (memory and file), so a rejected
+    // token ends in a clean sign-in state instead of a dead one.
     bool refresh(std::string *error);
     // The access token of the last successful sign-in or refresh.
     const std::string &access_token() const;

@@ -53,7 +53,7 @@ std::string describe_selection(const Format *format, const CodecChoice &choice)
         return "none";
     std::string text = "itag=" + std::to_string(format->itag) + " " +
                        std::to_string(format->width) + "x" + std::to_string(format->height) + " " +
-                       codec_label(format->codec);
+                       codec_label(format->codec) + (format->ciphered ? " (ciphered)" : " (plain)");
     const int ceiling = codec_height_ceiling(format->codec, choice);
     text += ceiling > 0 ? " ceiling=" + std::to_string(ceiling) + "p" : " ceiling=none";
     if (ceiling > 0 && format->height > ceiling)
@@ -90,12 +90,27 @@ bool beats_at_equal_height(const Format &candidate, const Format &current)
     return rank > current_rank || (rank == current_rank && candidate.bitrate > current.bitrate);
 }
 
+// The two formats one URL kind can end on: the highest inside its codec
+// ceiling, and - when nothing fits - the lowest above it.
+struct Pool
+{
+    const Format *best = nullptr;     // highest format inside its codec ceiling
+    const Format *fallback = nullptr; // lowest format above its codec ceiling
+};
+
 } // namespace
 
 const Format *select_video_format(const std::vector<Format> &formats, const CodecChoice &choice)
 {
-    const Format *best = nullptr;     // highest format inside its codec ceiling
-    const Format *fallback = nullptr; // lowest format above its codec ceiling
+    // The two URL kinds are scored apart: a plain URL opens as it stands,
+    // while a signatureCipher format needs the descrambler first (an unproven
+    // heuristic) whose output googlevideo can refuse with 403. A plain format
+    // is therefore picked whenever one survives the caps and the ceilings;
+    // only when none does the best ciphered format under the caps take over -
+    // a refused ciphered URL still beats no stream, and the caller retries
+    // past it. The lowest over-ceiling plain format stays the last resort.
+    Pool plain;
+    Pool ciphered;
     bool av1_skipped = false;
     for (const Format &format : formats)
     {
@@ -116,21 +131,30 @@ const Format *select_video_format(const std::vector<Format> &formats, const Code
             continue;
         if (choice.max_height > 0 && format.height > choice.max_height)
             continue; // the user's cap is hard: the fallback never crosses it
+        Pool &pool = format.ciphered ? ciphered : plain;
         const int ceiling = codec_height_ceiling(format.codec, choice);
         if (ceiling > 0 && format.height > ceiling)
         {
             // Above the codec's software ceiling: keep the lowest one around as
             // a last resort, a low stream still beats a black screen.
-            if (fallback == nullptr || format.height < fallback->height ||
-                (format.height == fallback->height && beats_at_equal_height(format, *fallback)))
-                fallback = &format;
+            if (pool.fallback == nullptr || format.height < pool.fallback->height ||
+                (format.height == pool.fallback->height &&
+                 beats_at_equal_height(format, *pool.fallback)))
+                pool.fallback = &format;
             continue;
         }
-        if (best == nullptr || format.height > best->height ||
-            (format.height == best->height && beats_at_equal_height(format, *best)))
-            best = &format;
+        if (pool.best == nullptr || format.height > pool.best->height ||
+            (format.height == pool.best->height && beats_at_equal_height(format, *pool.best)))
+            pool.best = &format;
     }
-    const Format *picked = best != nullptr ? best : fallback;
+    // Plain first while any plain format fits the caps and the ceilings, then
+    // the ciphered pool under the caps, and only then the over-ceiling plain
+    // fallback - a low stream still beats a black screen.
+    const Format *picked = plain.best;
+    if (picked == nullptr)
+        picked = ciphered.best != nullptr ? ciphered.best : ciphered.fallback;
+    if (picked == nullptr)
+        picked = plain.fallback;
     log::line("video: selection %s", describe_selection(picked, choice).c_str());
     return picked;
 }

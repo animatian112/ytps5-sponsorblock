@@ -31,15 +31,19 @@ const TourStep kTour[] = {
     {0.9f, hui::action_bit(Action::confirm), Direction::none, "subscriptions", 0, 0, 0, 0, 0},
 };
 
+// The empty state names the cause: "signed out" and "nothing recommended"
+// are different states and must not read the same. Signed out YouTube
+// answers an empty home feed from most networks; the app says why instead of
+// showing nothing.
+const char *kSignedOutEmpty = "Sign in to see your Home feed - or use Search";
+const char *kSignedInEmpty = "No feed available - use Search";
+
 } // namespace
 
 HomeScreen::HomeScreen(Context &context) : context_(context)
 {
     feed_.grid().style.theme = youtube_theme();
     feed_.grid().style.columns = 4;
-    // Signed out YouTube answers an empty home feed from most networks; the
-    // app says so instead of showing nothing.
-    feed_.set_empty_text("No feed available - sign in or use Search");
     feed_.grid().set_bounds({360.0f, 180.0f, 1420.0f, 800.0f});
     feed_.set_active(true);
     seen_revision_ = context_.service.revision(yt::FeedKind::home);
@@ -57,7 +61,18 @@ void HomeScreen::refresh_from_service()
 {
     const yt::FeedView view = context_.service.feed(yt::FeedKind::home);
     feed_.set_items(view.items, context_);
-    feed_.set_state(view.state, view.error);
+    if (context_.service.signed_in())
+    {
+        feed_.set_empty_text(kSignedInEmpty);
+        feed_.set_state(view.state, view.error);
+    }
+    else
+    {
+        // Not signed in: there is no feed to load or to fail - the empty
+        // text names the missing account, never "no feed".
+        feed_.set_empty_text(kSignedOutEmpty);
+        feed_.set_state(yt::Load::idle, {});
+    }
     more_requested_ = false;
 }
 

@@ -33,18 +33,27 @@ int codec_height_ceiling(Codec codec, const CodecChoice &choice);
 // The video format to play: at equal height AVC before VP9 before AV1 (the
 // software-decode order, not YouTube's hardware order), the highest height that
 // fits both choice.max_height and the codec's ceiling, and the higher bitrate
-// inside one codec. In DecodeMode::hardware an AV1 format is never returned -
-// the console has no AV1 decoder - though the codec ceilings still apply. When
-// the ceilings filter everything out, the lowest-height enabled format is
-// returned instead of nothing - a 480p AVC stream still beats a black screen.
-// nullptr only when no enabled codec has a usable format inside
-// choice.max_height (the caller shows "Kein Stream für aktive Codecs").
+// inside one codec. The URL kinds are ranked apart: a plain URL opens as it
+// stands, while a signatureCipher format needs the descrambler first (an
+// unproven heuristic) whose output googlevideo can refuse with 403. A plain
+// format is picked whenever one survives the caps and the ceilings; only when
+// none does the best ciphered format under the caps take over (its over-ceiling
+// fallback included) - a refused ciphered URL still beats no stream, and the
+// caller retries past it. In DecodeMode::hardware an AV1 format is never
+// returned - the console has no AV1 decoder - though the codec ceilings still
+// apply. When the ceilings filter everything out, the lowest-height enabled
+// format is returned instead of nothing - a 480p AVC stream still beats a
+// black screen - and that over-ceiling plain fallback comes only after the
+// ciphered pool has nothing left. nullptr only when no enabled codec has a
+// usable format inside choice.max_height (the caller shows "Kein Stream für
+// aktive Codecs").
 const Format *select_video_format(const std::vector<Format> &formats, const CodecChoice &choice);
 
-// One line describing a selection: "itag=137 1920x1080 AVC ceiling=1080p", plus
-// "fallback=above ceiling" when the format only got picked because nothing
-// inside the software ceiling was left. nullptr becomes "none". Used for the
-// selector's own log line and available to the callers.
+// One line describing a selection: "itag=137 1920x1080 AVC (plain)
+// ceiling=1080p" - the URL kind the format carries - plus "fallback=above
+// ceiling" when the format only got picked because nothing inside the software
+// ceiling was left. nullptr becomes "none". Used for the selector's own log
+// line and available to the callers.
 std::string describe_selection(const Format *format, const CodecChoice &choice);
 
 // The audio format to play: Opus before AAC, higher bitrate first.

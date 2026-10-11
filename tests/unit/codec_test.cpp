@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "yt/codec.hpp"
+#include "yt/innertube.hpp"
 
 #include <gtest/gtest.h>
 
@@ -22,6 +23,18 @@ Format video(Codec codec, int height, long long bitrate)
     format.width = height * 16 / 9;
     format.height = height;
     format.bitrate = bitrate;
+    return format;
+}
+
+// The same entry gated behind the player's signature: the unsigned base URL
+// plus the scrambled signature the descrambler would have to descramble before
+// the format can be opened.
+Format ciphered_video(Codec codec, int height, long long bitrate)
+{
+    Format format = video(codec, height, bitrate);
+    format.ciphered = true;
+    format.cipher_s = "abcdef";
+    format.cipher_sp = "sig";
     return format;
 }
 
@@ -182,6 +195,120 @@ TEST(Codec, AFormatWithoutUrlIsNeverPicked)
     EXPECT_EQ(picked->height, 720);
 }
 
+TEST(Codec, APlainUrlBeatsACipheredOne)
+{
+    // A plain URL opens as it stands; a ciphered one needs the descrambler
+    // first (an unproven heuristic) whose output googlevideo can refuse with
+    // 403. So the plain 720p VP9 entry beats the ciphered 1080p VP9 one under
+    // the same codec ceiling even though the ciphered entry is taller.
+    std::vector<Format> formats = {video(Codec::vp9, 720, 2'000'000),
+                                   ciphered_video(Codec::vp9, 1080, 3'000'000)};
+    CodecChoice choice;
+    const Format *picked = yt::select_video_format(formats, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_FALSE(picked->ciphered);
+    EXPECT_EQ(picked->height, 720);
+
+    // At equal height the plain entry wins over a higher bitrate as well.
+    formats = {video(Codec::avc, 720, 1'500'000), ciphered_video(Codec::avc, 720, 4'000'000)};
+    picked = yt::select_video_format(formats, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_FALSE(picked->ciphered);
+    EXPECT_EQ(picked->bitrate, 1'500'000);
+
+    // Even a ciphered entry that fits its own ceiling loses to an enabled
+    // plain one: AVC may use 1080p and 1080 beats 480 on height alone, yet the
+    // plain URL wins while a plain format survives the caps and the ceilings.
+    formats = {video(Codec::avc, 480, 1'000'000), ciphered_video(Codec::avc, 1080, 4'000'000)};
+    picked = yt::select_video_format(formats, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_FALSE(picked->ciphered);
+    EXPECT_EQ(picked->height, 480);
+}
+
+TEST(Codec, ACipheredFormatIsPickedWhenNoPlainOneCanPlay)
+{
+    // Nothing plain at all: the ciphered entry is the only candidate and still
+    // beats no stream.
+    std::vector<Format> formats = {ciphered_video(Codec::avc, 720, 2'000'000)};
+    CodecChoice choice;
+    const Format *picked = yt::select_video_format(formats, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_TRUE(picked->ciphered);
+    EXPECT_EQ(picked->height, 720);
+
+    // The plain entry exists but its codec is switched off: nothing plain is
+    // enabled, so the ciphered AVC is picked.
+    std::vector<Format> mixed_kinds = {video(Codec::vp9, 720, 2'000'000),
+                                       ciphered_video(Codec::avc, 720, 1'000'000)};
+    choice.vp9 = false;
+    picked = yt::select_video_format(mixed_kinds, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_TRUE(picked->ciphered);
+    EXPECT_EQ(picked->codec, Codec::avc);
+
+    // A plain entry that can never play (no URL) does not block the pick
+    // either.
+    std::vector<Format> broken = {video(Codec::avc, 720, 2'000'000),
+                                  ciphered_video(Codec::avc, 1080, 4'000'000)};
+    broken[0].url.clear();
+    choice = CodecChoice();
+    picked = yt::select_video_format(broken, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_TRUE(picked->ciphered);
+    EXPECT_EQ(picked->height, 1080);
+
+    // The over-ceiling fallback keeps its rules inside the ciphered pool: the
+    // lowest above-ceiling entry plays.
+    std::vector<Format> tall = {ciphered_video(Codec::vp9, 1080, 3'000'000),
+                                ciphered_video(Codec::av1, 720, 2'000'000)};
+    picked = yt::select_video_format(tall, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_TRUE(picked->ciphered);
+    EXPECT_EQ(picked->codec, Codec::av1);
+    EXPECT_EQ(picked->height, 720);
+}
+
+TEST(Codec, ACipheredFormatPlaysWhenNoPlainOneFitsTheCapsAndCeilings)
+{
+    // The plain entry sits far above the user's cap: nothing plain survives
+    // it, so the ciphered 720p entry under the cap is picked - a refused
+    // ciphered URL still beats no stream, and the caller retries past it.
+    std::vector<Format> formats = {video(Codec::avc, 2160, 12'000'000),
+                                   ciphered_video(Codec::avc, 720, 2'000'000)};
+    CodecChoice choice;
+    choice.max_height = 1080;
+    const Format *picked = yt::select_video_format(formats, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_TRUE(picked->ciphered);
+    EXPECT_EQ(picked->height, 720);
+
+    // The same when the plain entry only fails its codec ceiling: 1080p VP9
+    // cannot stay real time on the CPU, so the in-ceiling ciphered 720p entry
+    // is tried first.
+    std::vector<Format> over = {video(Codec::vp9, 1080, 3'000'000),
+                                ciphered_video(Codec::vp9, 720, 2'000'000)};
+    choice = CodecChoice();
+    picked = yt::select_video_format(over, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_TRUE(picked->ciphered);
+    EXPECT_EQ(picked->height, 720);
+}
+
+TEST(Codec, DescribeFormatNamesTheFormatAndItsUrlKind)
+{
+    Format format = video(Codec::avc, 1080, 4'000'000);
+    format.itag = 137;
+    format.ciphered = true;
+    EXPECT_EQ(yt::describe_format(&format), "itag=137 1080p AVC (ciphered)");
+
+    format = video(Codec::vp9, 720, 2'000'000);
+    format.itag = 248;
+    EXPECT_EQ(yt::describe_format(&format), "itag=248 720p VP9 (plain)");
+
+    EXPECT_EQ(yt::describe_format(nullptr), "none");
+}
+
 TEST(Codec, DescribeSelectionNamesTheFormatAndTheAppliedCeiling)
 {
     CodecChoice choice;
@@ -191,7 +318,15 @@ TEST(Codec, DescribeSelectionNamesTheFormatAndTheAppliedCeiling)
     EXPECT_NE(line.find("itag=137"), std::string::npos);
     EXPECT_NE(line.find("1920x1080"), std::string::npos);
     EXPECT_NE(line.find("AVC"), std::string::npos);
+    EXPECT_NE(line.find("(plain)"), std::string::npos) << "the URL kind is part of the line";
     EXPECT_NE(line.find("ceiling=1080p"), std::string::npos);
+
+    // A ciphered format says so on the same line.
+    Format ciphered = ciphered_video(Codec::vp9, 720, 2'000'000);
+    ciphered.itag = 248;
+    const std::string ciphered_line = yt::describe_selection(&ciphered, choice);
+    EXPECT_NE(ciphered_line.find("itag=248"), std::string::npos);
+    EXPECT_NE(ciphered_line.find("(ciphered)"), std::string::npos);
 
     // Over the ceiling: the fallback is called out.
     Format over = video(Codec::av1, 720, 2'000'000);
