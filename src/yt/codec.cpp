@@ -4,6 +4,8 @@
 
 #include "yt/codec.hpp"
 
+#include "yt/log.hpp"
+
 namespace yt
 {
 
@@ -22,31 +24,78 @@ bool codec_enabled(const CodecChoice &choice, Codec codec)
     }
 }
 
+int codec_height_ceiling(Codec codec, const CodecChoice &choice)
+{
+    int ceiling = 0;
+    switch (codec)
+    {
+    case Codec::avc:
+        ceiling = kSoftwareCeilingAvc;
+        break;
+    case Codec::vp9:
+        ceiling = kSoftwareCeilingVp9;
+        break;
+    case Codec::av1:
+        ceiling = kSoftwareCeilingAv1;
+        break;
+    default:
+        return 0; // audio and unknown carry no ceiling of their own
+    }
+    // The user's cap is the overall limit: it lowers the software ceiling.
+    if (choice.max_height > 0 && choice.max_height < ceiling)
+        ceiling = choice.max_height;
+    return ceiling;
+}
+
+std::string describe_selection(const Format *format, const CodecChoice &choice)
+{
+    if (format == nullptr)
+        return "none";
+    std::string text = "itag=" + std::to_string(format->itag) + " " +
+                       std::to_string(format->width) + "x" + std::to_string(format->height) + " " +
+                       codec_label(format->codec);
+    const int ceiling = codec_height_ceiling(format->codec, choice);
+    text += ceiling > 0 ? " ceiling=" + std::to_string(ceiling) + "p" : " ceiling=none";
+    if (ceiling > 0 && format->height > ceiling)
+        text += " fallback=above ceiling";
+    return text;
+}
+
 namespace
 {
 
-// Preference among equal heights: AV1, then VP9, then AVC - the order the
-// YouTube TV client uses. Ties inside one codec go to the higher bitrate.
+// Preference among equal heights: AVC, then VP9, then AV1 - the order that
+// keeps software decoding real time. (The hardware decoder, once it lands,
+// prefers the reverse.) Ties inside one codec go to the higher bitrate.
 int codec_rank(Codec codec)
 {
     switch (codec)
     {
-    case Codec::av1:
+    case Codec::avc:
         return 3;
     case Codec::vp9:
         return 2;
-    case Codec::avc:
+    case Codec::av1:
         return 1;
     default:
         return 0;
     }
 }
 
+// True when `candidate` beats `current` at the same height.
+bool beats_at_equal_height(const Format &candidate, const Format &current)
+{
+    const int rank = codec_rank(candidate.codec);
+    const int current_rank = codec_rank(current.codec);
+    return rank > current_rank || (rank == current_rank && candidate.bitrate > current.bitrate);
+}
+
 } // namespace
 
 const Format *select_video_format(const std::vector<Format> &formats, const CodecChoice &choice)
 {
-    const Format *best = nullptr;
+    const Format *best = nullptr;     // highest format inside its codec ceiling
+    const Format *fallback = nullptr; // lowest format above its codec ceiling
     for (const Format &format : formats)
     {
         if (!is_video_codec(format.codec) || !codec_enabled(choice, format.codec))
@@ -54,23 +103,24 @@ const Format *select_video_format(const std::vector<Format> &formats, const Code
         if (format.url.empty() || format.height <= 0)
             continue;
         if (choice.max_height > 0 && format.height > choice.max_height)
-            continue;
-        if (best == nullptr)
+            continue; // the user's cap is hard: the fallback never crosses it
+        const int ceiling = codec_height_ceiling(format.codec, choice);
+        if (ceiling > 0 && format.height > ceiling)
         {
-            best = &format;
+            // Above the codec's software ceiling: keep the lowest one around as
+            // a last resort, a low stream still beats a black screen.
+            if (fallback == nullptr || format.height < fallback->height ||
+                (format.height == fallback->height && beats_at_equal_height(format, *fallback)))
+                fallback = &format;
             continue;
         }
-        if (format.height > best->height)
+        if (best == nullptr || format.height > best->height ||
+            (format.height == best->height && beats_at_equal_height(format, *best)))
             best = &format;
-        else if (format.height == best->height)
-        {
-            const int rank = codec_rank(format.codec);
-            const int best_rank = codec_rank(best->codec);
-            if (rank > best_rank || (rank == best_rank && format.bitrate > best->bitrate))
-                best = &format;
-        }
     }
-    return best;
+    const Format *picked = best != nullptr ? best : fallback;
+    log::line("video: selection %s", describe_selection(picked, choice).c_str());
+    return picked;
 }
 
 const Format *select_audio_format(const std::vector<Format> &formats)

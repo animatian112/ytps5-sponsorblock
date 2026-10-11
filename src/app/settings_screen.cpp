@@ -69,7 +69,9 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
 
     ui::FormRow &resolution = form_.add_stepper(
         kMaxHeight, "Maximum resolution", height_to_index(context_.settings.max_height), 0, 3, 1);
-    resolution.description = "Above 1080p runs on the software decoder";
+    // The codec ceilings (VP9 720p, AV1 480p) cap the stream below this value
+    // while decoding runs on the CPU; the selector's log line names what it picked.
+    resolution.description = "Streams are capped per codec while decoding runs on the CPU";
     resolution.stepper.format = [](int value) -> std::string
     {
         static const char *const kLabels[] = {"720p", "1080p", "1440p", "2160p"};

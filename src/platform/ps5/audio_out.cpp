@@ -74,18 +74,42 @@ void *AudioOut::thread_main(void *self)
 void AudioOut::run()
 {
     alignas(64) std::int16_t grain[kGrainFrames * 2];
+    bool logged_first = false;
+    std::int64_t last_error_log = 0;
     while (!stop_.load(std::memory_order_relaxed))
     {
         mixer_->render(grain, kGrainFrames);
-        if (sceAudioOutOutput(handle_, grain) < 0)
+        const int result = sceAudioOutOutput(handle_, grain);
+        if (result < 0)
         {
-            errors_.fetch_add(1, std::memory_order_relaxed);
+            const std::uint64_t errors = errors_.fetch_add(1, std::memory_order_relaxed) + 1;
+            // The first failure at once, then at most one line per second:
+            // without this a dead port only shows as a rising counter.
+            const std::int64_t now = sys::monotonic_us();
+            if (errors == 1 || now - last_error_log >= 1000000)
+            {
+                last_error_log = now;
+                sys::log("[HUI] audio write failed=0x%08x errors=%llu grains=%llu",
+                         static_cast<unsigned>(result), static_cast<unsigned long long>(errors),
+                         static_cast<unsigned long long>(grains_.load(std::memory_order_relaxed)));
+            }
             sys::sleep_us(5000);
             continue;
         }
         grains_.fetch_add(1, std::memory_order_relaxed);
+        if (!logged_first)
+        {
+            // One line that proves the port is fed and accepts the mix, so a
+            // later silence can be traced past the output stage.
+            logged_first = true;
+            sys::log("[HUI] audio write ok handle=%d grain=%d rate=%d", handle_, kGrainFrames,
+                     audio::kSampleRate);
+        }
     }
     sceAudioOutOutput(handle_, nullptr); // drain the queued grain
+    sys::log("[HUI] audio thread stopped grains=%llu errors=%llu",
+             static_cast<unsigned long long>(grains_.load(std::memory_order_relaxed)),
+             static_cast<unsigned long long>(errors_.load(std::memory_order_relaxed)));
 }
 
 void AudioOut::stop()

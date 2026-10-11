@@ -154,11 +154,14 @@ TEST(InnerTubePlayer, ReadsTheAdaptiveFormatsAndTheirCodecs)
     EXPECT_EQ(info.formats[4].codec, yt::Codec::aac);
     EXPECT_EQ(info.formats[4].sample_rate, 44100);
 
-    // The stream selection then picks a codec the settings allow.
+    // The stream selection then picks a codec the settings allow. This answer
+    // is 1080p throughout, where only AVC is inside its software-decode ceiling
+    // (VP9 stops at 720p, AV1 at 480p), so the AVC entry wins.
     yt::CodecChoice choice;
     const yt::Format *picked = yt::select_video_format(info.formats, choice);
     ASSERT_NE(picked, nullptr);
-    EXPECT_EQ(picked->codec, yt::Codec::av1);
+    EXPECT_EQ(picked->codec, yt::Codec::avc);
+    EXPECT_EQ(picked->itag, 137);
     const yt::Format *sound = yt::select_audio_format(info.formats);
     ASSERT_NE(sound, nullptr);
     EXPECT_EQ(sound->codec, yt::Codec::opus);

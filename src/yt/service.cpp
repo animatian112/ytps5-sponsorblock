@@ -33,6 +33,11 @@ namespace
 
 constexpr std::size_t kWorkerStack = 1u << 20; // 1 MiB
 constexpr int kLoginPollMs = 200;
+// Formats of one client answer that may be tried before the next client is
+// asked. A format that cannot be opened (no decoder for its codec in this
+// build, a URL YouTube refuses) is skipped and the next-best format from the
+// same answer is tried instead of failing the video outright.
+constexpr int kFormatAttemptsPerClient = 3;
 
 // pthread_create with an explicit stack; std::thread cannot size its stack.
 bool spawn(pthread_t *thread, void *(*entry)(void *), void *argument)
@@ -44,6 +49,40 @@ bool spawn(pthread_t *thread, void *(*entry)(void *), void *argument)
     const int created = pthread_create(thread, &attributes, entry, argument);
     pthread_attr_destroy(&attributes);
     return created == 0;
+}
+
+// select_video_format over the formats that have not failed to open yet. The
+// retry inside one client answer must not pick the entry that just failed
+// again, and a codec this build cannot open at all (AV1 without a decoder)
+// must not be retried at another height either: both are excluded. The
+// selector itself is unchanged; the returned pointer refers to *candidates,
+// which therefore has to outlive it.
+const Format *select_video_format_retry(const std::vector<Format> &formats,
+                                        const CodecChoice &choice,
+                                        const std::vector<int> &failed_itags,
+                                        const std::vector<Codec> &failed_codecs,
+                                        std::vector<Format> *candidates)
+{
+    if (failed_itags.empty() && failed_codecs.empty())
+    {
+        return select_video_format(formats, choice);
+    }
+    candidates->clear();
+    candidates->reserve(formats.size());
+    for (const Format &format : formats)
+    {
+        if (std::find(failed_itags.begin(), failed_itags.end(), format.itag) != failed_itags.end())
+        {
+            continue;
+        }
+        if (std::find(failed_codecs.begin(), failed_codecs.end(), format.codec) !=
+            failed_codecs.end())
+        {
+            continue;
+        }
+        candidates->push_back(format);
+    }
+    return select_video_format(*candidates, choice);
 }
 
 } // namespace
@@ -602,122 +641,152 @@ struct Service::Impl
                     return;
             }
 
-            const Format *video_format = select_video_format(info.formats, choice);
-            const Format *audio_format = select_audio_format(info.formats);
-            if (video_format == nullptr)
-            {
-                if (info.sabr_only)
-                {
-                    const std::string detail =
-                        "SABR-only answer (YouTube serves this client no per-format URLs)";
-                    log::line("video: try %s %s", info.client.c_str(), detail.c_str());
-                    add_attempt(generation, info.client + ": " + detail);
-                }
-                else
-                {
-                    // Keep the old wording, plus the raw counts so yt.log shows
-                    // what the client actually answered.
-                    log::line("video: try %s no stream matches the codec switches (%s)",
-                              info.client.c_str(), info.census.c_str());
-                    add_attempt(generation,
-                                info.client + ": no matching video format (" + info.census + ")");
-                }
-                continue;
-            }
-            any_format = true;
-            log::line("video: selected client=%s itag=%d %dx%d %s audio=%d ciphered=%d",
-                      info.client.c_str(), video_format->itag, video_format->width,
-                      video_format->height, codec_label(video_format->codec),
-                      audio_format != nullptr ? audio_format->itag : 0,
-                      video_format->ciphered ? 1 : 0);
+            // The format that cannot be opened is skipped and the next-best
+            // format from the same answer is tried before the next client: a
+            // client's tallest in-ceiling pick can be AV1 this build has no
+            // decoder for, and the URL YouTube refuses can sit next to one it
+            // serves. Both exclusion sets live for this client only.
+            std::vector<int> failed_itags;
+            std::vector<Codec> failed_codecs;
+            std::vector<Format> candidates; // the copy select_video_format reads
+            bool selected_any = false;
 
-            // A ciphered format arrives with its unsigned base URL; the player
-            // JS has to descramble it before it plays. Without that JS, or when
-            // descrambling fails, this client is an ordinary failed attempt.
-            std::string video_url = video_format->url;
-            std::string audio_url = audio_format != nullptr ? audio_format->url : std::string();
-            if (video_format->ciphered || (audio_format != nullptr && audio_format->ciphered))
+            for (int attempt = 0; attempt < kFormatAttemptsPerClient; ++attempt)
             {
-                std::string cipher_error;
-                if (!ensure_descrambler(info, &cipher_error))
+                const Format *video_format = select_video_format_retry(
+                    info.formats, choice, failed_itags, failed_codecs, &candidates);
+                if (video_format == nullptr)
                 {
-                    log::line("video: try %s cipher: %s", info.client.c_str(),
-                              cipher_error.c_str());
-                    add_attempt(generation, info.client + ": " + cipher_error);
+                    // Only the first selection speaks for the answer: when the
+                    // retries ran out of candidates the census was already
+                    // reported, and when nothing ever matched it still has to
+                    // be.
+                    if (!selected_any)
+                    {
+                        if (info.sabr_only)
+                        {
+                            const std::string detail =
+                                "SABR-only answer (YouTube serves this client no per-format URLs)";
+                            log::line("video: try %s %s", info.client.c_str(), detail.c_str());
+                            add_attempt(generation, info.client + ": " + detail);
+                        }
+                        else
+                        {
+                            // Keep the old wording, plus the raw counts so
+                            // yt.log shows what the client actually answered.
+                            log::line("video: try %s no stream matches the codec switches (%s)",
+                                      info.client.c_str(), info.census.c_str());
+                            add_attempt(generation, info.client + ": no matching video format (" +
+                                                        info.census + ")");
+                        }
+                    }
+                    break;
+                }
+                selected_any = true;
+                any_format = true;
+                const Format *audio_format = select_audio_format(info.formats);
+                log::line("video: selected client=%s itag=%d %dx%d %s audio=%d ciphered=%d",
+                          info.client.c_str(), video_format->itag, video_format->width,
+                          video_format->height, codec_label(video_format->codec),
+                          audio_format != nullptr ? audio_format->itag : 0,
+                          video_format->ciphered ? 1 : 0);
+
+                // A ciphered format arrives with its unsigned base URL; the
+                // player JS has to descramble it before it plays. Without that
+                // JS, or when descrambling fails, this client is an ordinary
+                // failed attempt; the JS is per answer, so another format of
+                // the same answer cannot help and the client is left alone.
+                std::string video_url = video_format->url;
+                std::string audio_url = audio_format != nullptr ? audio_format->url : std::string();
+                if (video_format->ciphered || (audio_format != nullptr && audio_format->ciphered))
+                {
+                    std::string cipher_error;
+                    if (!ensure_descrambler(info, &cipher_error))
+                    {
+                        log::line("video: try %s cipher: %s", info.client.c_str(),
+                                  cipher_error.c_str());
+                        add_attempt(generation, info.client + ": " + cipher_error);
+                        break;
+                    }
+                    if (video_format->ciphered)
+                    {
+                        video_url =
+                            descrambler.descramble(video_format->url, video_format->cipher_s,
+                                                   video_format->cipher_sp, &cipher_error);
+                        if (video_url.empty())
+                        {
+                            log::line("video: try %s descramble: %s", info.client.c_str(),
+                                      cipher_error.c_str());
+                            add_attempt(generation, info.client + " itag " +
+                                                        std::to_string(video_format->itag) +
+                                                        " descramble: " + cipher_error);
+                            set_stage(generation, "Streams");
+                            break;
+                        }
+                    }
+                    if (audio_format != nullptr && audio_format->ciphered)
+                    {
+                        audio_url =
+                            descrambler.descramble(audio_format->url, audio_format->cipher_s,
+                                                   audio_format->cipher_sp, &cipher_error);
+                        if (audio_url.empty())
+                        {
+                            // The picture can still play without sound.
+                            log::line("video: audio descramble failed: %s", cipher_error.c_str());
+                            audio_url.clear();
+                        }
+                    }
+                }
+
+                set_stage(generation, "Decoder");
+                std::unique_ptr<Player> fresh = make_player();
+                log::line("video: open begin client=%s", info.client.c_str());
+                const bool opened = fresh->open(video_url, audio_url, audio);
+                log::line("video: try %s itag=%d %dx%d -> %s", info.client.c_str(),
+                          video_format->itag, video_format->width, video_format->height,
+                          opened ? "ok" : fresh->error().c_str());
+                if (!opened)
+                {
+                    if (first_error.empty())
+                        first_error = fresh->error();
+                    add_attempt(generation,
+                                info.client + " itag " + std::to_string(video_format->itag) + " " +
+                                    std::to_string(video_format->height) + "p: " + fresh->error());
+                    set_stage(generation, "Streams");
+                    // This itag, and the codec of a format this build cannot
+                    // open at all, are not tried again in this client.
+                    failed_itags.push_back(video_format->itag);
+                    failed_codecs.push_back(video_format->codec);
                     continue;
                 }
-                if (video_format->ciphered)
+
                 {
-                    video_url = descrambler.descramble(video_format->url, video_format->cipher_s,
-                                                       video_format->cipher_sp, &cipher_error);
-                    if (video_url.empty())
-                    {
-                        log::line("video: try %s descramble: %s", info.client.c_str(),
-                                  cipher_error.c_str());
-                        add_attempt(generation, info.client + " itag " +
-                                                    std::to_string(video_format->itag) +
-                                                    " descramble: " + cipher_error);
-                        set_stage(generation, "Streams");
-                        continue;
-                    }
+                    std::lock_guard<std::mutex> lock(mutex);
+                    if (generation != video_generation)
+                        return; // the watchdog gave up while the demuxers opened
+                    player = std::move(fresh);
+                    player_open = true;
+                    opened_video = video_id;
+                    opened_choice = choice;
+                    video.info = info;
+                    video.state = Load::ready;
+                    video.stage.clear();
+                    video.source_client = info.client;
+                    video.attempts.clear();
+                    video_running = false;
+                    video.revision++;
                 }
-                if (audio_format != nullptr && audio_format->ciphered)
-                {
-                    audio_url = descrambler.descramble(audio_format->url, audio_format->cipher_s,
-                                                       audio_format->cipher_sp, &cipher_error);
-                    if (audio_url.empty())
-                    {
-                        // The picture can still play without sound.
-                        log::line("video: audio descramble failed: %s", cipher_error.c_str());
-                        audio_url.clear();
-                    }
-                }
-            }
 
-            set_stage(generation, "Decoder");
-            std::unique_ptr<Player> fresh = make_player();
-            log::line("video: open begin client=%s", info.client.c_str());
-            const bool opened = fresh->open(video_url, audio_url, audio);
-            log::line("video: try %s itag=%d %dx%d -> %s", info.client.c_str(), video_format->itag,
-                      video_format->width, video_format->height,
-                      opened ? "ok" : fresh->error().c_str());
-            if (!opened)
-            {
-                if (first_error.empty())
-                    first_error = fresh->error();
-                add_attempt(generation,
-                            info.client + " itag " + std::to_string(video_format->itag) + " " +
-                                std::to_string(video_format->height) + "p: " + fresh->error());
-                set_stage(generation, "Streams");
-                continue;
+                log::line("video: playing via %s", info.client.c_str());
+                // The related row under the player; best effort, a failure
+                // leaves the previous row in place.
+                FeedPage related_page;
+                if (tube.related(video_id, &related_page))
+                    publish(FeedKind::related, Load::ready, related_page.items, {}, {});
+                else
+                    publish(FeedKind::related, Load::failed, {}, {}, tube.last_error());
+                return;
             }
-
-            {
-                std::lock_guard<std::mutex> lock(mutex);
-                if (generation != video_generation)
-                    return; // the watchdog gave up while the demuxers opened
-                player = std::move(fresh);
-                player_open = true;
-                opened_video = video_id;
-                opened_choice = choice;
-                video.info = info;
-                video.state = Load::ready;
-                video.stage.clear();
-                video.source_client = info.client;
-                video.attempts.clear();
-                video_running = false;
-                video.revision++;
-            }
-
-            log::line("video: playing via %s", info.client.c_str());
-            // The related row under the player; best effort, a failure leaves
-            // the previous row in place.
-            FeedPage related_page;
-            if (tube.related(video_id, &related_page))
-                publish(FeedKind::related, Load::ready, related_page.items, {}, {});
-            else
-                publish(FeedKind::related, Load::failed, {}, {}, tube.last_error());
-            return;
         }
 
         if (!any_format)

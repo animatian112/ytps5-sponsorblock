@@ -204,7 +204,7 @@ int main()
     sys::log("[YTV] sounds files=%d rejected=%d", bank.files, bank.rejected);
 
     yt::log::line("app: display %dx%d, audio %s", display.width(), display.height(),
-                  audio_out.grains() >= 0 ? "up" : "?");
+                  audio_out.errors() == 0 ? "up" : "degraded");
     RingSink sink(video_ring);
     // The install folder (/app0) holds the token backup a user can carry over
     // a re-upload; the sandbox copy lives in /download0 and survives reboots.
@@ -293,7 +293,10 @@ int main()
         if (application.take_settings_changed())
         {
             const Settings &settings = application.settings();
-            mixer.set_bus_gain(audio::Bus::music, 0.0f);
+            // The video's decoded audio is mixed on the music bus (slot 1); the
+            // bus stays open and the stream's own gain carries the volume, so
+            // muting the bus here would silence every codec.
+            mixer.set_bus_gain(audio::Bus::music, 1.0f);
             mixer.set_bus_gain(audio::Bus::sfx, Settings::gain(settings.sfx_volume));
             mixer.set_bus_gain(audio::Bus::ui, Settings::gain(settings.ui_volume));
             mixer.set_stream_gain(1, Settings::gain(settings.video_volume), 0.2f);

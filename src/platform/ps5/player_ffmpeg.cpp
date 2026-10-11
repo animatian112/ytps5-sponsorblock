@@ -10,8 +10,9 @@
 // Everything runs on the caller's frame thread: update() demuxes and decodes a
 // bounded number of packets, converts whichever frames came out and hands the
 // newest picture to poll_frame(). Audio goes straight to the AudioSink, which
-// owns the audio thread. No threads are created here, and nothing is logged:
-// the caller reads error().
+// owns the audio thread. No threads are created here; every stage logs one
+// "ffmpeg: ..." line so yt.log shows which step failed or is too slow, and
+// open()/update() failures are also readable through error().
 
 #include "yt/log.hpp"
 #include "yt/player.hpp"
@@ -62,6 +63,36 @@ constexpr const char *kNetworkTimeout = "15000000";
 // matching deadline passes. Microseconds.
 constexpr std::int64_t kOpenTimeoutUs = 20'000'000;
 constexpr std::int64_t kUpdateBudgetUs = 8'000;
+// The update budget only stops a read that is producing nothing. A transfer
+// that is making progress (a large keyframe packet from a slow host) must be
+// allowed to finish, so the interrupt ignores the update deadline until it is
+// exceeded by this margin: a healthy read finishes in a few milliseconds, and
+// even a stalled one is cut here instead of freezing the frame thread for
+// ffmpeg's full rw_timeout (kNetworkTimeout). A read cut this way is retried,
+// but a stream whose reads are only ever cut is not slow, it is dead, and ends
+// after kMaxStallReads of them.
+constexpr std::int64_t kInterruptGraceUs = 1'000'000;
+// Consecutive read/decode failures a stream survives before it is declared
+// dead. A single EAGAIN, timeout or interrupted read never ends playback.
+constexpr int kMaxConsecutiveErrors = 3;
+// Interrupt/budget-cut reads a stream survives without producing a single
+// packet before it is declared dead. Each one costs kInterruptGraceUs (the
+// read blocks until the grace has passed) and the pumps count them, not
+// kMaxConsecutiveErrors, because such a read is classified as retryable: a
+// dead host would otherwise hold the frame thread at ~1 fps forever.
+constexpr int kMaxStallReads = 4;
+// Packets an AV1 decoder may consume during open() without emitting a frame;
+// after that the open fails so the app falls back to the next format instead
+// of showing a black screen.
+constexpr int kAv1ProbePackets = 8;
+// A video frame this far behind the audio clock is stale: converting and
+// queueing it cannot catch up, so it is dropped.
+constexpr double kLateFrameToleranceS = 0.10;
+// How many stale frames in a row may be dropped before the picture is advanced
+// again. A decoder that is simply slower than real time (software VP9/AV1 on
+// this CPU) would otherwise settle on one still picture; the cap keeps the
+// video moving and the "decode slow" line explains the stutter.
+constexpr int kMaxLateDropRun = 10;
 // Sentinel "nothing has been handed out / no pts" value.
 constexpr double kNoPts = -1.0e18;
 
@@ -108,7 +139,48 @@ struct Demuxer
     AVFrame *frame = nullptr;
     bool eof = false;     // av_read_frame reported the end
     bool drained = false; // the decoder has emitted everything it will
+    // Consecutive read/decode failures; only repeated hard failures end the
+    // stream, and the first one is logged with its exact av_strerror text.
+    int consecutive_errors = 0;
+    // Consecutive interrupt/budget-cut reads that produced no packet; any read
+    // that returns data clears it. kMaxStallReads in a row are a dead stream,
+    // not a slow one (see note_stalled_read).
+    int stalled_reads = 0;
+    std::chrono::steady_clock::time_point last_error_log{};
 };
+
+// The interrupt callback cuts a blocking read when the open deadline, the
+// update budget or close() says so; ffmpeg reports that as AVERROR_EXIT. That
+// is not a stream error: the packet is read again on the next update().
+bool is_interrupt_error(int code)
+{
+    return code == AVERROR_EXIT;
+}
+
+// One read/decode failure. Logs the exact av_strerror text with its code (the
+// first failure at once, then at most one line per second) and answers whether
+// the stream may still be retried: kMaxConsecutiveErrors in a row end it.
+bool note_stream_error(Demuxer &demuxer, const char *stream, const char *what, int code)
+{
+    ++demuxer.consecutive_errors;
+    const auto now = std::chrono::steady_clock::now();
+    if (demuxer.consecutive_errors == 1 || now - demuxer.last_error_log >= std::chrono::seconds(1))
+    {
+        demuxer.last_error_log = now;
+        log::line("ffmpeg: %s %s failed: %s (%d), failure %d/%d", stream, what,
+                  av_error(code).c_str(), code, demuxer.consecutive_errors, kMaxConsecutiveErrors);
+    }
+    return demuxer.consecutive_errors < kMaxConsecutiveErrors;
+}
+
+// One read the update budget or the interrupt cut before it produced a packet.
+// Such a read is normally retried silently, but when it keeps happening the
+// host is dead rather than slow: answers whether the stream may be retried,
+// false once kMaxStallReads in a row were cut (roughly one second apart).
+bool note_stalled_read(Demuxer &demuxer)
+{
+    return ++demuxer.stalled_reads < kMaxStallReads;
+}
 
 class FfmpegPlayer final : public Player
 {
@@ -174,6 +246,20 @@ class FfmpegPlayer final : public Player
     bool flush_carry();
     void update_clock();
 
+    // Decodes up to `packets` of the video stream during open() to prove the
+    // decoder really produces pictures; stops at the first frame it emits.
+    void probe_video_frames(int packets);
+    // Frame interval of the video stream in microseconds, 33 ms when unknown.
+    std::int64_t frame_interval_us() const;
+    // Logs "decode slow" at most once a second while the decoder cannot keep
+    // up with the stream's frame interval.
+    void note_decode_slow(std::int64_t spent_us);
+    // Logs how many late frames were dropped, at most once a second.
+    void note_video_drop();
+    // A silent audio path must name its reason in yt.log: the first line at
+    // once, then at most one per second, and only when the reason changes.
+    void note_audio_silence(const char *reason);
+
     void release_demuxer(Demuxer &demuxer);
     void release();
 
@@ -219,7 +305,19 @@ class FfmpegPlayer final : public Player
     std::vector<float> carry_;
     std::size_t carry_frames_ = 0;
     std::uint64_t audio_frames_written_ = 0;
+    std::uint64_t audio_frames_decoded_ = 0;
     double audio_base_s_ = 0.0;
+    bool audio_first_write_logged_ = false;
+    std::string audio_silence_reason_;
+    std::chrono::steady_clock::time_point last_audio_log_{};
+
+    double video_interval_s_ = 1.0 / 30.0;
+    std::uint64_t video_frames_dropped_ = 0;
+    int late_drop_run_ = 0;
+    // The decode-slow and drop lines are throttled separately: they describe
+    // different things and must be able to appear in the same second.
+    std::chrono::steady_clock::time_point last_decode_log_{};
+    std::chrono::steady_clock::time_point last_drop_log_{};
 
     double clock_ = 0.0;
     bool wall_anchor_ = false;
@@ -240,7 +338,10 @@ int FfmpegPlayer::interrupt_cb(void *opaque)
         return 1;
     }
     const std::int64_t update_deadline = player->update_deadline_us_.load();
-    if (update_deadline != 0 && now >= update_deadline)
+    // The update budget keeps the frame thread responsive but must not cut a
+    // read that is still transferring: it only fires once the deadline has been
+    // exceeded by kInterruptGraceUs. out_of_time() alone paces the pumps.
+    if (update_deadline != 0 && now >= update_deadline + kInterruptGraceUs)
     {
         return 1;
     }
@@ -285,13 +386,38 @@ bool FfmpegPlayer::open(const std::string &video_url, const std::string &audio_u
         return fail(error_);
     quality_ = make_quality_label();
 
-    if (!audio_url.empty() && sink != nullptr)
+    if (video_.stream->codecpar->codec_id == AV_CODEC_ID_AV1)
+    {
+        // A decoder that opens but never emits a picture is a black screen the
+        // viewer cannot recover from; probing the first packets turns that into
+        // a precise open failure so the app falls back to the next format.
+        probe_video_frames(kAv1ProbePackets);
+        if (!frame_seen_)
+        {
+            return fail(error_.empty() ? "av1: decoder produced no frames" : error_);
+        }
+    }
+
+    if (audio_url.empty())
+    {
+        // Nothing about this is an error, but the reason for silence belongs in
+        // the log rather than being inferred from the picture.
+        log::line("ffmpeg: audio inactive: no audio url");
+    }
+    else if (sink == nullptr)
+    {
+        // The app must hand over the sink it started; without it nothing can be
+        // heard and the video looks like a decoder bug. Loud on purpose.
+        log::line("ffmpeg: audio disabled: audio url present but sink=null (defect)");
+    }
+    else
     {
         if (!open_demuxer(audio_, audio_url, false))
             return fail(error_);
         if (!init_audio_resampler())
             return fail(error_);
         audio_active_ = true;
+        log::line("ffmpeg: audio active sink=%p", static_cast<const void *>(sink));
     }
 
     open_deadline_us_.store(0);
@@ -362,7 +488,11 @@ bool FfmpegPlayer::open_demuxer(Demuxer &demuxer, const std::string &url, bool v
         decoder != nullptr ? decoder : avcodec_find_decoder(demuxer.stream->codecpar->codec_id);
     if (codec == nullptr)
     {
-        error_ = "no decoder for stream";
+        // AV1 is named so the app can skip it: its absence is a property of this
+        // ffmpeg build, not of the stream.
+        error_ = video && demuxer.stream->codecpar->codec_id == AV_CODEC_ID_AV1
+                     ? "av1: no decoder in this build"
+                     : "no decoder for stream";
         return false;
     }
 
@@ -385,6 +515,39 @@ bool FfmpegPlayer::open_demuxer(Demuxer &demuxer, const std::string &url, bool v
     {
         error_ = "avcodec_open2: " + av_error(result);
         return false;
+    }
+
+    const char *const id_name = avcodec_get_name(demuxer.stream->codecpar->codec_id);
+    if (video)
+    {
+        // Frame rate sets what "the decoder keeps up" means. The stored value
+        // is the interval, not the rate. A wrong or absent value (0/0 in some
+        // fragmented answers) falls back to 30 fps.
+        AVRational rate = demuxer.stream->avg_frame_rate;
+        if (rate.num <= 0 || rate.den <= 0)
+        {
+            rate = demuxer.stream->r_frame_rate;
+        }
+        double fps = rate.num > 0 && rate.den > 0 ? av_q2d(rate) : 0.0;
+        if (!(fps > 0.0) || fps > 1000.0)
+        {
+            fps = 30.0;
+        }
+        video_interval_s_ = 1.0 / fps;
+        log::line("ffmpeg: video codec %s (sw) decoder=%s threads=%d fps=%.2f", id_name,
+                  codec->name, demuxer.codec->thread_count, fps);
+    }
+    else
+    {
+        char layout[64] = {};
+        if (av_channel_layout_describe(&demuxer.codec->ch_layout, layout, sizeof(layout)) < 0)
+        {
+            std::strcpy(layout, "unknown");
+        }
+        const char *const sample_format = av_get_sample_fmt_name(demuxer.codec->sample_fmt);
+        log::line("ffmpeg: audio codec %s (sw) decoder=%s rate=%d layout=%s fmt=%s", id_name,
+                  codec->name, demuxer.codec->sample_rate, layout,
+                  sample_format != nullptr ? sample_format : "none");
     }
 
     demuxer.packet = av_packet_alloc();
@@ -411,19 +574,31 @@ bool FfmpegPlayer::init_audio_resampler()
         av_channel_layout_default(&in_layout, 2);
     }
     const int in_rate = audio_.codec->sample_rate > 0 ? audio_.codec->sample_rate : kOutputRate;
+    char layout[64] = {};
+    if (av_channel_layout_describe(&in_layout, layout, sizeof(layout)) < 0)
+    {
+        std::strcpy(layout, "unknown");
+    }
+    const char *const sample_format = av_get_sample_fmt_name(audio_.codec->sample_fmt);
     int result = swr_alloc_set_opts2(&swr_, &out_layout, AV_SAMPLE_FMT_FLT, kOutputRate, &in_layout,
                                      audio_.codec->sample_fmt, in_rate, 0, nullptr);
     if (result < 0 || swr_ == nullptr)
     {
         error_ = "swr_alloc_set_opts2: " + av_error(result < 0 ? result : AVERROR(ENOMEM));
+        log::line("ffmpeg: audio resampler failed: %s (in=%d Hz %s %s)", error_.c_str(), in_rate,
+                  layout, sample_format != nullptr ? sample_format : "none");
         return false;
     }
     result = swr_init(swr_);
     if (result < 0)
     {
         error_ = "swr_init: " + av_error(result);
+        log::line("ffmpeg: audio resampler failed: %s (in=%d Hz %s %s)", error_.c_str(), in_rate,
+                  layout, sample_format != nullptr ? sample_format : "none");
         return false;
     }
+    log::line("ffmpeg: audio resampler %d Hz %s %s -> %d Hz stereo flt", in_rate, layout,
+              sample_format != nullptr ? sample_format : "none", kOutputRate);
     return true;
 }
 
@@ -478,6 +653,118 @@ void FfmpegPlayer::update()
     }
 }
 
+// open() runs this before playback. The packets it consumes are decoded for
+// real: their pictures go through emit_video, so the probe costs nothing beyond
+// the frames it needs to prove that the decoder works at all.
+void FfmpegPlayer::probe_video_frames(int packets)
+{
+    int sent = 0;
+    while (sent < packets && !video_.drained && !frame_seen_)
+    {
+        if (abort_.load() || now_us() >= open_deadline_us_.load())
+        {
+            return;
+        }
+        const int received = avcodec_receive_frame(video_.codec, video_.frame);
+        if (received == 0)
+        {
+            emit_video(video_.frame);
+            av_frame_unref(video_.frame);
+            continue;
+        }
+        if (received != AVERROR(EAGAIN))
+        {
+            return; // end of stream, or a decoder that refuses the stream
+        }
+        const int read = av_read_frame(video_.format, video_.packet);
+        if (read < 0)
+        {
+            // A failed probe read (403, timeout, a cut) is a stream problem,
+            // not a decoder one: keep its exact reason so open() reports that
+            // and the caller's format fallback reacts to it, instead of the
+            // misleading "decoder produced no frames". End of stream before a
+            // picture keeps that wording, because there the decoder really
+            // produced nothing, and a cut by the open deadline is reported as
+            // the open timeout it is.
+            if (read != AVERROR_EOF && !is_interrupt_error(read))
+            {
+                log::line("ffmpeg: video probe read failed: %s (%d)", av_error(read).c_str(), read);
+                if (error_.empty())
+                {
+                    error_ = "av1: probe read failed: " + av_error(read);
+                }
+            }
+            return;
+        }
+        if (video_.packet->stream_index != video_.stream_index)
+        {
+            av_packet_unref(video_.packet);
+            continue;
+        }
+        ++sent;
+        int result = avcodec_send_packet(video_.codec, video_.packet);
+        while (result == AVERROR(EAGAIN) && !frame_seen_)
+        {
+            const int drain = avcodec_receive_frame(video_.codec, video_.frame);
+            if (drain != 0)
+            {
+                break;
+            }
+            emit_video(video_.frame);
+            av_frame_unref(video_.frame);
+            result = avcodec_send_packet(video_.codec, video_.packet);
+        }
+        av_packet_unref(video_.packet);
+    }
+}
+
+std::int64_t FfmpegPlayer::frame_interval_us() const
+{
+    const double interval = video_interval_s_ > 0.0 ? video_interval_s_ : 1.0 / 30.0;
+    return static_cast<std::int64_t>(interval * 1.0e6);
+}
+
+void FfmpegPlayer::note_decode_slow(std::int64_t spent_us)
+{
+    if (spent_us <= frame_interval_us())
+    {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_decode_log_ < std::chrono::seconds(1))
+    {
+        return;
+    }
+    last_decode_log_ = now;
+    log::line("ffmpeg: decode slow (%d ms/frame, %s)", static_cast<int>(spent_us / 1000),
+              video_.stream != nullptr ? video_codec_label(video_.stream->codecpar->codec_id)
+                                       : "?");
+}
+
+void FfmpegPlayer::note_video_drop()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_drop_log_ < std::chrono::seconds(1))
+    {
+        return;
+    }
+    last_drop_log_ = now;
+    log::line("ffmpeg: video dropped %llu late frames (picture behind the audio clock)",
+              static_cast<unsigned long long>(video_frames_dropped_));
+}
+
+void FfmpegPlayer::note_audio_silence(const char *reason)
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (audio_silence_reason_ == reason && now - last_audio_log_ < std::chrono::seconds(1))
+    {
+        return;
+    }
+    audio_silence_reason_ = reason;
+    last_audio_log_ = now;
+    log::line("ffmpeg: audio silent: %s", reason);
+}
+
 void FfmpegPlayer::pump_video(int budget)
 {
     if (video_.format == nullptr || video_.drained)
@@ -491,23 +778,57 @@ void FfmpegPlayer::pump_video(int budget)
         {
             return;
         }
+        const std::int64_t step_start_us = now_us();
         const int received = avcodec_receive_frame(video_.codec, video_.frame);
         if (received == 0)
         {
+            video_.consecutive_errors = 0;
+            // A picture the audio clock has already passed cannot be caught up
+            // with: converting and queueing it would only add latency, so it is
+            // dropped and the decoder goes straight back for the next packet.
+            // The run is capped (see kMaxLateDropRun) and the first frame is
+            // always shown, so a black screen and a frozen picture are both
+            // ruled out.
+            const double pts = frame_pts(video_.frame);
+            if (frame_seen_ && late_drop_run_ < kMaxLateDropRun && audio_active_ && clock_ > 0.0 &&
+                pts + kLateFrameToleranceS < clock_)
+            {
+                ++video_frames_dropped_;
+                ++late_drop_run_;
+                note_video_drop();
+                av_frame_unref(video_.frame);
+                ++work;
+                continue;
+            }
+            late_drop_run_ = 0;
             emit_video(video_.frame);
             av_frame_unref(video_.frame);
+            note_decode_slow(now_us() - step_start_us);
             ++work;
             continue;
         }
         if (received == AVERROR_EOF)
         {
             video_.drained = true;
+            log::line("ffmpeg: video stream ended (eof)");
             break;
         }
         if (received != AVERROR(EAGAIN))
         {
-            video_.drained = true;
-            break;
+            // A cut short by close(), the interrupt or the budget is not a
+            // decoder failure: the frame is received again next update().
+            if (abort_.load() || is_interrupt_error(received) || out_of_time())
+            {
+                return;
+            }
+            if (!note_stream_error(video_, "video", "decode", received))
+            {
+                video_.drained = true;
+                log::line("ffmpeg: video stream ended (decode failed)");
+                break;
+            }
+            ++work;
+            continue;
         }
         if (video_.eof)
         {
@@ -516,34 +837,77 @@ void FfmpegPlayer::pump_video(int budget)
             break;
         }
         const int read = av_read_frame(video_.format, video_.packet);
+        if (read >= 0)
+        {
+            video_.consecutive_errors = 0;
+            video_.stalled_reads = 0; // a packet arrived: the host is alive
+            if (video_.packet->stream_index == video_.stream_index)
+            {
+                const int sent = avcodec_send_packet(video_.codec, video_.packet);
+                if (sent < 0 && sent != AVERROR(EAGAIN))
+                {
+                    if (abort_.load() || is_interrupt_error(sent) || out_of_time())
+                    {
+                        av_packet_unref(video_.packet);
+                        return;
+                    }
+                    if (!note_stream_error(video_, "video", "send_packet", sent))
+                    {
+                        video_.eof = true;
+                        avcodec_send_packet(video_.codec, nullptr);
+                    }
+                }
+            }
+            av_packet_unref(video_.packet);
+            ++work;
+            continue;
+        }
+        // The read failed. Only a real end of stream or a repeated hard failure
+        // ends playback: a read cut by the interrupt (the update budget, the
+        // open deadline or close()) is retried on the next update(). A cut read
+        // that repeats without ever producing a packet is a dead stream, not a
+        // slow one: it pins the frame thread for kInterruptGraceUs on every
+        // update, so after kMaxStallReads in a row playback ends with the exact
+        // reason instead of hanging at ~1 fps.
         if (read == AVERROR(EAGAIN))
         {
+            av_packet_unref(video_.packet);
             break;
         }
-        if (out_of_time())
+        if (abort_.load())
         {
-            // The budget stopped the read: leave the stream open and try again
-            // next frame, not mistake the abort for the end.
+            av_packet_unref(video_.packet);
             return;
         }
-        if (read < 0)
+        if (is_interrupt_error(read) || out_of_time())
+        {
+            av_packet_unref(video_.packet);
+            if (note_stalled_read(video_))
+            {
+                return;
+            }
+            error_ = "read stalled: no data for " + std::to_string(video_.stalled_reads) + " s";
+            log::line("ffmpeg: video %s", error_.c_str());
+            video_.drained = true; // update() turns this into ended_
+            return;
+        }
+        if (read == AVERROR_EOF)
         {
             video_.eof = true;
             avcodec_send_packet(video_.codec, nullptr);
             ++work;
             continue;
         }
-        if (video_.packet->stream_index == video_.stream_index)
+        if (!note_stream_error(video_, "video", "read", read))
         {
-            const int sent = avcodec_send_packet(video_.codec, video_.packet);
-            if (sent < 0 && sent != AVERROR(EAGAIN))
-            {
-                video_.eof = true;
-                avcodec_send_packet(video_.codec, nullptr);
-            }
+            video_.eof = true;
+            avcodec_send_packet(video_.codec, nullptr);
+            log::line("ffmpeg: video stream ended (read failed)");
+            ++work;
+            continue;
         }
         av_packet_unref(video_.packet);
-        ++work;
+        break;
     }
 }
 
@@ -571,6 +935,8 @@ void FfmpegPlayer::pump_audio(int budget)
         const int received = avcodec_receive_frame(audio_.codec, audio_.frame);
         if (received == 0)
         {
+            audio_.consecutive_errors = 0;
+            ++audio_frames_decoded_;
             emit_audio(audio_.frame);
             av_frame_unref(audio_.frame);
             ++work;
@@ -579,12 +945,26 @@ void FfmpegPlayer::pump_audio(int budget)
         if (received == AVERROR_EOF)
         {
             audio_.drained = true;
+            log::line("ffmpeg: audio stream ended (eof) decoded=%llu written=%llu",
+                      static_cast<unsigned long long>(audio_frames_decoded_),
+                      static_cast<unsigned long long>(audio_frames_written_));
             break;
         }
         if (received != AVERROR(EAGAIN))
         {
-            audio_.drained = true;
-            break;
+            // The interrupt, the budget and close() are not decoder failures.
+            if (abort_.load() || is_interrupt_error(received) || out_of_time())
+            {
+                return;
+            }
+            if (!note_stream_error(audio_, "audio", "decode", received))
+            {
+                audio_.drained = true;
+                log::line("ffmpeg: audio stream ended (decode failed)");
+                break;
+            }
+            ++work;
+            continue;
         }
         if (audio_.eof)
         {
@@ -592,34 +972,79 @@ void FfmpegPlayer::pump_audio(int budget)
             break;
         }
         const int read = av_read_frame(audio_.format, audio_.packet);
+        if (read >= 0)
+        {
+            audio_.consecutive_errors = 0;
+            audio_.stalled_reads = 0; // a packet arrived: the host is alive
+            if (audio_.packet->stream_index == audio_.stream_index)
+            {
+                const int sent = avcodec_send_packet(audio_.codec, audio_.packet);
+                if (sent < 0 && sent != AVERROR(EAGAIN))
+                {
+                    if (abort_.load() || is_interrupt_error(sent) || out_of_time())
+                    {
+                        av_packet_unref(audio_.packet);
+                        return;
+                    }
+                    if (!note_stream_error(audio_, "audio", "send_packet", sent))
+                    {
+                        audio_.eof = true;
+                        avcodec_send_packet(audio_.codec, nullptr);
+                    }
+                }
+            }
+            av_packet_unref(audio_.packet);
+            ++work;
+            continue;
+        }
+        // The read failed. Only a real end of stream or a repeated hard failure
+        // ends playback: a read cut by the interrupt (the update budget, the
+        // open deadline or close()) is retried on the next update(). A cut read
+        // that keeps producing nothing is a dead audio URL: it is dropped
+        // instead of pinning the frame thread for kInterruptGraceUs on every
+        // update. The picture can still play without sound.
         if (read == AVERROR(EAGAIN))
         {
+            av_packet_unref(audio_.packet);
             break;
         }
-        if (out_of_time())
+        if (abort_.load())
         {
-            // The budget stopped the read: leave the stream open and try again
-            // next frame, not mistake the abort for the end.
+            av_packet_unref(audio_.packet);
             return;
         }
-        if (read < 0)
+        if (is_interrupt_error(read) || out_of_time())
+        {
+            av_packet_unref(audio_.packet);
+            if (note_stalled_read(audio_))
+            {
+                return;
+            }
+            log::line("ffmpeg: audio read stalled: no data for %d s", audio_.stalled_reads);
+            audio_.drained = true;
+            // The audio clock cannot be the master clock of a path that is
+            // gone: the picture continues under the wall-clock fallback that
+            // video-only playback already uses.
+            audio_active_ = false;
+            return;
+        }
+        if (read == AVERROR_EOF)
         {
             audio_.eof = true;
             avcodec_send_packet(audio_.codec, nullptr);
             ++work;
             continue;
         }
-        if (audio_.packet->stream_index == audio_.stream_index)
+        if (!note_stream_error(audio_, "audio", "read", read))
         {
-            const int sent = avcodec_send_packet(audio_.codec, audio_.packet);
-            if (sent < 0 && sent != AVERROR(EAGAIN))
-            {
-                audio_.eof = true;
-                avcodec_send_packet(audio_.codec, nullptr);
-            }
+            audio_.eof = true;
+            avcodec_send_packet(audio_.codec, nullptr);
+            log::line("ffmpeg: audio stream ended (read failed)");
+            ++work;
+            continue;
         }
         av_packet_unref(audio_.packet);
-        ++work;
+        break;
     }
 }
 
@@ -700,6 +1125,7 @@ void FfmpegPlayer::emit_audio(AVFrame *frame)
 {
     if (swr_ == nullptr || sink_ == nullptr || frame->nb_samples <= 0)
     {
+        note_audio_silence("swr, sink or decoded frame missing");
         return;
     }
     int in_rate = frame->sample_rate;
@@ -717,6 +1143,7 @@ void FfmpegPlayer::emit_audio(AVFrame *frame)
         av_rescale_rnd(delay + frame->nb_samples, kOutputRate, in_rate, AV_ROUND_UP));
     if (capacity <= 0)
     {
+        note_audio_silence("resampler capacity is zero");
         return;
     }
     const std::size_t needed = static_cast<std::size_t>(capacity) * 2u * sizeof(float);
@@ -729,11 +1156,13 @@ void FfmpegPlayer::emit_audio(AVFrame *frame)
     const std::uint8_t *const *in =
         frame->extended_data != nullptr ? frame->extended_data : frame->data;
     const int converted = swr_convert(swr_, out, capacity, in, frame->nb_samples);
-    if (converted > 0)
+    if (converted <= 0)
     {
-        push_audio(reinterpret_cast<const float *>(audio_scratch_.data()),
-                   static_cast<std::size_t>(converted));
+        note_audio_silence("resampler produced no frames");
+        return;
     }
+    push_audio(reinterpret_cast<const float *>(audio_scratch_.data()),
+               static_cast<std::size_t>(converted));
 }
 
 void FfmpegPlayer::push_audio(const float *stereo, std::size_t frames)
@@ -752,11 +1181,24 @@ void FfmpegPlayer::push_audio(const float *stereo, std::size_t frames)
     {
         written = sink_->write(stereo, frames);
     }
+    else
+    {
+        note_audio_silence("no sink to write to");
+    }
     audio_frames_written_ += written;
+    if (!audio_first_write_logged_)
+    {
+        // The one line that proves the decoded audio really reaches the sink;
+        // "nothing is audible" then has to come from after this point.
+        audio_first_write_logged_ = true;
+        log::line("ffmpeg: audio sink write %zu/%zu frames buffered=%zu", written, frames,
+                  static_cast<std::size_t>(sink_ != nullptr ? sink_->buffered() : 0u));
+    }
     if (written >= frames)
     {
         return;
     }
+    note_audio_silence("sink accepted only part of the decoded audio");
 
     const std::size_t rest = frames - written;
     if (carry_frames_ + rest > kMaxCarryFrames && carry_frames_ > 0)
@@ -784,6 +1226,7 @@ bool FfmpegPlayer::flush_carry()
     }
     if (sink_ == nullptr)
     {
+        note_audio_silence("no sink to drain the carry buffer");
         carry_frames_ = 0;
         return true;
     }
@@ -984,6 +1427,9 @@ void FfmpegPlayer::release_demuxer(Demuxer &demuxer)
     demuxer.stream_index = -1;
     demuxer.eof = false;
     demuxer.drained = false;
+    demuxer.consecutive_errors = 0;
+    demuxer.stalled_reads = 0;
+    demuxer.last_error_log = std::chrono::steady_clock::time_point{};
 }
 
 void FfmpegPlayer::release()
@@ -1025,7 +1471,18 @@ void FfmpegPlayer::release()
     frame_seen_ = false;
 
     audio_frames_written_ = 0;
+    audio_frames_decoded_ = 0;
     audio_base_s_ = 0.0;
+    audio_first_write_logged_ = false;
+    audio_silence_reason_.clear();
+    last_audio_log_ = std::chrono::steady_clock::time_point{};
+
+    video_interval_s_ = 1.0 / 30.0;
+    video_frames_dropped_ = 0;
+    late_drop_run_ = 0;
+    last_decode_log_ = std::chrono::steady_clock::time_point{};
+    last_drop_log_ = std::chrono::steady_clock::time_point{};
+
     clock_ = 0.0;
     wall_anchor_ = false;
 

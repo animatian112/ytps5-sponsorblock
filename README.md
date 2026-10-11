@@ -40,9 +40,13 @@ Homebrew-Titel.
   Code zum Eintippen auf `google.com/device`. Das Refresh-Token liegt in
   `/download0/hui/auth.json`.
 - **Codecs einzeln abschaltbar**: AVC (H.264), VP9 und AV1 in den
-  Einstellungen; mindestens einer bleibt aktiv. Streamwahl: höchste Auflösung
-  bis zum eingestellten Limit (720p/1080p/1440p/2160p, Standard 1080p),
-  Vorzug AV1 → VP9 → AVC. Audio: Opus vor AAC.
+  Einstellungen; mindestens einer bleibt aktiv. Da die Wiedergabe auf der CPU
+  läuft (der Konsolen-Decoder ist nur ein Import-Test), gewinnt bei gleicher
+  Höhe AVC vor VP9 vor AV1, mit Codec-Obergrenzen **AVC 1080p, VP9 720p,
+  AV1 480p**; das „Maximale Auflösung“ in den Einstellungen
+  (720p/1080p/1440p/2160p, Standard 1080p) deckelt alles darunter. Gibt es nur
+  Formate oberhalb der Codec-Grenze, spielt das niedrigste eingeschaltete als
+  Rückfall. Audio: Opus vor AAC.
 - **Software-Decoder**: PacBrew-ffmpeg (7.0.1) demuxt und dekodiert beide
   Spuren; Audio läuft über den Kit-Mixer, Video als OpenGL-Textur.
 
@@ -202,10 +206,18 @@ zurück. Fehler nennen den Client, der sie verursacht hat
 (`http 400 (TVHTML5)`), und jede Anfrage steht mit Client, Status und
 Trefferzahl in `yt.log`.
 
-Für die Wiedergabe läuft eine Kette aus sechs Clients (TVHTML5, iOS,
-Android-VR, TV-Embedded, Web-Embedded, Web) mit den jeweiligen
-Client-Versionen, User-Agents und Zusatzfeldern; `make smoke SMOKE_ARGS=clients`
-zeigt das Ergebnis jedes Versuchs.
+Für die Wiedergabe läuft die `/player`-Kette jetzt **VISIONOS → TVHTML5
+(tv_samsung, 5.20260707) → TVHTML5 (7.20260707.07.00, Cobalt-UA) → WEB**:
+YouTube beantwortet den `tv`-Client nur noch SABR-only
+(`streamingData.serverAbrStreamingUrl` ohne Format-URLs, yt-dlp-Issue #12482),
+deshalb steht VISIONOS am Anfang und WEB am Ende. Den OAuth-Bearer bekommen nur
+die beiden TV-Clients; das `signatureTimestamp` stammt aus dem Player-JS. Ist
+die Antwort eines Clients SABR-only oder lässt sich ein gewähltes Format nicht
+öffnen, probiert die App das nächste Format derselben Antwort und danach den
+nächsten Client; die unveränderte Antwort des ersten Clients liegt bei
+komplettem Fehlschlag unter `/download0/hui/yt-player-last.json`, und `yt.log`
+führt die Format-Zählung je Client. `make smoke SMOKE_ARGS=clients` zeigt das
+Ergebnis jedes Versuchs.
 
 ## Kanal-Seite
 
