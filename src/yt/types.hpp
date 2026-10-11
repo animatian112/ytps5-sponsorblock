@@ -150,13 +150,26 @@ struct FeedPage
     }
 };
 
-// The three codec switches of the settings screen, plus the resolution cap.
+// Which decoder should turn the selected stream into frames. auto_detect uses
+// the console decoder where the console decodes the codec (AVC, VP9) and falls
+// back to software for the rest (AV1); software always decodes on the CPU;
+// hardware forces the console decoder and refuses codecs it cannot take.
+enum class DecodeMode
+{
+    auto_detect = 0,
+    software = 1,
+    hardware = 2,
+};
+
+// The three codec switches of the settings screen, plus the resolution cap and
+// the decoder the player should use.
 struct CodecChoice
 {
     bool avc = true;
     bool vp9 = true;
     bool av1 = true;
     int max_height = 1080;
+    DecodeMode decode = DecodeMode::auto_detect;
 };
 
 // Load state of anything that arrives from the network.

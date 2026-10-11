@@ -740,6 +740,7 @@ struct Service::Impl
 
                 set_stage(generation, "Decoder");
                 std::unique_ptr<Player> fresh = make_player();
+                fresh->set_decode_mode(choice.decode);
                 log::line("video: open begin client=%s", info.client.c_str());
                 const bool opened = fresh->open(video_url, audio_url, audio);
                 log::line("video: try %s itag=%d %dx%d -> %s", info.client.c_str(),

@@ -20,6 +20,12 @@ constexpr const char *kNoVideo = "video requires the console build";
 class StubPlayer final : public Player
 {
   public:
+    void set_decode_mode(DecodeMode mode) override
+    {
+        // Stored only: there is no video on the host, and open() reports that.
+        decode_mode_ = mode;
+    }
+
     bool open(const std::string &, const std::string &, AudioSink *) override
     {
         return false;
@@ -78,6 +84,7 @@ class StubPlayer final : public Player
 
   private:
     std::string error_ = kNoVideo;
+    DecodeMode decode_mode_ = DecodeMode::auto_detect;
 };
 
 } // namespace

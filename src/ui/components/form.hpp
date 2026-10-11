@@ -76,7 +76,7 @@ struct FormStyle : ComponentStyle
     float label_ratio = 0.44f;    // the label column's share of a row ...
     float label_width = 0.0f;     // ... or its width in pixels, when above 0
     float control_width = 320.0f; // choices and sliders
-    float stepper_width = 196.0f;
+    float stepper_width = 260.0f; // fits a value word like "Hardware" next to its buttons
     float toggle_width = 76.0f;
     float toggle_height = 40.0f;
     float slider_height = 34.0f;

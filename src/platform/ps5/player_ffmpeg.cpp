@@ -8,14 +8,20 @@
 // DASH streams are separate URLs); there is no synchronising container.
 //
 // Everything runs on the caller's frame thread: update() demuxes and decodes a
-// bounded number of packets, converts whichever frames came out and hands the
-// newest picture to poll_frame(). Audio goes straight to the AudioSink, which
-// owns the audio thread. No threads are created here; every stage logs one
-// "ffmpeg: ..." line so yt.log shows which step failed or is too slow, and
-// open()/update() failures are also readable through error().
+// bounded number of packets, converts whichever frames came out into a bounded
+// queue, and poll_frame() presents the picture the audio clock has reached
+// (holding while the queue is ahead, dropping pictures the clock has passed).
+// Audio goes straight to the AudioSink, which owns the audio thread. No threads
+// are created here; every stage logs one "ffmpeg: ..." line so yt.log shows
+// which step failed or is too slow, and open()/update() failures are also
+// readable through error().
 
 #include "yt/log.hpp"
 #include "yt/player.hpp"
+
+// Console-only: the Videodec2 hardware path and its reachability probe live
+// under src/platform/ps5/, which the host builds do not compile.
+#include "platform/ps5/videodec.hpp"
 
 extern "C"
 {
@@ -31,12 +37,14 @@ extern "C"
 #include <libswscale/swscale.h>
 }
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -81,13 +89,29 @@ constexpr int kMaxConsecutiveErrors = 3;
 // kMaxConsecutiveErrors, because such a read is classified as retryable: a
 // dead host would otherwise hold the frame thread at ~1 fps forever.
 constexpr int kMaxStallReads = 4;
-// Packets an AV1 decoder may consume during open() without emitting a frame;
-// after that the open fails so the app falls back to the next format instead
-// of showing a black screen.
-constexpr int kAv1ProbePackets = 8;
+// Software AV1 on this CPU is far slower than real time, so a handful of
+// packets proves nothing: during open() the decoder gets this many access units
+// and this long before "no frames" is a verdict. The console has no AV1
+// hardware path, so software is the only one there is.
+constexpr int kAv1ProbeFrames = 24;
+constexpr std::int64_t kAv1ProbeWindowUs = 2'000'000;
+// Decoded pictures waiting for their presentation time. The queue bounds how
+// far ahead of the clock the decoder may run (12 frames is ~0.4 s at 30 fps);
+// when it is full the decoder holds, when it is empty the picture holds.
+constexpr std::size_t kVideoQueueDepth = 12;
+// The pool of decoded RGBA pictures is bounded by bytes, not by count: the
+// queue plus the picture on screen and the one being converted is ~110 MiB at
+// 1080p but ~460 MB at 2160p, which the settings allow. kVideoPoolBudgetBytes
+// covers every live picture, so the effective queue depth is what it leaves
+// after the two headroom slots, and it never drops below the floor.
+constexpr std::size_t kVideoPoolBudgetBytes = 192u * 1024u * 1024u;
+constexpr std::size_t kVideoPoolHeadroom = 2;
+constexpr std::size_t kVideoMinQueueDepth = 4;
 // A video frame this far behind the audio clock is stale: converting and
 // queueing it cannot catch up, so it is dropped.
 constexpr double kLateFrameToleranceS = 0.10;
+// Drift between the presented picture and the audio clock worth a log line.
+constexpr double kDriftLogS = 0.20;
 // How many stale frames in a row may be dropped before the picture is advanced
 // again. A decoder that is simply slower than real time (software VP9/AV1 on
 // this CPU) would otherwise settle on one still picture; the cap keeps the
@@ -125,6 +149,23 @@ const char *video_codec_label(AVCodecID id)
         return "AVC";
     default:
         return "?";
+    }
+}
+
+// The player only ever sees AV codec ids; the hardware path and
+// videodec_supports() speak yt::Codec.
+Codec codec_from_av_id(AVCodecID id)
+{
+    switch (id)
+    {
+    case AV_CODEC_ID_H264:
+        return Codec::avc;
+    case AV_CODEC_ID_VP9:
+        return Codec::vp9;
+    case AV_CODEC_ID_AV1:
+        return Codec::av1;
+    default:
+        return Codec::unknown;
     }
 }
 
@@ -195,6 +236,12 @@ class FfmpegPlayer final : public Player
 
     bool open(const std::string &video_url, const std::string &audio_url, AudioSink *sink) override;
     void close() override;
+    void set_decode_mode(DecodeMode mode) override
+    {
+        // Read by the next open(); changing it mid-playback does nothing until
+        // open() is called again.
+        decode_mode_ = mode;
+    }
 
     bool running() const override
     {
@@ -242,13 +289,26 @@ class FfmpegPlayer final : public Player
     void emit_audio(AVFrame *frame);
     double frame_pts(const AVFrame *frame) const;
 
+    // Presentation gate driven by the audio clock (the wall clock when there is
+    // no audio): drops queued pictures the clock has passed, presents the one
+    // that is due and holds otherwise. Returns true when a new picture went on
+    // screen during this call.
+    bool present_due_picture();
+    // RGBA buffers are reused through a pool, never reallocated per frame.
+    int acquire_video_buffer(std::size_t size);
+    void release_video_buffer(int index);
+    // Logs "a/v drift" at most once a second when the presented picture and the
+    // audio clock are more than kDriftLogS apart.
+    void note_drift();
+
     void push_audio(const float *stereo, std::size_t frames);
     bool flush_carry();
     void update_clock();
 
-    // Decodes up to `packets` of the video stream during open() to prove the
-    // decoder really produces pictures; stops at the first frame it emits.
-    void probe_video_frames(int packets);
+    // Decodes up to `packets` of the video stream (or `window_us` of wall time)
+    // during open() to prove the decoder really produces pictures; stops at the
+    // first frame it emits.
+    void probe_video_frames(int packets, std::int64_t window_us);
     // Frame interval of the video stream in microseconds, 33 ms when unknown.
     std::int64_t frame_interval_us() const;
     // Logs "decode slow" at most once a second while the decoder cannot keep
@@ -288,14 +348,25 @@ class FfmpegPlayer final : public Player
     SwsContext *sws_ = nullptr;
     SwrContext *swr_ = nullptr;
 
-    // Double-buffered RGBA pictures. exposed_ is the buffer last handed to the
-    // caller, pending_ the one holding the newest decoded frame.
-    std::vector<std::uint8_t> frames_[2];
-    int exposed_ = -1;
-    int pending_ = -1;
-    bool pending_valid_ = false;
-    double pending_pts_ = 0.0;
-    double returned_pts_ = kNoPts;
+    // Decoded pictures waiting for their presentation time. The RGBA buffers
+    // live in a pool (a 1080p frame is ~8 MiB, so they are reused, never
+    // reallocated per frame) and the queue pairs a buffer with its pts; the
+    // presentation gate scans it against the clock. exposed_buffer_ is the pool
+    // slot currently on screen, valid until the next picture is presented.
+    struct QueuedPicture
+    {
+        int buffer = -1;
+        double pts = 0.0;
+    };
+    std::vector<std::vector<std::uint8_t>> video_buffers_;
+    std::vector<int> video_free_buffers_;
+    std::deque<QueuedPicture> video_queue_;
+    // Effective queue bound, recomputed from the pool budget when the
+    // resolution is known (see emit_video); kVideoQueueDepth until then.
+    std::size_t video_queue_depth_ = kVideoQueueDepth;
+    int exposed_buffer_ = -1;
+    double exposed_pts_ = kNoPts;
+    bool picture_presented_ = false;
     double last_video_pts_ = 0.0;
     int video_width_ = 0;
     int video_height_ = 0;
@@ -318,6 +389,13 @@ class FfmpegPlayer final : public Player
     // different things and must be able to appear in the same second.
     std::chrono::steady_clock::time_point last_decode_log_{};
     std::chrono::steady_clock::time_point last_drop_log_{};
+    std::chrono::steady_clock::time_point last_drift_log_{};
+
+    // Software by default; set_decode_mode() overrides it before open(). The
+    // session is created only when a mode other than software asked for it, so
+    // software playback never constructs or touches the hardware decoder.
+    DecodeMode decode_mode_ = DecodeMode::auto_detect;
+    std::unique_ptr<hui::ps5::HardwareDecoder> hardware_;
 
     double clock_ = 0.0;
     bool wall_anchor_ = false;
@@ -386,15 +464,59 @@ bool FfmpegPlayer::open(const std::string &video_url, const std::string &audio_u
         return fail(error_);
     quality_ = make_quality_label();
 
+    // Decode mode. Hardware is attempted only when the app asked for it and the
+    // console's Videodec2 has a proven path for this codec (AVC and VP9; AV1
+    // has none), so software mode never touches the hardware API at all. Every
+    // failure here is logged and software takes over: open() never fails
+    // because the hardware path was unavailable.
+    if (decode_mode_ != DecodeMode::software)
+    {
+        const Codec codec = codec_from_av_id(video_.stream->codecpar->codec_id);
+        if (codec != Codec::unknown && hui::ps5::videodec_supports(codec))
+        {
+            std::string hardware_error;
+            hardware_ = std::make_unique<hui::ps5::HardwareDecoder>();
+            if (!hardware_->open(codec, video_.stream->codecpar->width,
+                                 video_.stream->codecpar->height, &hardware_error) ||
+                !hardware_->ready())
+            {
+                if (hardware_error.empty())
+                {
+                    hardware_error = "decoder session not ready";
+                }
+                log::line("ffmpeg: hardware decode unavailable: %s, using software",
+                          hardware_error.c_str());
+                hardware_.reset();
+            }
+            else
+            {
+                // The session is up, but this build has no import path that
+                // turns a decoder surface into a GL texture (the unproven
+                // mesa_glinterop route in docs/HARDWARE_DECODE.md), so a
+                // decoded picture cannot reach the screen. Fail the hardware
+                // attempt the same way any other step failure is reported.
+                log::line("ffmpeg: hardware decode unavailable: %s, using software",
+                          "hardware picture import unavailable");
+                hardware_->close();
+                hardware_.reset();
+            }
+        }
+    }
+
     if (video_.stream->codecpar->codec_id == AV_CODEC_ID_AV1)
     {
         // A decoder that opens but never emits a picture is a black screen the
-        // viewer cannot recover from; probing the first packets turns that into
-        // a precise open failure so the app falls back to the next format.
-        probe_video_frames(kAv1ProbePackets);
+        // viewer cannot recover from; probing turns that into a precise open
+        // failure so the app falls back to the next format. Software AV1 on
+        // this CPU is much slower than real time, so it gets a real window (2 s
+        // / 24 access units) before a verdict instead of a handful of packets.
+        probe_video_frames(kAv1ProbeFrames, kAv1ProbeWindowUs);
         if (!frame_seen_)
         {
-            return fail(error_.empty() ? "av1: decoder produced no frames" : error_);
+            return fail(error_.empty()
+                            ? "av1: the software decoder produced no frames in 2 s (this "
+                              "console has no AV1 hardware path)"
+                            : error_);
         }
     }
 
@@ -633,6 +755,22 @@ void FfmpegPlayer::update()
         {
             pump_audio(kAudioPacketsPerUpdate);
         }
+        if (audio_active_ && audio_.drained)
+        {
+            // The audio path is spent (EOF, a failed decoder or a dead read):
+            // an audio clock that will never advance again must not hold the
+            // picture. The wall clock takes over from the position the audio
+            // clock had reached, exactly as for video-only playback, so the
+            // queued pictures keep presenting instead of being held forever.
+            // Clearing audio_active_ also makes this fire once.
+            audio_active_ = false;
+            if (!wall_anchor_)
+            {
+                wall_anchor_ = true;
+                wall_last_ = std::chrono::steady_clock::now();
+            }
+            log::line("ffmpeg: audio ended, clock on the wall clock");
+        }
         update_clock();
     }
     const std::int64_t elapsed_us = now_us() - start_us;
@@ -655,13 +793,15 @@ void FfmpegPlayer::update()
 
 // open() runs this before playback. The packets it consumes are decoded for
 // real: their pictures go through emit_video, so the probe costs nothing beyond
-// the frames it needs to prove that the decoder works at all.
-void FfmpegPlayer::probe_video_frames(int packets)
+// the frames it needs to prove that the decoder works at all. It gives up after
+// `packets` access units or `window_us` of wall time, whichever comes first.
+void FfmpegPlayer::probe_video_frames(int packets, std::int64_t window_us)
 {
     int sent = 0;
+    const std::int64_t window_deadline = now_us() + window_us;
     while (sent < packets && !video_.drained && !frame_seen_)
     {
-        if (abort_.load() || now_us() >= open_deadline_us_.load())
+        if (abort_.load() || now_us() >= open_deadline_us_.load() || now_us() >= window_deadline)
         {
             return;
         }
@@ -682,10 +822,10 @@ void FfmpegPlayer::probe_video_frames(int packets)
             // A failed probe read (403, timeout, a cut) is a stream problem,
             // not a decoder one: keep its exact reason so open() reports that
             // and the caller's format fallback reacts to it, instead of the
-            // misleading "decoder produced no frames". End of stream before a
-            // picture keeps that wording, because there the decoder really
-            // produced nothing, and a cut by the open deadline is reported as
-            // the open timeout it is.
+            // misleading "produced no frames". End of stream before a picture
+            // keeps that wording, because there the decoder really produced
+            // nothing, and a cut by the open deadline is reported as the open
+            // timeout it is.
             if (read != AVERROR_EOF && !is_interrupt_error(read))
             {
                 log::line("ffmpeg: video probe read failed: %s (%d)", av_error(read).c_str(), read);
@@ -778,6 +918,13 @@ void FfmpegPlayer::pump_video(int budget)
         {
             return;
         }
+        // The queue is full: the decoder is ahead of the clock, so it holds.
+        // The frames are already decoded and converted; running further would
+        // only grow memory and the distance to the picture on screen.
+        if (video_queue_.size() >= video_queue_depth_)
+        {
+            return;
+        }
         const std::int64_t step_start_us = now_us();
         const int received = avcodec_receive_frame(video_.codec, video_.frame);
         if (received == 0)
@@ -786,8 +933,10 @@ void FfmpegPlayer::pump_video(int budget)
             // A picture the audio clock has already passed cannot be caught up
             // with: converting and queueing it would only add latency, so it is
             // dropped and the decoder goes straight back for the next packet.
-            // The run is capped (see kMaxLateDropRun) and the first frame is
-            // always shown, so a black screen and a frozen picture are both
+            // The drop counter is shared with the presentation gate and is only
+            // cleared when a picture actually goes on screen, so after
+            // kMaxLateDropRun dropped frames the queued picture is shown even
+            // though it is late: a black screen and a frozen picture are both
             // ruled out.
             const double pts = frame_pts(video_.frame);
             if (frame_seen_ && late_drop_run_ < kMaxLateDropRun && audio_active_ && clock_ > 0.0 &&
@@ -800,7 +949,6 @@ void FfmpegPlayer::pump_video(int budget)
                 ++work;
                 continue;
             }
-            late_drop_run_ = 0;
             emit_video(video_.frame);
             av_frame_unref(video_.frame);
             note_decode_slow(now_us() - step_start_us);
@@ -1021,11 +1169,12 @@ void FfmpegPlayer::pump_audio(int budget)
                 return;
             }
             log::line("ffmpeg: audio read stalled: no data for %d s", audio_.stalled_reads);
-            audio_.drained = true;
             // The audio clock cannot be the master clock of a path that is
-            // gone: the picture continues under the wall-clock fallback that
-            // video-only playback already uses.
-            audio_active_ = false;
+            // gone. The end of the audio path is turned into the wall-clock
+            // fallback that video-only playback already uses by update(), one
+            // place for every way the path can end; it anchors at the position
+            // the audio clock had reached.
+            audio_.drained = true;
             return;
         }
         if (read == AVERROR_EOF)
@@ -1071,54 +1220,164 @@ void FfmpegPlayer::emit_video(AVFrame *frame)
         return;
     }
 
-    int target = exposed_ == 0 ? 1 : 0;
-    if (video_width_ != width || video_height_ != height)
-    {
-        frames_[0].clear();
-        frames_[1].clear();
-        exposed_ = -1;
-        pending_ = -1;
-        pending_valid_ = false;
-        video_width_ = width;
-        video_height_ = height;
-        target = 0;
-    }
-
     const std::size_t size =
         static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
-    if (frames_[target].size() != size)
+
+    if (video_width_ != width || video_height_ != height)
     {
-        frames_[target].assign(size, 0u);
+        // A resolution change invalidates everything decoded so far (and the
+        // pool: the buffers are reallocated at the new size on demand).
+        video_queue_.clear();
+        video_free_buffers_.clear();
+        video_buffers_.clear();
+        exposed_buffer_ = -1;
+        exposed_pts_ = kNoPts;
+        picture_presented_ = false;
+        video_width_ = width;
+        video_height_ = height;
+
+        // The pool is bounded by bytes, so the queue depth follows the picture
+        // size: the picture on screen and the one being converted live outside
+        // the queue, and the rest of the budget is this many queued pictures.
+        // One line per resolution says how many and how much they take.
+        const std::size_t headroom = size * kVideoPoolHeadroom;
+        const std::size_t queue_budget =
+            kVideoPoolBudgetBytes > headroom ? kVideoPoolBudgetBytes - headroom : 0u;
+        video_queue_depth_ = std::clamp(queue_budget / size, kVideoMinQueueDepth, kVideoQueueDepth);
+        log::line("ffmpeg: video queue depth %zu (%zu MB)", video_queue_depth_,
+                  size * (video_queue_depth_ + kVideoPoolHeadroom) / (1024u * 1024u));
     }
+
+    const int target = acquire_video_buffer(size);
 
     sws_ =
         sws_getCachedContext(sws_, width, height, static_cast<AVPixelFormat>(frame->format), width,
                              height, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
     if (sws_ == nullptr)
     {
+        release_video_buffer(target);
         error_ = "sws_getCachedContext failed";
         return;
     }
 
-    std::uint8_t *destination[4] = {frames_[target].data(), nullptr, nullptr, nullptr};
+    std::uint8_t *destination[4] = {video_buffers_[target].data(), nullptr, nullptr, nullptr};
     const int destination_stride[4] = {width * 4, 0, 0, 0};
     sws_scale(sws_, frame->data, frame->linesize, 0, height, destination, destination_stride);
 
     const double pts = frame_pts(frame);
-    pending_ = target;
-    pending_pts_ = pts;
-    pending_valid_ = true;
+    if (video_queue_.size() >= video_queue_depth_)
+    {
+        // Defensive: pump_video holds before the queue is full, but the open()
+        // probe converts frames without that guard. Never grow past the bound.
+        release_video_buffer(video_queue_.front().buffer);
+        video_queue_.pop_front();
+    }
+    video_queue_.push_back(QueuedPicture{target, pts});
     last_video_pts_ = pts;
     if (!frame_seen_)
         log::line("ffmpeg: first frame %dx%d pts=%.2f", width, height, pts);
     frame_seen_ = true;
+}
+
+int FfmpegPlayer::acquire_video_buffer(std::size_t size)
+{
+    if (!video_free_buffers_.empty())
+    {
+        const int index = video_free_buffers_.back();
+        video_free_buffers_.pop_back();
+        if (video_buffers_[index].size() != size)
+        {
+            video_buffers_[index].assign(size, 0u);
+        }
+        return index;
+    }
+    video_buffers_.emplace_back();
+    video_buffers_.back().assign(size, 0u);
+    return static_cast<int>(video_buffers_.size()) - 1;
+}
+
+void FfmpegPlayer::release_video_buffer(int index)
+{
+    if (index >= 0 && index < static_cast<int>(video_buffers_.size()))
+    {
+        video_free_buffers_.push_back(index);
+    }
+}
+
+bool FfmpegPlayer::present_due_picture()
+{
+    // Pictures the clock has already passed are stale: one that was queued
+    // before its time and is still waiting when the time has gone is dropped,
+    // not shown late. The run is capped so a decoder slower than real time
+    // keeps advancing the picture instead of settling on a still frame.
+    while (!paused_ && !video_queue_.empty() && audio_active_ && clock_ > 0.0 &&
+           late_drop_run_ < kMaxLateDropRun &&
+           video_queue_.front().pts + kLateFrameToleranceS < clock_)
+    {
+        ++video_frames_dropped_;
+        ++late_drop_run_;
+        release_video_buffer(video_queue_.front().buffer);
+        video_queue_.pop_front();
+        note_video_drop();
+    }
+    if (video_queue_.empty())
+    {
+        return false;
+    }
+
+    const double pts = video_queue_.front().pts;
+    // The first picture starts playback at once: there is no clock for it to
+    // wait on yet. Afterwards the audio clock (or, video-only, the wall-clock
+    // anchor taken below) decides when the next picture is due; while it is
+    // ahead the picture is held, which is what keeps the video behind the
+    // sound instead of racing ahead of it.
+    const bool due = !picture_presented_ || pts <= clock_;
+    if (!due)
+    {
+        return false;
+    }
+
+    if (exposed_buffer_ >= 0)
+    {
+        release_video_buffer(exposed_buffer_);
+    }
+    exposed_buffer_ = video_queue_.front().buffer;
+    exposed_pts_ = pts;
+    video_queue_.pop_front();
+    picture_presented_ = true;
+    late_drop_run_ = 0;
 
     if (!audio_active_ && !wall_anchor_)
     {
+        // Video-only: the picture itself drives the clock from now on. The
+        // anchor is taken when the picture is shown, not when it is decoded, so
+        // a queue filled ahead of playback does not fast-forward the timeline.
         wall_anchor_ = true;
-        clock_ = pts;
         wall_last_ = std::chrono::steady_clock::now();
+        clock_ = pts;
     }
+    return true;
+}
+
+void FfmpegPlayer::note_drift()
+{
+    if (!audio_active_ || !picture_presented_)
+    {
+        return;
+    }
+    // Positive means the picture on screen is ahead of the sound.
+    const double drift = exposed_pts_ - clock_;
+    if (drift > -kDriftLogS && drift < kDriftLogS)
+    {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_drift_log_ < std::chrono::seconds(1))
+    {
+        return;
+    }
+    last_drift_log_ = now;
+    log::line("ffmpeg: a/v drift %d ms", static_cast<int>(drift * 1000.0));
 }
 
 void FfmpegPlayer::emit_audio(AVFrame *frame)
@@ -1277,29 +1536,21 @@ void FfmpegPlayer::update_clock()
 
 VideoFrameView FfmpegPlayer::poll_frame()
 {
+    // The one place a picture goes on screen: present_due_picture() drops what
+    // the clock has passed, shows what is due and holds while the queue is
+    // ahead. poll_frame() is called every rendered frame, so this runs on the
+    // frame thread at display rate.
+    const bool presented = present_due_picture();
+    note_drift();
+
     VideoFrameView view;
-    if (pending_valid_)
+    if (exposed_buffer_ >= 0 && !video_buffers_[exposed_buffer_].empty())
     {
-        pending_valid_ = false;
-        if (pending_pts_ > returned_pts_ && pending_ >= 0 && !frames_[pending_].empty())
-        {
-            exposed_ = pending_;
-            returned_pts_ = pending_pts_;
-            view.rgba = frames_[exposed_].data();
-            view.width = video_width_;
-            view.height = video_height_;
-            view.pts = pending_pts_;
-            view.fresh = true;
-            return view;
-        }
-    }
-    if (exposed_ >= 0 && !frames_[exposed_].empty())
-    {
-        view.rgba = frames_[exposed_].data();
+        view.rgba = video_buffers_[exposed_buffer_].data();
         view.width = video_width_;
         view.height = video_height_;
-        view.pts = returned_pts_;
-        view.fresh = false;
+        view.pts = exposed_pts_;
+        view.fresh = presented;
     }
     return view;
 }
@@ -1352,9 +1603,16 @@ void FfmpegPlayer::seek(double seconds)
         sink_->drain();
     }
 
-    pending_ = -1;
-    pending_valid_ = false;
-    returned_pts_ = kNoPts;
+    while (!video_queue_.empty())
+    {
+        release_video_buffer(video_queue_.front().buffer);
+        video_queue_.pop_front();
+    }
+    release_video_buffer(exposed_buffer_);
+    exposed_buffer_ = -1;
+    exposed_pts_ = kNoPts;
+    picture_presented_ = false;
+    late_drop_run_ = 0;
     last_video_pts_ = seconds;
     clock_ = seconds;
     wall_anchor_ = true;
@@ -1444,11 +1702,14 @@ void FfmpegPlayer::release()
         sws_freeContext(sws_);
         sws_ = nullptr;
     }
+    // Null in software mode, where the session was never created.
+    hardware_.reset();
     release_demuxer(video_);
     release_demuxer(audio_);
 
-    frames_[0].clear();
-    frames_[1].clear();
+    video_queue_.clear();
+    video_buffers_.clear();
+    video_free_buffers_.clear();
     audio_scratch_.clear();
     carry_.clear();
     carry_frames_ = 0;
@@ -1460,14 +1721,13 @@ void FfmpegPlayer::release()
     audio_active_ = false;
     quality_.clear();
 
-    exposed_ = -1;
-    pending_ = -1;
-    pending_valid_ = false;
-    pending_pts_ = 0.0;
-    returned_pts_ = kNoPts;
+    exposed_buffer_ = -1;
+    exposed_pts_ = kNoPts;
+    picture_presented_ = false;
     last_video_pts_ = 0.0;
     video_width_ = 0;
     video_height_ = 0;
+    video_queue_depth_ = kVideoQueueDepth;
     frame_seen_ = false;
 
     audio_frames_written_ = 0;
@@ -1482,6 +1742,7 @@ void FfmpegPlayer::release()
     late_drop_run_ = 0;
     last_decode_log_ = std::chrono::steady_clock::time_point{};
     last_drop_log_ = std::chrono::steady_clock::time_point{};
+    last_drift_log_ = std::chrono::steady_clock::time_point{};
 
     clock_ = 0.0;
     wall_anchor_ = false;

@@ -40,13 +40,21 @@ Homebrew-Titel.
   Code zum Eintippen auf `google.com/device`. Das Refresh-Token liegt in
   `/download0/hui/auth.json`.
 - **Codecs einzeln abschaltbar**: AVC (H.264), VP9 und AV1 in den
-  Einstellungen; mindestens einer bleibt aktiv. Da die Wiedergabe auf der CPU
-  läuft (der Konsolen-Decoder ist nur ein Import-Test), gewinnt bei gleicher
-  Höhe AVC vor VP9 vor AV1, mit Codec-Obergrenzen **AVC 1080p, VP9 720p,
-  AV1 480p**; das „Maximale Auflösung“ in den Einstellungen
-  (720p/1080p/1440p/2160p, Standard 1080p) deckelt alles darunter. Gibt es nur
-  Formate oberhalb der Codec-Grenze, spielt das niedrigste eingeschaltete als
-  Rückfall. Audio: Opus vor AAC.
+  Einstellungen; mindestens einer bleibt aktiv. Bei gleicher Höhe gewinnt AVC
+  vor VP9 vor AV1, mit Codec-Obergrenzen **AVC 1080p, VP9 720p, AV1 480p**;
+  das „Maximale Auflösung“ in den Einstellungen (720p/1080p/1440p/2160p,
+  Standard 1080p) deckelt alles darunter. Gibt es nur Formate oberhalb der
+  Codec-Grenze, spielt das niedrigste eingeschaltete als Rückfall. Audio: Opus
+  vor AAC.
+- **Decoding-Modus**: Die Einstellung „Decoding“ bietet **Software** (Standard),
+  **Auto** und **Hardware**. Auto/Hardware versuchen den Konsolen-Decoder
+  (Videodec2) für AVC/VP9 und fallen bei jedem fehlgeschlagenen Schritt
+  automatisch auf Software zurück — auch der Bild-Import in eine GL-Textur ist
+  noch nicht belegt, also läuft heute jede Hardware-Wiedergabe im Log sichtbar
+  auf Software. AV1 bleibt Software und wird im Modus Hardware gar nicht
+  gewählt.
+- **Wiedergabe-Takt**: Das Bild folgt dem Audio-Takt (zu späte Bilder werden
+  verworfen), und der Bildpuffer ist auf 192 MB begrenzt.
 - **Software-Decoder**: PacBrew-ffmpeg (7.0.1) demuxt und dekodiert beide
   Spuren; Audio läuft über den Kit-Mixer, Video als OpenGL-Textur.
 
@@ -190,11 +198,14 @@ Titeldaten oder der Konsole entfernt ihn). Zusätzlich:
 **Hardware-Decode:** Die PS5 hat einen fest verdrahteten Videodekoder
 (Videodec2), der AVC/HEVC/VP9 nachweislich dekodiert — VP9 auch in 4K60. Diese
 App bindet die 26 bekannten Einstiegspunkte beim Bauen als Importe ein
-(`tooling/stubs/`, 26/26 NIDs im Paket verifiziert) und protokolliert beim
-Start, wie viele davon die Konsole bindet; **aufgerufen wird noch nichts**,
-weil die Argument-Layouts nicht öffentlich sind. AV1 hat dort keinen Nachweis
-und bleibt Software. Der komplette Stand, der Konsolen-Test und der Weg zur
-VP9-Integration stehen in [docs/HARDWARE_DECODE.md](docs/HARDWARE_DECODE.md).
+(`tooling/stubs/`, 26/26 NIDs im Paket verifiziert), protokolliert beim Start,
+wie viele davon die Konsole bindet, und betreibt den Decoder als echte Session
+(kernel-gemappte Regionen, Compute-Queue, explizites Profil/Level, `Reset`,
+validierter `Decode`); die Einstellung **Decoding** schaltet sie für AVC/VP9 zu,
+mit automatischem Rückfall auf Software. AV1 hat dort keinen Nachweis und
+bleibt Software. Der komplette Stand, die öffentlichen Referenzen, der
+Konsolen-Test und der noch offene Bild-Import stehen in
+[docs/HARDWARE_DECODE.md](docs/HARDWARE_DECODE.md).
 
 ## Client-Wahl und Fehlermeldungen
 

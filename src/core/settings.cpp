@@ -13,7 +13,7 @@ namespace hui
 
 namespace
 {
-constexpr std::uint8_t kVersion = 2;
+constexpr std::uint8_t kVersion = 3;
 }
 
 std::string encode_settings(const Settings &settings)
@@ -36,6 +36,7 @@ std::string encode_settings(const Settings &settings)
     w.put_bool(settings.codec_av1);
     w.put(static_cast<std::uint16_t>(settings.max_height));
     w.put(static_cast<std::uint8_t>(settings.video_volume));
+    w.put(static_cast<std::uint8_t>(settings.decode_mode));
     return w.data();
 }
 
@@ -65,6 +66,12 @@ bool decode_settings(std::string_view data, Settings *settings)
     if (!s.codec_avc && !s.codec_vp9 && !s.codec_av1)
         s.codec_avc = true;
     s.video_volume = std::clamp<int>(r.get<std::uint8_t>(), 0, 10);
+    {
+        const int mode = r.get<std::uint8_t>();
+        s.decode_mode = mode <= static_cast<int>(yt::DecodeMode::hardware)
+                            ? static_cast<yt::DecodeMode>(mode)
+                            : yt::DecodeMode::software;
+    }
     if (!r.finished())
         return false;
     *settings = s;

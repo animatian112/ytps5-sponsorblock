@@ -20,6 +20,7 @@ enum : int
     kCodecVp9,
     kCodecAv1,
     kMaxHeight,
+    kDecodeMode,
     kHaptics,
     kSaveAccount,
     kSignOut,
@@ -45,6 +46,45 @@ int index_to_height(int index)
     if (index > 3)
         index = 3;
     return kHeights[index];
+}
+
+// The stepper's order is the one a user reads (Software, Auto, Hardware); the
+// enum's is auto = 0, software = 1, hardware = 2, so the two are mapped.
+int decode_mode_to_index(yt::DecodeMode mode)
+{
+    switch (mode)
+    {
+    case yt::DecodeMode::software:
+        return 0;
+    case yt::DecodeMode::hardware:
+        return 2;
+    case yt::DecodeMode::auto_detect:
+    default:
+        return 1;
+    }
+}
+
+yt::DecodeMode index_to_decode_mode(int index)
+{
+    if (index <= 0)
+        return yt::DecodeMode::software;
+    if (index >= 2)
+        return yt::DecodeMode::hardware;
+    return yt::DecodeMode::auto_detect;
+}
+
+const char *decode_mode_description(yt::DecodeMode mode)
+{
+    switch (mode)
+    {
+    case yt::DecodeMode::software:
+        return "Software: ffmpeg on the CPU (every codec)";
+    case yt::DecodeMode::hardware:
+        return "Hardware: the console decoder where available (AV1 stays software)";
+    case yt::DecodeMode::auto_detect:
+    default:
+        return "Auto: the console decoder for AVC/VP9, software for AV1";
+    }
 }
 
 const TourStep kTour[] = {
@@ -77,6 +117,17 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         static const char *const kLabels[] = {"720p", "1080p", "1440p", "2160p"};
         if (value < 0 || value > 3)
             return "1080p";
+        return kLabels[value];
+    };
+
+    ui::FormRow &decode = form_.add_stepper(
+        kDecodeMode, "Decoding", decode_mode_to_index(context_.settings.decode_mode), 0, 2, 1);
+    decode.description = decode_mode_description(context_.settings.decode_mode);
+    decode.stepper.format = [](int value) -> std::string
+    {
+        static const char *const kLabels[] = {"Software", "Auto", "Hardware"};
+        if (value < 0 || value > 2)
+            return "Auto";
         return kLabels[value];
     };
 
@@ -132,6 +183,15 @@ void SettingsScreen::apply(int id, ui::Feedback &feedback)
         context_.settings.max_height = index_to_height(form_.stepper_value(id));
         context_.settings_changed = true;
         break;
+    case kDecodeMode:
+    {
+        const yt::DecodeMode mode = index_to_decode_mode(form_.stepper_value(id));
+        context_.settings.decode_mode = mode;
+        if (ui::FormRow *row = form_.row(kDecodeMode))
+            row->description = decode_mode_description(mode);
+        context_.settings_changed = true;
+        break;
+    }
     case kHaptics:
         context_.settings.haptics = form_.toggle_value(id);
         context_.settings_changed = true;

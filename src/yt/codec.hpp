@@ -33,9 +33,11 @@ int codec_height_ceiling(Codec codec, const CodecChoice &choice);
 // The video format to play: at equal height AVC before VP9 before AV1 (the
 // software-decode order, not YouTube's hardware order), the highest height that
 // fits both choice.max_height and the codec's ceiling, and the higher bitrate
-// inside one codec. When the ceilings filter everything out, the lowest-height
-// enabled format is returned instead of nothing - a 480p AVC stream still beats
-// a black screen. nullptr only when no enabled codec has a usable format inside
+// inside one codec. In DecodeMode::hardware an AV1 format is never returned -
+// the console has no AV1 decoder - though the codec ceilings still apply. When
+// the ceilings filter everything out, the lowest-height enabled format is
+// returned instead of nothing - a 480p AVC stream still beats a black screen.
+// nullptr only when no enabled codec has a usable format inside
 // choice.max_height (the caller shows "Kein Stream für aktive Codecs").
 const Format *select_video_format(const std::vector<Format> &formats, const CodecChoice &choice);
 

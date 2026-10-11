@@ -5,9 +5,9 @@
 // The interface is platform-neutral; the implementation is not:
 //   src/platform/ps5/player_ffmpeg.cpp  - PacBrew ffmpeg on the console
 //   host/player_stub.cpp                - PC snapshots: reports no video
-// Both sides keep the same call pattern: open() once, update() every frame
-// from the frame loop, poll_frame() while the frame is drained, close() when
-// the player screen is left.
+// Both sides keep the same call pattern: set_decode_mode() once, open() once,
+// update() every frame from the frame loop, poll_frame() while the frame is
+// drained, close() when the player screen is left.
 
 #pragma once
 
@@ -47,6 +47,11 @@ class Player
   public:
     virtual ~Player() = default;
 
+    // Selects how the next open() decodes video. The app calls this once per
+    // open(); the console player keeps it and falls back to software whenever
+    // the hardware path cannot deliver a picture, so it never has to be exact.
+    virtual void set_decode_mode(DecodeMode mode) = 0;
+
     // Opens the video-only and audio-only URLs of one adaptive pair. A missing
     // audio URL is allowed (video-only playback). Returns false on failure and
     // fills error(); open() may be called again afterwards.
@@ -58,10 +63,13 @@ class Player
     // The video's codec and height, for the player overlay ("1080p VP9").
     virtual std::string quality_label() const = 0;
 
-    // Pulls demuxed packets, decodes, feeds the audio sink and the frame slot.
-    // Call once per frame; does bounded work so a frame never stalls.
+    // Pulls demuxed packets, decodes, feeds the audio sink and the bounded
+    // picture queue. Call once per frame; does bounded work so a frame never
+    // stalls.
     virtual void update() = 0;
-    // The newest frame, or fresh = false when nothing new arrived.
+    // The frame due against the clock, or fresh = false while the picture is
+    // held (nothing new was due yet). The buffer stays valid until the next
+    // poll_frame().
     virtual VideoFrameView poll_frame() = 0;
 
     // Master clock: audio playback position in seconds.

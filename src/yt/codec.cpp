@@ -96,10 +96,22 @@ const Format *select_video_format(const std::vector<Format> &formats, const Code
 {
     const Format *best = nullptr;     // highest format inside its codec ceiling
     const Format *fallback = nullptr; // lowest format above its codec ceiling
+    bool av1_skipped = false;
     for (const Format &format : formats)
     {
         if (!is_video_codec(format.codec) || !codec_enabled(choice, format.codec))
             continue;
+        // The console has no AV1 decoder: in hardware mode AV1 can never play,
+        // so it is dropped here, before it could win on height or fall back.
+        if (choice.decode == DecodeMode::hardware && format.codec == Codec::av1)
+        {
+            if (!av1_skipped)
+            {
+                log::line("video: AV1 skipped, no hardware decoder for it");
+                av1_skipped = true;
+            }
+            continue;
+        }
         if (format.url.empty() || format.height <= 0)
             continue;
         if (choice.max_height > 0 && format.height > choice.max_height)

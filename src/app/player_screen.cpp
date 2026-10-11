@@ -121,6 +121,7 @@ yt::CodecChoice PlayerScreen::codec_choice() const
     choice.vp9 = context_.settings.codec_vp9;
     choice.av1 = context_.settings.codec_av1;
     choice.max_height = context_.settings.max_height;
+    choice.decode = context_.settings.decode_mode;
     return choice;
 }
 

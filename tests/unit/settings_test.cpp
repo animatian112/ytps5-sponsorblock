@@ -12,6 +12,7 @@ namespace
 using hui::decode_settings;
 using hui::encode_settings;
 using hui::Settings;
+using yt::DecodeMode;
 
 TEST(Settings, RoundTripKeepsEveryValue)
 {
@@ -32,6 +33,7 @@ TEST(Settings, RoundTripKeepsEveryValue)
     before.codec_av1 = false;
     before.max_height = 1440;
     before.video_volume = 6;
+    before.decode_mode = DecodeMode::hardware;
 
     Settings after;
     ASSERT_TRUE(decode_settings(encode_settings(before), &after));
@@ -51,6 +53,32 @@ TEST(Settings, RoundTripKeepsEveryValue)
     EXPECT_EQ(after.codec_av1, before.codec_av1);
     EXPECT_EQ(after.max_height, before.max_height);
     EXPECT_EQ(after.video_volume, before.video_volume);
+    EXPECT_EQ(after.decode_mode, before.decode_mode);
+}
+
+TEST(Settings, DecodeModeRoundTripsAllThreeValues)
+{
+    for (const DecodeMode mode :
+         {DecodeMode::auto_detect, DecodeMode::software, DecodeMode::hardware})
+    {
+        Settings before;
+        before.decode_mode = mode;
+        Settings after;
+        ASSERT_TRUE(decode_settings(encode_settings(before), &after));
+        EXPECT_EQ(after.decode_mode, mode);
+    }
+}
+
+TEST(Settings, AnOlderSaveFileLoadsAsAutoDetect)
+{
+    // A save from before the decode mode existed carries version 2. The reader
+    // is versioned and refuses it, so the decoded values stay at their defaults,
+    // which makes the decode mode auto_detect.
+    std::string old = encode_settings(Settings{});
+    old[0] = 2;
+    Settings settings;
+    EXPECT_FALSE(decode_settings(old, &settings));
+    EXPECT_EQ(settings.decode_mode, DecodeMode::software);
 }
 
 TEST(Settings, BrokenDataIsRejectedAndOutOfRangeValuesAreClamped)

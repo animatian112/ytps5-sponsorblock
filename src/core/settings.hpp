@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "yt/types.hpp"
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -33,6 +35,13 @@ struct Settings
     bool codec_av1 = true;
     int max_height = 1080; // 720, 1080, 1440 or 2160
     int video_volume = 10;
+    // Which decoder plays the selected stream (see yt::DecodeMode). Stored as a
+    // byte, like the codec switches; an older save without it loads as the
+    // default through the versioned reader.
+    // Software by default: the console decoder's argument layouts are still
+    // unverified research (docs/HARDWARE_DECODE.md), so Auto/Hardware are
+    // opt-in.
+    yt::DecodeMode decode_mode = yt::DecodeMode::software;
     // How large on-screen controller hints are: 0 small, 1 medium, 2 large.
     int hint_size = 1;
     // The design shown when the app opens (index into the concept list).

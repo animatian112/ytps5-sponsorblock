@@ -11,6 +11,7 @@ namespace
 
 using yt::Codec;
 using yt::CodecChoice;
+using yt::DecodeMode;
 using yt::Format;
 
 Format video(Codec codec, int height, long long bitrate)
@@ -244,6 +245,65 @@ TEST(Codec, CodecEnabledFollowsTheSwitches)
     EXPECT_FALSE(yt::codec_enabled(choice, Codec::av1));
     EXPECT_FALSE(yt::codec_enabled(choice, Codec::unknown));
     EXPECT_FALSE(yt::codec_enabled(choice, Codec::opus));
+}
+
+TEST(Codec, HardwareModeNeverSelectsAv1)
+{
+    CodecChoice choice;
+    choice.decode = DecodeMode::hardware;
+
+    // AV1 is the tallest entry that fits its own ceiling here, so it would win
+    // on height in either software mode; hardware refuses it.
+    const std::vector<Format> formats = {video(Codec::av1, 480, 1'000'000),
+                                         video(Codec::avc, 360, 500'000)};
+    const Format *picked = yt::select_video_format(formats, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->codec, Codec::avc);
+    EXPECT_EQ(picked->height, 360);
+
+    // Only AV1 offered: hardware yields nothing rather than an AV1 frame.
+    const std::vector<Format> av1_only = {video(Codec::av1, 480, 1'000'000)};
+    EXPECT_EQ(yt::select_video_format(av1_only, choice), nullptr);
+
+    // The over-ceiling fallback does not rescue AV1 either.
+    const std::vector<Format> av1_tall = {video(Codec::av1, 1080, 2'000'000)};
+    EXPECT_EQ(yt::select_video_format(av1_tall, choice), nullptr);
+}
+
+TEST(Codec, AutoDetectPrefersAvcOverEqualHeightAv1)
+{
+    CodecChoice choice;
+    choice.decode = DecodeMode::auto_detect;
+    // The AV1 entry doubles AVC's bitrate and still loses: rank comes first.
+    const std::vector<Format> formats = {video(Codec::av1, 480, 9'000'000),
+                                         video(Codec::avc, 480, 1'000'000)};
+    const Format *picked = yt::select_video_format(formats, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->codec, Codec::avc);
+}
+
+TEST(Codec, SoftwareModeKeepsTheOldSelection)
+{
+    const std::vector<Format> formats = mixed();
+    CodecChoice software;
+    software.decode = DecodeMode::software;
+    CodecChoice default_mode;
+    const Format *expected = yt::select_video_format(formats, default_mode);
+    const Format *picked = yt::select_video_format(formats, software);
+    ASSERT_NE(picked, nullptr);
+    ASSERT_NE(expected, nullptr);
+    EXPECT_EQ(picked->codec, expected->codec);
+    EXPECT_EQ(picked->height, expected->height);
+
+    // AV1 stays reachable in software mode; only hardware drops it.
+    CodecChoice av1_only;
+    av1_only.decode = DecodeMode::software;
+    av1_only.avc = false;
+    av1_only.vp9 = false;
+    const std::vector<Format> av1_formats = {video(Codec::av1, 480, 1'000'000)};
+    picked = yt::select_video_format(av1_formats, av1_only);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->codec, Codec::av1);
 }
 
 } // namespace

@@ -118,6 +118,12 @@ std::vector<yt::FeedItem> feed_fixture()
 class PreviewPlayer final : public yt::Player
 {
   public:
+    void set_decode_mode(yt::DecodeMode mode) override
+    {
+        // The preview has no decoder; the switch is accepted and ignored.
+        (void)mode;
+    }
+
     bool open(const std::string &video_url, const std::string &audio_url,
               yt::AudioSink *sink) override
     {
