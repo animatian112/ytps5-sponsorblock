@@ -38,16 +38,18 @@ namespace
 constexpr const char *kBaseUrl = "https://www.youtube.com/youtubei/v1/";
 constexpr const char *kApiKey = "?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
 constexpr const char *kTvClientName = "TVHTML5";
-// Rotates with the TV app; the value a maintained client shipped on
-// 2026-10-10. A stale one answers 400/410, which drops the caller to WEB.
-constexpr const char *kTvClientVersion = "7.20260311.12.00";
+// Mirrors yt-dlp master `_base.py`'s `tv` block: the Cobalt TVHTML5 version a
+// maintained client ships. A stale one answers 400/410, which drops the caller
+// to WEB.
+constexpr const char *kTvClientVersion = "7.20260707.07.00";
 constexpr const char *kWebClientName = "WEB";
 constexpr const char *kWebClientVersion = "2.20260623.01.00";
 
 // One InnerTube client. `extra` is appended inside context.client (no leading
-// comma); `ua` is the HTTP User-Agent and, for the mobile clients that repeat
-// it, the value of context.client.userAgent; `third_party` adds the embedUrl
-// object the embedded players send.
+// comma); `ua` is the HTTP User-Agent and, for the clients that repeat it, the
+// value of context.client.userAgent; `bearer` marks the clients that accept
+// the OAuth Bearer token - the TV family only, since YouTube refuses it on WEB
+// and VISIONOS needs none. None of the clients here sends thirdParty.embedUrl.
 struct Client
 {
     const char *name;
@@ -55,14 +57,19 @@ struct Client
     const char *ua;
     const char *extra;
     bool ua_in_context;
-    bool third_party;
+    bool bearer;
 };
 
-// The UA of the Cobalt TV shell, which the TV and the embedded clients send.
-constexpr const char *kTvUserAgent = "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version";
-constexpr const char *kIosUserAgent =
-    "com.google.ios.youtube/20.11.6 (iPhone10,4; U; CPU iOS 16_7_7 like Mac OS X)";
-constexpr const char *kWebEmbeddedUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
+// The three User-Agents yt-dlp master `_base.py` ships, copied verbatim.
+constexpr const char *kTvUserAgent =
+    "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), "
+    "Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)";
+constexpr const char *kSamsungUserAgent =
+    "Mozilla/5.0 (SMART-TV; Linux; Tizen 2.4.0) AppleWebKit/538.1 (KHTML, like Gecko) "
+    "Version/2.4.0 TV Safari/538.1";
+constexpr const char *kVisionOsUserAgent =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+    "Version/26.0 Safari/605.1.15";
 
 // The client the auth state selects for browse/search/next: third-party OAuth
 // only gets content from the TV client, while signed out only WEB answers.
@@ -70,20 +77,23 @@ constexpr Client kWebClient = {kWebClientName, kWebClientVersion, kTvUserAgent, 
                                false};
 constexpr Client kTvClient = {kTvClientName, kTvClientVersion,
                               kTvUserAgent,  "\"deviceMake\":\"Sony\",\"deviceModel\":\"PS5\"",
-                              false,         false};
-// /player walks every maintained client, because one may be refused while
-// another answers; each carries the fields and UA it shipped on 2026-10-10.
+                              false,         true};
+// /player walks the clients yt-dlp master ships for the SABR era, in the order
+// that answers first: VISIONOS (cookie-less, PO-token-less, still hands out
+// per-format URLs), then the two TV shells that take the Bearer token, then
+// WEB. Every context.client repeats the HTTP User-Agent; no client sends
+// thirdParty.embedUrl. ANDROID_VR and IOS are gone: the first 403s every format
+// since 2026-08-17 (yt-dlp issue #17348), the second needs a player PO token.
 constexpr Client kPlayerClients[] = {
-    {kTvClientName, kTvClientVersion, kTvUserAgent,
-     "\"deviceMake\":\"Sony\",\"deviceModel\":\"PS5\"", false, false},
-    {"IOS", "20.11.6", kIosUserAgent,
-     "\"deviceModel\":\"iPhone10,4\",\"osName\":\"iOS\",\"osVersion\":\"16.7.7.20H330\"", true,
-     false},
-    // No ANDROID_VR: since 2026-08-17 that client 403s every format it hands
-    // out (yt-dlp _base.py, issue #17348), so it only added a dead attempt and
-    // a misleading error line.
-    {"TVHTML5_SIMPLY_EMBEDDED_PLAYER", "2.0", kTvUserAgent, nullptr, false, true},
-    {"WEB_EMBEDDED_PLAYER", "1.20260206.01.00", kWebEmbeddedUserAgent, nullptr, false, true},
+    {"VISIONOS", "1.02", kVisionOsUserAgent,
+     "\"deviceMake\":\"Apple\",\"deviceModel\":\"RealityDevice17,1\",\"osName\":\"visionOS\","
+     "\"osVersion\":\"26.5.23O471\"",
+     true, false},
+    {kTvClientName, "5.20260707", kSamsungUserAgent,
+     "\"deviceMake\":\"Samsung\",\"deviceModel\":\"UKS9800\",\"osName\":\"Tizen\","
+     "\"osVersion\":\"2.4.0\"",
+     true, true},
+    {kTvClientName, kTvClientVersion, kTvUserAgent, nullptr, true, true},
     {kWebClientName, kWebClientVersion, kTvUserAgent, nullptr, false, false},
 };
 // YouTube answers a consent dialog instead of a feed in the EU until the
@@ -97,6 +107,12 @@ constexpr const std::size_t kMaxChannels = 24;
 // A channel page carries a handful of tabs; the cap only guards a pathological
 // response.
 constexpr const std::size_t kMaxTabs = 16;
+// The untouched player answer kept on a stream-less result is bounded: enough
+// to diagnose a SABR-only answer, not a memory hazard.
+constexpr const std::size_t kMaxRawBody = 1u << 20;
+// One player JS is script, a few MiB; the signature timestamp is a needle in
+// it, so the download is capped like the descrambler caps its own.
+constexpr const std::size_t kMaxPlayerJsBytes = 3u << 20;
 
 // ---- tolerant JSON readers ------------------------------------------------------------------
 
@@ -1407,6 +1423,47 @@ std::string format_summary(const std::vector<Format> &formats)
            " ciphered, max " + std::to_string(max_height) + "p";
 }
 
+// yt-dlp's `(?:signatureTimestamp|sts)\s*:\s*(?P<sts>[0-9]{5})`, by hand: the
+// player JS is megabytes, and <regex> would walk it again with no gain. Like
+// the regex it is unanchored, so a longer digit run still yields its first
+// five digits, and the earliest of the two keys wins.
+std::string signature_timestamp(std::string_view js)
+{
+    std::size_t best = std::string_view::npos;
+    std::string value;
+    for (std::string_view key : {"signatureTimestamp", "sts"})
+    {
+        std::size_t at = js.find(key);
+        while (at != std::string_view::npos)
+        {
+            std::size_t pos = at + key.size();
+            while (pos < js.size() && std::isspace(static_cast<unsigned char>(js[pos])))
+                ++pos;
+            // A JSON-shaped occurrence writes the key quoted: `"signatureTimestamp":20732`.
+            if (pos < js.size() && js[pos] == '"')
+                ++pos;
+            while (pos < js.size() && std::isspace(static_cast<unsigned char>(js[pos])))
+                ++pos;
+            if (pos < js.size() && js[pos] == ':')
+            {
+                ++pos;
+                while (pos < js.size() && std::isspace(static_cast<unsigned char>(js[pos])))
+                    ++pos;
+                const std::size_t start = pos;
+                while (pos < js.size() && std::isdigit(static_cast<unsigned char>(js[pos])))
+                    ++pos;
+                if (pos - start >= 5 && (best == std::string_view::npos || at < best))
+                {
+                    best = at;
+                    value = std::string(js.substr(start, 5));
+                }
+            }
+            at = js.find(key, at + key.size());
+        }
+    }
+    return value;
+}
+
 bool parse_video_info(std::string_view json, VideoInfo *info)
 {
     if (info == nullptr)
@@ -1453,17 +1510,63 @@ bool parse_video_info(std::string_view json, VideoInfo *info)
     info->live = yyjson_is_bool(live) && yyjson_get_bool(live);
 
     yyjson_val *streaming = yyjson_obj_get(root, "streamingData");
-    yyjson_val *formats = yyjson_obj_get(streaming, "adaptiveFormats");
-    if (!yyjson_is_arr(formats))
-        formats = yyjson_obj_get(streaming, "formats");
+    yyjson_val *adaptive = yyjson_obj_get(streaming, "adaptiveFormats");
+    yyjson_val *formats = yyjson_obj_get(streaming, "formats");
+    yyjson_val *raw = yyjson_is_arr(adaptive) ? adaptive : formats;
 
-    const std::size_t count = yyjson_arr_size(formats);
+    // The census counts the raw entries before read_format drops anything: an
+    // answer whose adaptive entries carry neither url nor cipher, with only
+    // streamingData.serverAbrStreamingUrl to offer, is the SABR-only shape of
+    // yt-dlp issue #12482 and has to be nameable.
+    const std::size_t adaptive_count = yyjson_is_arr(adaptive) ? yyjson_arr_size(adaptive) : 0;
+    const std::size_t formats_count = yyjson_is_arr(formats) ? yyjson_arr_size(formats) : 0;
+    const std::size_t count = yyjson_arr_size(raw);
+    std::size_t with_url = 0;
+    std::size_t with_cipher = 0;
+    std::size_t drm = 0;
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        yyjson_val *entry = yyjson_arr_get(raw, index);
+        if (!yyjson_is_obj(entry))
+            continue;
+        if (!string_field(entry, "url").empty())
+            ++with_url;
+        if (!string_field(entry, "signatureCipher").empty() ||
+            !string_field(entry, "cipher").empty())
+            ++with_cipher;
+        if (yyjson_obj_get(entry, "drmFamilies") != nullptr ||
+            yyjson_obj_get(entry, "drmParams") != nullptr)
+            ++drm;
+    }
+    const std::string sabr_url = string_field(streaming, "serverAbrStreamingUrl");
+    // The source array is named: answers carry adaptiveFormats normally and
+    // `formats` for the legacy/progressive shape, and the label is what the
+    // log and the SABR failure text read.
+    const std::string source = yyjson_is_arr(adaptive)
+                                   ? std::to_string(adaptive_count) + " adaptive"
+                                   : std::to_string(formats_count) + " formats";
+    info->census = source + ", " + std::to_string(with_url) + " with url, " +
+                   std::to_string(with_cipher) + " with cipher, " + std::to_string(drm) +
+                   " drm, sabr-url " + (sabr_url.empty() ? "absent" : "present");
+
     info->formats.reserve(count);
     for (std::size_t index = 0; index < count; ++index)
     {
         Format format;
-        if (read_format(yyjson_arr_get(formats, index), &format))
+        if (read_format(yyjson_arr_get(raw, index), &format))
             info->formats.push_back(std::move(format));
+    }
+
+    // No usable format, and either the answer names the SABR endpoint or its
+    // adaptive entries carry no url/cipher: SABR-only. A format read_format
+    // still rejected (a cipher without its signature) is not SABR.
+    info->sabr_only =
+        info->formats.empty() &&
+        (!sabr_url.empty() || (adaptive_count > 0 && with_url == 0 && with_cipher == 0));
+    if (info->formats.empty())
+    {
+        const std::size_t keep = json.size() < kMaxRawBody ? json.size() : kMaxRawBody;
+        info->raw_body.assign(json.data(), keep);
     }
 
     // The player JS a ciphered format needs. Answers name it directly
@@ -1510,6 +1613,61 @@ struct InnerTube::Impl
     long timeout_s = 20;
     long status = 0;
     std::string error;
+    // The signature timestamp of the player JS, cached by JS URL so each JS is
+    // downloaded at most once per process; `sts` is the value in use (empty
+    // until one extraction succeeds, then simply left out of the payload).
+    std::vector<std::pair<std::string, std::string>> sts_cache;
+    std::string sts;
+
+    // The player request body: the videoId and the playback context every
+    // client sends, plus the signature timestamp once it is known. Built per
+    // client so an sts read from the first answer already reaches the rest of
+    // the chain.
+    std::string player_extra(const std::string &video_id) const
+    {
+        std::string out = field_string("videoId", video_id);
+        out += ",\"playbackContext\":{\"contentPlaybackContext\":{\"html5Preference\":";
+        out += "\"HTML5_PREF_WANTS\"";
+        if (!sts.empty())
+        {
+            out += ",\"signatureTimestamp\":";
+            out += sts;
+        }
+        out += "}}";
+        return out;
+    }
+
+    // The signature timestamp the answer's player JS carries, read through the
+    // same http layer the descrambler uses. Every failure - no URL, transport
+    // error, no match - is silent: the payload simply omits sts, as yt-dlp
+    // tolerates.
+    void ensure_sts(const std::string &player_js_url)
+    {
+        if (player_js_url.empty())
+            return;
+        for (const std::pair<std::string, std::string> &entry : sts_cache)
+        {
+            if (entry.first == player_js_url)
+            {
+                if (!entry.second.empty())
+                    sts = entry.second;
+                return;
+            }
+        }
+
+        http::Request request;
+        request.url = player_js_url;
+        request.headers = {{"User-Agent", kTvUserAgent}};
+        request.timeout_s = timeout_s;
+        request.max_bytes = kMaxPlayerJsBytes;
+        const http::Response response = http::perform(request);
+        const std::string value = response.error.empty() && response.http_ok()
+                                      ? signature_timestamp(response.body)
+                                      : std::string();
+        sts_cache.emplace_back(player_js_url, value);
+        if (!value.empty())
+            sts = value;
+    }
 
     // The client the auth state selects: third-party OAuth only gets content
     // from the TV client, while signed out only WEB answers.
@@ -1546,8 +1704,6 @@ struct InnerTube::Impl
             append_json_string(out, visitor_data);
         }
         out += '}';
-        if (client.third_party)
-            out += ",\"thirdParty\":{\"embedUrl\":\"https://www.youtube.com/\"}";
         out += "},\"contentCheckOk\":true,\"racyCheckOk\":true";
         if (!extra.empty())
         {
@@ -1586,9 +1742,10 @@ struct InnerTube::Impl
     }
 
     // One POST with one client; it never retries. The returned attempt and
-    // `status` describe what the client answered. `signed_out` sends the
-    // request without the OAuth token, which is what the WEB fallback of a
-    // signed-in request needs: YouTube refuses a Bearer token on that client.
+    // `status` describe what the client answered. The Bearer token goes only
+    // to the clients that accept it (`client.bearer`, the TV family): YouTube
+    // refuses it on WEB, and VISIONOS needs none. `signed_out` drops it too,
+    // which is what the signed-out WEB fallback needs.
     Attempt post_once(const char *endpoint, const std::string &extra, const Client &client,
                       bool signed_out = false)
     {
@@ -1600,7 +1757,7 @@ struct InnerTube::Impl
         headers.push_back(http::Header{"Content-Type", "application/json"});
         headers.push_back(http::Header{"User-Agent", client.ua});
         headers.push_back(http::Header{"Cookie", kConsentCookie});
-        if (!access_token.empty() && !signed_out)
+        if (!access_token.empty() && !signed_out && client.bearer)
             headers.push_back(http::Header{"Authorization", "Bearer " + access_token});
 
         http::Response response =
@@ -1839,10 +1996,6 @@ bool InnerTube::player_variants(const std::string &video_id, std::vector<VideoIn
     if (error != nullptr)
         error->clear();
 
-    std::string extra = field_string("videoId", video_id);
-    extra += ",\"playbackContext\":{\"contentPlaybackContext\":{\"html5Preference\":";
-    extra += "\"HTML5_PREF_WANTS\"}}";
-
     // Walk every maintained client: one may be refused while another answers,
     // and a stream URL one client hands out can be refused by googlevideo (403)
     // while another client's URL for the same video plays, so every answer is
@@ -1858,7 +2011,7 @@ bool InnerTube::player_variants(const std::string &video_id, std::vector<VideoIn
 
     for (const Client &client : kPlayerClients)
     {
-        Impl::Attempt attempt = impl_->post_once("player", extra, client);
+        Impl::Attempt attempt = impl_->post_once("player", impl_->player_extra(video_id), client);
 
         int itag = 0;
         std::string reason;
@@ -1873,7 +2026,11 @@ bool InnerTube::player_variants(const std::string &video_id, std::vector<VideoIn
             if (parse_video_info(attempt.body, &candidate))
             {
                 candidate.client = client.name;
-                log::line("player: %s %s", client.name, format_summary(candidate.formats).c_str());
+                // The first answer names the player JS; its signature
+                // timestamp then rides every later request of the chain.
+                impl_->ensure_sts(candidate.player_js_url);
+                log::line("player: %s %s [%s]", client.name,
+                          format_summary(candidate.formats).c_str(), candidate.census.c_str());
                 if (!candidate.formats.empty())
                     itag = candidate.formats.front().itag;
                 answered = true;

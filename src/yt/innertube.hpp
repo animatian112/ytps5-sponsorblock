@@ -69,6 +69,10 @@ bool parse_video_info(std::string_view json, VideoInfo *info);
 // A one-line census of one answer's formats ("24 formats: 12 avc, ...; max
 // 1080p"): the per-client log line and the no-stream failure text both use it.
 std::string format_summary(const std::vector<Format> &formats);
+// The player's signature timestamp (sts): yt-dlp's pattern over the player JS
+// ("signatureTimestamp":12345 or "sts":12345), without pulling in <regex>.
+// Empty when the snippet carries none. Exposed for the unit tests.
+std::string signature_timestamp(std::string_view js);
 // A channel browse answer: header, tabs and the selected tab's videos. Also
 // exposed for the unit tests.
 bool parse_channel_page(std::string_view json, ChannelPage *page);

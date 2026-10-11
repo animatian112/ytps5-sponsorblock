@@ -74,6 +74,18 @@ struct VideoInfo
     // The player JS this answer's ciphers need (assets.js, or built from
     // assets.jsUrlHash). Empty when the answer carries neither.
     std::string player_js_url;
+    // A compact census of the raw streamingData entries ("18 adaptive, 0 with
+    // url, 0 with cipher, 0 drm, sabr-url present"): counting before any format
+    // is dropped makes a SABR-only answer conclusive. Filled whether or not a
+    // format was usable.
+    std::string census;
+    // True when the answer offered no usable format and looks SABR-only:
+    // streamingData.serverAbrStreamingUrl is present, or raw adaptive entries
+    // carry neither url nor cipher (yt-dlp issue #12482).
+    bool sabr_only = false;
+    // The untouched answer body, kept only when nothing was usable, capped at
+    // 1 MiB, so a SABR-only failure can be reproduced on the console.
+    std::string raw_body;
     std::string error; // empty means the response was usable
 
     bool ok() const

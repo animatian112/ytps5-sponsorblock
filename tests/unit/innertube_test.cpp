@@ -172,6 +172,44 @@ TEST(InnerTubePlayer, ARefusedPlaybackBecomesAnError)
     EXPECT_NE(info.error.find("Video unavailable"), std::string::npos) << info.error;
 }
 
+TEST(InnerTubePlayer, ASabrOnlyAnswerIsNamedAndKeptRaw)
+{
+    // The SABR-only shape (yt-dlp issue #12482): an OK status and a
+    // serverAbrStreamingUrl, adaptive entries with DRM metadata but no url and
+    // no cipher. Nothing is playable, and the answer must say why.
+    const std::string body = fixture("player_sabr.json");
+    yt::VideoInfo info;
+    ASSERT_TRUE(yt::parse_video_info(body, &info)) << info.error;
+    EXPECT_EQ(info.video_id, "SABR-ONLY-01");
+    EXPECT_TRUE(info.formats.empty());
+    EXPECT_TRUE(info.sabr_only);
+    EXPECT_EQ(info.census, "3 adaptive, 0 with url, 0 with cipher, 3 drm, sabr-url present");
+    // The untouched body is kept verbatim so the failure can be reproduced.
+    EXPECT_EQ(info.raw_body, body);
+}
+
+TEST(InnerTubePlayer, AUsableAnswerIsNotSabrOnlyAndKeepsNoRawBody)
+{
+    yt::VideoInfo info;
+    ASSERT_TRUE(yt::parse_video_info(fixture("player_ok.json"), &info)) << info.error;
+    ASSERT_EQ(info.formats.size(), 5u);
+    EXPECT_FALSE(info.sabr_only);
+    EXPECT_EQ(info.census, "5 adaptive, 5 with url, 0 with cipher, 0 drm, sabr-url absent");
+    EXPECT_TRUE(info.raw_body.empty());
+}
+
+TEST(InnerTubePlayer, ReadsTheSignatureTimestampFromPlayerJs)
+{
+    // yt-dlp's `(?:signatureTimestamp|sts)\s*:\s*([0-9]{5})` over a snippet.
+    EXPECT_EQ(yt::signature_timestamp("var a={signatureTimestamp:20732};"), "20732");
+    EXPECT_EQ(yt::signature_timestamp("x.sts : 12345,"), "12345");
+    EXPECT_EQ(yt::signature_timestamp("\"signatureTimestamp\":20732"), "20732");
+    // Unanchored like the regex: a longer digit run still yields five digits.
+    EXPECT_EQ(yt::signature_timestamp("signatureTimestamp:123456"), "12345");
+    EXPECT_EQ(yt::signature_timestamp("no timestamp here"), "");
+    EXPECT_EQ(yt::signature_timestamp(""), "");
+}
+
 TEST(InnerTubeChannel, ReadsTheTabsTheHeaderAndTheSelectedTabItems)
 {
     yt::ChannelPage page;

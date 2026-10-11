@@ -454,12 +454,51 @@ struct Service::Impl
         return true;
     }
 
+    // The directory the app may write to: the one that already holds the token
+    // (/download0/hui on the console).
+    std::string raw_dump_path() const
+    {
+        const std::string token = auth.token_path();
+        const std::size_t slash = token.find_last_of('/');
+        const std::string directory =
+            slash == std::string::npos ? std::string() : token.substr(0, slash);
+        return (directory.empty() ? std::string() : directory + "/") + "yt-player-last.json";
+    }
+
+    // Keeps the first client's untouched answer when nothing was usable, so a
+    // SABR-only failure can be told apart on the console. Best effort: a failed
+    // write is only a log line, never a playback failure.
+    void keep_raw_answer(const std::vector<VideoInfo> &variants)
+    {
+        if (variants.empty() || variants.front().raw_body.empty())
+            return;
+        const std::string path = raw_dump_path();
+        const std::string error = hui::save::write_atomic(path, variants.front().raw_body);
+        if (error.empty())
+            log::line("video: raw player answer kept at %s", path.c_str());
+        else
+            log::line("video: raw player answer not kept: %s", error.c_str());
+    }
+
     // Why nothing played, with the census of the first answer: the log and the
     // player screen both read the "no_stream (...)" text, whose prefix is the
     // marker the screen keys on.
     std::string no_stream_reason(const std::vector<VideoInfo> &variants, const CodecChoice &choice)
     {
         const VideoInfo &first = variants.front();
+        // SABR-only answers carry no per-format URL at all (yt-dlp #12482):
+        // name that cause instead of reporting an empty histogram.
+        bool all_sabr = true;
+        for (const VideoInfo &info : variants)
+        {
+            if (!info.sabr_only)
+            {
+                all_sabr = false;
+                break;
+            }
+        }
+        if (all_sabr && !first.census.empty())
+            return "no_stream (SABR-only answers from every client: " + first.census + ")";
         const std::string summary = format_summary(first.formats);
         const std::size_t total = first.formats.size();
         std::size_t ciphered = 0;
@@ -567,9 +606,22 @@ struct Service::Impl
             const Format *audio_format = select_audio_format(info.formats);
             if (video_format == nullptr)
             {
-                log::line("video: try %s no stream matches the codec switches",
-                          info.client.c_str());
-                add_attempt(generation, info.client + ": no matching video format");
+                if (info.sabr_only)
+                {
+                    const std::string detail =
+                        "SABR-only answer (YouTube serves this client no per-format URLs)";
+                    log::line("video: try %s %s", info.client.c_str(), detail.c_str());
+                    add_attempt(generation, info.client + ": " + detail);
+                }
+                else
+                {
+                    // Keep the old wording, plus the raw counts so yt.log shows
+                    // what the client actually answered.
+                    log::line("video: try %s no stream matches the codec switches (%s)",
+                              info.client.c_str(), info.census.c_str());
+                    add_attempt(generation,
+                                info.client + ": no matching video format (" + info.census + ")");
+                }
                 continue;
             }
             any_format = true;
@@ -670,7 +722,15 @@ struct Service::Impl
 
         if (!any_format)
         {
-            const std::string reason = no_stream_reason(variants, choice);
+            std::string reason = no_stream_reason(variants, choice);
+            // Nothing was usable, so keep the first client's untouched answer
+            // and point the on-screen detail (after the "no_stream" marker) at
+            // it; the path goes inside the parentheses the screen strips.
+            if (!variants.front().raw_body.empty())
+            {
+                keep_raw_answer(variants);
+                reason.insert(reason.size() - 1, "; raw answer " + raw_dump_path());
+            }
             log::line("video: %s", reason.c_str());
             fail_video(generation, reason);
             return;
