@@ -91,10 +91,26 @@ static int console_curl_on_socket(void *user, curl_socket_t socket, curlsocktype
     return CURL_SOCKOPT_OK;
 }
 
+/* The Mozilla root store, compiled in (ca_bundle.c). The console's own list at
+ * /system/common/cert/CA_LIST.cer is not readable from every firmware's sandbox
+ * (13.60: every request failed, the home feed stayed empty), and curl refuses
+ * all HTTPS when its CA file can't be loaded. The built-in list always loads;
+ * the system file is added only when it is actually there. */
+extern const char console_curl_ca_bundle[];
+extern const size_t console_curl_ca_bundle_len;
+
 void console_curl_setup(CURL *easy)
 {
+    struct curl_blob roots;
+    const char *system_file = console_curl_ca_file();
+    roots.data = (void *)console_curl_ca_bundle;
+    roots.len = console_curl_ca_bundle_len;
+    roots.flags = CURL_BLOB_NOCOPY;
     (void)curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
-    (void)curl_easy_setopt(easy, CURLOPT_CAINFO, console_curl_ca_file());
+    (void)curl_easy_setopt(easy, CURLOPT_CAINFO_BLOB, &roots);
+    (void)curl_easy_setopt(easy, CURLOPT_CAINFO,
+                           console_curl_readable(system_file) ? system_file : NULL);
+    (void)curl_easy_setopt(easy, CURLOPT_CAPATH, NULL);
     (void)curl_easy_setopt(easy, CURLOPT_SOCKOPTFUNCTION, console_curl_on_socket);
 }
 
