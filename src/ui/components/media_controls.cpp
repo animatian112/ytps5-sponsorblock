@@ -863,6 +863,21 @@ void MediaControls::draw_scrubber(Canvas &canvas, Painter &paint, const Geometry
     bar.set_buffer(duration_ > 0.0f ? buffered_ / duration_ : 0.0f, true);
     bar.draw(canvas);
 
+    if (duration_ > 0.0f)
+    {
+        for (const MediaRange &range : ranges_)
+        {
+            const float start = std::clamp(range.start, 0.0f, duration_);
+            const float end = std::clamp(range.end, 0.0f, duration_);
+            if (end <= start)
+                continue;
+            const float x0 = g.track.x + g.track.w * start / duration_;
+            const float x1 = g.track.x + g.track.w * end / duration_;
+            list.rounded_rect({x0, g.track.y, std::max(x1 - x0, 3.0f), g.track.h}, 0.0f,
+                              range.color);
+        }
+    }
+
     if (style.chapter_marks && duration_ > 0.0f)
     {
         for (const MediaChapter &chapter : chapters_)

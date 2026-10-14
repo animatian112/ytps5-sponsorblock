@@ -13,7 +13,8 @@ namespace hui
 
 namespace
 {
-constexpr std::uint8_t kVersion = 3;
+constexpr std::uint8_t kVersion = 4;
+constexpr std::uint8_t kVersionWithoutSponsorBlock = 3;
 }
 
 std::string encode_settings(const Settings &settings)
@@ -37,13 +38,17 @@ std::string encode_settings(const Settings &settings)
     w.put(static_cast<std::uint16_t>(settings.max_height));
     w.put(static_cast<std::uint8_t>(settings.video_volume));
     w.put(static_cast<std::uint8_t>(settings.decode_mode));
+    w.put_bool(settings.sb_enabled);
+    w.put(static_cast<std::uint8_t>(settings.sb_mode));
+    w.put(static_cast<std::uint8_t>(settings.sb_scope));
     return w.data();
 }
 
 bool decode_settings(std::string_view data, Settings *settings)
 {
     bytes::Reader r(data);
-    if (r.get<std::uint8_t>() != kVersion)
+    const std::uint8_t version = r.get<std::uint8_t>();
+    if (version != kVersion && version != kVersionWithoutSponsorBlock)
         return false;
     Settings s;
     s.music_volume = std::clamp<int>(r.get<std::uint8_t>(), 0, 10);
@@ -71,6 +76,12 @@ bool decode_settings(std::string_view data, Settings *settings)
         s.decode_mode = mode <= static_cast<int>(yt::DecodeMode::hardware)
                             ? static_cast<yt::DecodeMode>(mode)
                             : yt::DecodeMode::software;
+    }
+    if (version >= 4)
+    {
+        s.sb_enabled = r.get_bool();
+        s.sb_mode = std::clamp<int>(r.get<std::uint8_t>(), 0, 2);
+        s.sb_scope = std::clamp<int>(r.get<std::uint8_t>(), 0, 2);
     }
     if (!r.finished())
         return false;

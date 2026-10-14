@@ -8,6 +8,7 @@
 #include "app/screen.hpp"
 #include "yt/player.hpp"
 #include "yt/service.hpp"
+#include "yt/sponsorblock.hpp"
 
 #include "ui/components.hpp"
 
@@ -35,7 +36,7 @@ class PlayerScreen final : public Screen
     }
     const char *hint() const override
     {
-        return "L1/R1 skip 10s   Circle back   Options quit";
+        return "L1/R1 skip 10s   Triangle skip segment   Circle back   Options quit";
     }
     void enter() override;
     void leave() override;
@@ -48,6 +49,8 @@ class PlayerScreen final : public Screen
     yt::CodecChoice codec_choice() const;
     void drop_texture();
     void draw_hud(ui::Canvas &canvas, const Context &context) const;
+    void update_sponsorblock(const InputFrame &input, ui::Feedback &feedback);
+    void reset_sponsorblock();
 
     Context &context_;
     std::unique_ptr<yt::Player> player_;
@@ -68,6 +71,14 @@ class PlayerScreen final : public Screen
     bool consumed_player_ = false;
     bool login_retry_sent_ = false; // one retry per gate, not one per frame
     float clock_ = 0.0f;
+
+    // SponsorBlock: the segments of playing_id_, the seek-bar ranges drawn from
+    // them, and the segment under the playhead (for the Triangle hint).
+    yt::sponsorblock::Skipper sponsor_;
+    std::string sponsor_video_;
+    int sponsor_scope_ = -1;
+    std::uint64_t sponsor_revision_ = 0;
+    std::string sponsor_here_;
 };
 
 } // namespace hui::app

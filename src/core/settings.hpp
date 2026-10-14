@@ -42,6 +42,13 @@ struct Settings
     // unverified research (docs/HARDWARE_DECODE.md), so Auto/Hardware are
     // opt-in.
     yt::DecodeMode decode_mode = yt::DecodeMode::software;
+    // SponsorBlock (yt/sponsorblock.hpp): on/off, what happens when a segment
+    // starts (0 skip + toast, 1 ask, 2 only mark it) and which categories are
+    // fetched (0 sponsors, 1 + self-promotion/reminders, 2 everything but filler).
+    // Added in save version 4; a version-3 save loads with these defaults.
+    bool sb_enabled = true;
+    int sb_mode = 0;
+    int sb_scope = 2;
     // How large on-screen controller hints are: 0 small, 1 medium, 2 large.
     int hint_size = 1;
     // The design shown when the app opens (index into the concept list).

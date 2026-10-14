@@ -188,7 +188,9 @@ void App::start()
     // The version this build carries is what a release tag is compared
     // against; the check runs on its own thread and never blocks the frame.
     yt::update::set_current_version(read_content_version(kParamJson));
-    yt::update::check();
+    // The SponsorBlock fork does not check the upstream release feed: an
+    // upstream release would replace this build with one that has no
+    // SponsorBlock. Updates come as new fork builds.
 }
 
 void App::set_version(std::string version)

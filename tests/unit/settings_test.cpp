@@ -34,6 +34,9 @@ TEST(Settings, RoundTripKeepsEveryValue)
     before.max_height = 1440;
     before.video_volume = 6;
     before.decode_mode = DecodeMode::hardware;
+    before.sb_enabled = false;
+    before.sb_mode = 1;
+    before.sb_scope = 0;
 
     Settings after;
     ASSERT_TRUE(decode_settings(encode_settings(before), &after));
@@ -54,6 +57,29 @@ TEST(Settings, RoundTripKeepsEveryValue)
     EXPECT_EQ(after.max_height, before.max_height);
     EXPECT_EQ(after.video_volume, before.video_volume);
     EXPECT_EQ(after.decode_mode, before.decode_mode);
+    EXPECT_EQ(after.sb_enabled, before.sb_enabled);
+    EXPECT_EQ(after.sb_mode, before.sb_mode);
+    EXPECT_EQ(after.sb_scope, before.sb_scope);
+}
+
+TEST(Settings, AVersionThreeSaveLoadsWithSponsorBlockDefaults)
+{
+    Settings before;
+    before.music_volume = 2;
+    before.max_height = 720;
+    // A version-3 save is a version-4 one without the last three bytes.
+    std::string data = encode_settings(before);
+    data.resize(data.size() - 3);
+    data[0] = 3;
+    Settings after;
+    after.sb_enabled = false;
+    after.sb_mode = 2;
+    ASSERT_TRUE(decode_settings(data, &after));
+    EXPECT_EQ(after.music_volume, 2);
+    EXPECT_EQ(after.max_height, 720);
+    EXPECT_TRUE(after.sb_enabled);
+    EXPECT_EQ(after.sb_mode, 0);
+    EXPECT_EQ(after.sb_scope, 2);
 }
 
 TEST(Settings, DecodeModeRoundTripsAllThreeValues)

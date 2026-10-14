@@ -56,6 +56,26 @@ void draw_log_tail(ui::Canvas &canvas, const Context &context)
     }
 }
 
+// SponsorBlock's own category colours, so the bar reads like everywhere else.
+gfx::Color segment_color(const std::string &category)
+{
+    if (category == "sponsor")
+        return gfx::Color::rgb(0x00d400);
+    if (category == "selfpromo")
+        return gfx::Color::rgb(0xffff00);
+    if (category == "interaction")
+        return gfx::Color::rgb(0xcc00ff);
+    if (category == "intro")
+        return gfx::Color::rgb(0x00ffff);
+    if (category == "outro")
+        return gfx::Color::rgb(0x0202ed);
+    if (category == "preview")
+        return gfx::Color::rgb(0x008fd6);
+    if (category == "music_offtopic")
+        return gfx::Color::rgb(0xff9900);
+    return gfx::Color::rgb(0xaaaaaa);
+}
+
 } // namespace
 
 PlayerScreen::PlayerScreen(Context &context) : context_(context)
@@ -109,6 +129,7 @@ void PlayerScreen::enter()
 
 void PlayerScreen::leave()
 {
+    reset_sponsorblock();
     player_.reset();
     drop_texture();
     playing_id_.clear();
@@ -135,9 +156,96 @@ void PlayerScreen::request_video(const std::string &video_id)
     context_.active_video = video_id;
     consumed_player_ = false;
     ended_ = false;
+    reset_sponsorblock();
     player_.reset();
     drop_texture();
     context_.service.request_video(video_id, codec_choice());
+}
+
+void PlayerScreen::reset_sponsorblock()
+{
+    sponsor_.clear();
+    sponsor_video_.clear();
+    sponsor_here_.clear();
+    sponsor_revision_ = sponsor_.revision();
+    controls_.set_ranges({});
+}
+
+void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &feedback)
+{
+    namespace sb = yt::sponsorblock;
+    const Settings &settings = context_.settings;
+    if (!settings.sb_enabled || player_ == nullptr || playing_id_.empty())
+    {
+        if (!sponsor_video_.empty())
+            reset_sponsorblock();
+        return;
+    }
+    // Start (or restart, when the category setting moved) the lookup.
+    if (sponsor_video_ != playing_id_ || sponsor_scope_ != settings.sb_scope)
+    {
+        reset_sponsorblock();
+        sponsor_video_ = playing_id_;
+        sponsor_scope_ = settings.sb_scope;
+        sponsor_.load(playing_id_, static_cast<sb::Scope>(settings.sb_scope));
+    }
+
+    const double position = player_->clock_s();
+    const double duration = player_->duration_s();
+    const bool playing = !player_->paused() && !ended_ && player_->buffered_s() > 0.0;
+    const sb::Decision decision =
+        sponsor_.poll(position, duration, playing, static_cast<sb::Mode>(settings.sb_mode));
+
+    // A new segment list: paint it onto the seek bar.
+    if (sponsor_.revision() != sponsor_revision_)
+    {
+        sponsor_revision_ = sponsor_.revision();
+        std::vector<ui::MediaRange> ranges;
+        for (const sb::Segment &segment : sponsor_.segments())
+        {
+            ui::MediaRange range;
+            range.start = static_cast<float>(segment.start_s);
+            range.end = static_cast<float>(segment.end_s);
+            range.color = segment_color(segment.category);
+            ranges.push_back(range);
+        }
+        controls_.set_ranges(std::move(ranges));
+        yt::log::line("sponsorblock: %zu segments on the bar (%s)", sponsor_.segments().size(),
+                      sponsor_.status().c_str());
+    }
+
+    if (decision.kind == sb::Kind::skip)
+    {
+        player_->seek(decision.target_s);
+        context_.toasts.push(ui::StatusKind::info, "Skipped " + decision.label, "SponsorBlock",
+                             2.5f);
+        yt::log::line("sponsorblock: skipped %s to %.1f s", decision.label.c_str(),
+                      decision.target_s);
+    }
+
+    // The segment under the playhead, for the Triangle hint.
+    sponsor_here_.clear();
+    for (const sb::Segment &segment : sponsor_.segments())
+    {
+        if (position >= segment.start_s && position < segment.end_s - 0.5)
+        {
+            sponsor_here_ = segment.label;
+            break;
+        }
+    }
+
+    if (input.is_pressed(Action::north) && !sponsor_here_.empty())
+    {
+        const sb::Decision manual = sponsor_.skip_now(position, duration);
+        if (manual.kind == sb::Kind::skip)
+        {
+            player_->seek(manual.target_s);
+            context_.toasts.push(ui::StatusKind::info, "Skipped " + manual.label,
+                                 "SponsorBlock", 2.5f);
+            feedback.rumble(0.2f, 0.02f);
+            sponsor_here_.clear();
+        }
+    }
 }
 
 void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedback)
@@ -255,6 +363,8 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         controls_.set_buffered(static_cast<float>(player_->clock_s() + player_->buffered_s()));
         controls_.set_playing(!player_->paused());
     }
+
+    update_sponsorblock(input, feedback);
 
     const bool controls_active = !in_related_;
     controls_.set_active(controls_active);
@@ -465,6 +575,22 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
         if (ended_)
             ui::text(canvas.list, context.fonts.semibold, "Ended", gfx::kVirtualWidth * 0.5f,
                      500.0f, 30.0f, gfx::Color::rgb(0xf5a524), gfx::Align::center);
+    }
+
+    if (!sponsor_here_.empty())
+    {
+        // The skip offer: bottom right, above the controls, visible even while
+        // they are hidden.
+        const std::string text = "Triangle  Skip " + sponsor_here_;
+        constexpr float kSize = 26.0f;
+        const float width = (context.fonts.semibold.font != nullptr
+                                 ? context.fonts.semibold.font->measure(text, kSize)
+                                 : 14.0f * static_cast<float>(text.size())) +
+                            48.0f;
+        const gfx::Rect pill{1680.0f - width, 740.0f, width, 58.0f};
+        canvas.list.rounded_rect(pill, 29.0f, gfx::Color::rgb(0x000000, 0.75f));
+        ui::text(canvas.list, context.fonts.semibold, text, pill.x + 24.0f, pill.y + 40.0f, kSize,
+                 gfx::Color::rgb(0xf1f1f1));
     }
 
     if (!related_items_.empty())

@@ -22,6 +22,9 @@ enum : int
     kMaxHeight,
     kDecodeMode,
     kHaptics,
+    kSbEnabled,
+    kSbMode,
+    kSbScope,
     kSaveAccount,
     kSignOut,
     kCheckUpdates,
@@ -87,6 +90,34 @@ const char *decode_mode_description(yt::DecodeMode mode)
     }
 }
 
+const char *sb_mode_description(int mode)
+{
+    switch (mode)
+    {
+    case 1:
+        return "Offer Triangle: skip when a segment starts";
+    case 2:
+        return "Only mark segments on the seek bar; Triangle skips";
+    case 0:
+    default:
+        return "Skip at once and show what was skipped";
+    }
+}
+
+const char *sb_scope_description(int scope)
+{
+    switch (scope)
+    {
+    case 0:
+        return "Paid sponsor reads";
+    case 1:
+        return "Sponsors, self-promotion and subscribe reminders";
+    case 2:
+    default:
+        return "Also intros, outros, recaps and non-music parts";
+    }
+}
+
 const TourStep kTour[] = {
     {1.0f, 0, Direction::none, "toggles"},
     {0.7f, hui::action_bit(Action::down), Direction::none, nullptr},
@@ -134,13 +165,37 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     form_.add_toggle(kHaptics, "Haptics", context_.settings.haptics).description =
         "Rumble on clicks and drags";
 
+    form_.add_header("SponsorBlock");
+    form_.add_toggle(kSbEnabled, "Skip segments", context_.settings.sb_enabled).description =
+        "Community-marked segments from sponsor.ajay.app";
+    ui::FormRow &sb_mode =
+        form_.add_stepper(kSbMode, "When a segment starts", context_.settings.sb_mode, 0, 2, 1);
+    sb_mode.description = sb_mode_description(context_.settings.sb_mode);
+    sb_mode.stepper.format = [](int value) -> std::string
+    {
+        static const char *const kLabels[] = {"Skip", "Ask", "Only mark"};
+        if (value < 0 || value > 2)
+            return "Skip";
+        return kLabels[value];
+    };
+    ui::FormRow &sb_scope =
+        form_.add_stepper(kSbScope, "Segments", context_.settings.sb_scope, 0, 2, 1);
+    sb_scope.description = sb_scope_description(context_.settings.sb_scope);
+    sb_scope.stepper.format = [](int value) -> std::string
+    {
+        static const char *const kLabels[] = {"Sponsors", "+ Promotion", "Everything"};
+        if (value < 0 || value > 2)
+            return "Everything";
+        return kLabels[value];
+    };
+
     form_.add_header("Account");
     form_.add_action(kSaveAccount, "Back up account").description =
         "Write a token copy into the app folder";
     form_.add_action(kSignOut, "Sign out");
     form_.add_header("About");
     form_.add_action(kCheckUpdates, "Check for updates").description =
-        "Ask the release feed for a newer version";
+        "Not in the SponsorBlock build: install new builds by hand";
 }
 
 void SettingsScreen::enter()
@@ -196,6 +251,22 @@ void SettingsScreen::apply(int id, ui::Feedback &feedback)
         context_.settings.haptics = form_.toggle_value(id);
         context_.settings_changed = true;
         break;
+    case kSbEnabled:
+        context_.settings.sb_enabled = form_.toggle_value(id);
+        context_.settings_changed = true;
+        break;
+    case kSbMode:
+        context_.settings.sb_mode = form_.stepper_value(id);
+        if (ui::FormRow *row = form_.row(kSbMode))
+            row->description = sb_mode_description(context_.settings.sb_mode);
+        context_.settings_changed = true;
+        break;
+    case kSbScope:
+        context_.settings.sb_scope = form_.stepper_value(id);
+        if (ui::FormRow *row = form_.row(kSbScope))
+            row->description = sb_scope_description(context_.settings.sb_scope);
+        context_.settings_changed = true;
+        break;
     default:
         break;
     }
@@ -218,10 +289,10 @@ void SettingsScreen::activate(int id)
     }
     if (id == kCheckUpdates)
     {
-        // The check runs in the background; update() reports how it settled.
-        yt::update::check();
-        update_watching_ = true;
-        update_watch_revision_ = yt::update::revision();
+        // The upstream feed would offer a build without SponsorBlock, so the
+        // fork never asks it.
+        context_.toasts.push(ui::StatusKind::info, "Updates are manual",
+                             "Install new SponsorBlock builds by hand");
         return;
     }
     if (id != kSignOut)
@@ -294,10 +365,10 @@ void SettingsScreen::draw(const Context &context, Frame &frame) const
     ui::text(canvas.list, context.fonts.display, "Settings", 600.0f, 150.0f, 44.0f,
              gfx::Color::rgb(0xf1f1f1));
     form_.draw(canvas);
-    ui::text(canvas.list, context.fonts.regular, "YouTube for PS5 - PPSA99350", 600.0f, 980.0f,
+    ui::text(canvas.list, context.fonts.regular, "YouTube for PS5 + SponsorBlock - PPSA98260", 600.0f, 980.0f,
              20.0f, gfx::Color::rgb(0x777777));
     ui::text(canvas.list, context.fonts.regular,
-             "Playback through YouTube InnerTube (TVHTML5), ad-free", 600.0f, 1012.0f, 20.0f,
+             "Based on ytps5. Segments: sponsor.ajay.app (CC BY-NC-SA 4.0)", 600.0f, 1012.0f, 20.0f,
              gfx::Color::rgb(0x777777));
     ui::text(canvas.list, context.fonts.regular,
              context.service.signed_in() ? "Signed in - token in /download0/hui/auth.json"

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace hui::ui
@@ -69,6 +70,14 @@ struct MediaChapter
 {
     float time = 0.0f; // seconds from the start
     std::string title;
+};
+
+// A coloured stretch drawn over the track (SponsorBlock segments).
+struct MediaRange
+{
+    float start = 0.0f; // seconds
+    float end = 0.0f;   // seconds
+    gfx::Color color;
 };
 
 struct MediaControlsStyle : ComponentStyle
@@ -171,6 +180,10 @@ class MediaControls
         playing_ = playing;
     }
     void set_chapters(std::vector<MediaChapter> chapters);
+    void set_ranges(std::vector<MediaRange> ranges)
+    {
+        ranges_ = std::move(ranges);
+    }
     void set_shuffle(bool on)
     {
         shuffle_ = on;
@@ -319,6 +332,7 @@ class MediaControls
     float volume_ = 0.7f;
     bool muted_ = false;
     std::vector<MediaChapter> chapters_;
+    std::vector<MediaRange> ranges_;
 
     int streak_ = 0;      // repeats of a held seek, for the acceleration
     float linger_ = 0.0f; // seconds the bubble stays after a seek
