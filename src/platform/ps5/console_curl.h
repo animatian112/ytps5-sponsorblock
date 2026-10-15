@@ -37,6 +37,10 @@ extern "C"
      * An app that needs its own CURLOPT_SOCKOPTFUNCTION calls console_curl_nonblocking() in it. */
     void console_curl_setup(CURL *easy);
 
+/* For the network test: the address our DNS lookup and the console's resolver
+ * each give for `name`, as one line ("DNS own 1.2.3.4 (1.1.1.1), PS5 5.6.7.8"). */
+void console_curl_describe_lookup(const char *name, char *out, size_t size);
+
     /* Sets SO_NBIO on a socket. 0 on success. */
     int console_curl_nonblocking(int socket);
 

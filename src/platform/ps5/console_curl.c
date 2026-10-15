@@ -12,6 +12,7 @@
  */
 
 #include "console_curl.h"
+#include "yt/dns.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -21,6 +22,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <sys/time.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -166,11 +168,9 @@ int __wrap_fcntl(int descriptor, int command, ...)
 
 /* ---- Name lookup --------------------------------------------------------------------------- */
 
-/* IPv4, one address per name, through sceNetResolver on the calling thread. */
-static int console_curl_lookup(const char *name, struct in_addr *address)
+/* The console's resolver (sceNetResolverStartNtoa): one IPv4 address. */
+static int console_curl_system_lookup(const char *name, struct in_addr *address)
 {
-    if (inet_pton(AF_INET, name, address) == 1)
-        return 0;
     const int pool = sceNetPoolCreate("console_curl_dns", 16 * 1024, 0);
     if (pool < 0)
         return EAI_MEMORY;
@@ -187,6 +187,190 @@ static int console_curl_lookup(const char *name, struct in_addr *address)
     return result;
 }
 
+/* Our own lookup: an A query over UDP to public resolvers, read with yt/dns.c.
+ * On firmware 13.60 the console's resolver hands back an address that refuses
+ * connections for names behind CNAME aliases (www.youtube.com,
+ * oauth2.googleapis.com) while direct names (www.google.com) work, so the
+ * names go here first and the console's resolver is only the fallback. */
+static const char *const console_curl_dns_servers[] = {"1.1.1.1", "8.8.8.8", "9.9.9.9"};
+enum
+{
+    CONSOLE_DNS_SERVERS = 3,
+    CONSOLE_DNS_MAX = 4,
+    CONSOLE_DNS_CACHE = 16,
+    CONSOLE_DNS_TTL = 300
+};
+
+struct console_dns_entry
+{
+    char name[128];
+    uint32_t addresses[CONSOLE_DNS_MAX];
+    int count;
+    time_t stored;
+};
+
+static pthread_mutex_t console_dns_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct console_dns_entry console_dns_cache[CONSOLE_DNS_CACHE];
+static int console_dns_next;
+static int console_dns_unreachable; /* every public resolver timed out once */
+static char console_dns_last_server[16];
+
+/* The UDP exchange uses libSceNet directly (the calls the SponsorBlock tile
+ * proved in a sandboxed title), not libc's socket layer. */
+extern int sceNetSocket(const char *name, int family, int type, int protocol);
+extern int sceNetSocketClose(int socket);
+extern int sceNetSetsockopt(int socket, int level, int option, const void *value,
+                            unsigned int size);
+extern int sceNetSendto(int socket, const void *data, size_t length, int flags,
+                        const void *address, unsigned int address_length);
+extern int sceNetRecv(int socket, void *data, size_t length, int flags);
+
+static uint16_t console_dns_id(void)
+{
+    static uint32_t counter;
+    uintptr_t stack = (uintptr_t)&counter;
+    counter = counter * 1103515245u + 12345u + (uint32_t)time(NULL) + (uint32_t)stack;
+    return (uint16_t)(counter >> 8);
+}
+
+static int console_dns_query(const char *server, const char *name, uint32_t *addresses, int max)
+{
+    uint8_t packet[DNS_MAX_PACKET];
+    pthread_mutex_lock(&console_dns_lock);
+    const uint16_t id = console_dns_id();
+    pthread_mutex_unlock(&console_dns_lock);
+    const int length = dns_build_query(packet, sizeof(packet), id, name);
+    if (length < 0)
+        return -1;
+    const int socket_fd = sceNetSocket("console_curl_dns", AF_INET, 2 /* DGRAM */, 0);
+    if (socket_fd < 0)
+        return -1;
+    const int timeout_us = 1500000; /* 1.5 s per server */
+    (void)sceNetSetsockopt(socket_fd, 0xffff, 0x1106 /* RCVTIMEO */, &timeout_us,
+                           sizeof(timeout_us));
+    (void)sceNetSetsockopt(socket_fd, 0xffff, 0x1105 /* SNDTIMEO */, &timeout_us,
+                           sizeof(timeout_us));
+    struct sockaddr_in to;
+    memset(&to, 0, sizeof(to));
+    to.sin_len = sizeof(to);
+    to.sin_family = AF_INET;
+    to.sin_port = htons(53);
+    (void)inet_pton(AF_INET, server, &to.sin_addr);
+    int found = -1;
+    if (sceNetSendto(socket_fd, packet, (size_t)length, 0, &to, sizeof(to)) == length)
+    {
+        /* Skip stray datagrams (another id) a few times before giving up. */
+        for (int tries = 0; tries < 4 && found == -1; ++tries)
+        {
+            const int got = sceNetRecv(socket_fd, packet, sizeof(packet), 0);
+            if (got <= 0)
+                break;
+            found = dns_parse_a(packet, (size_t)got, id, addresses, max);
+        }
+    }
+    (void)sceNetSocketClose(socket_fd);
+    return found;
+}
+
+/* Fills up to CONSOLE_DNS_MAX addresses; returns how many (0: none found). */
+static int console_curl_own_lookup(const char *name, uint32_t *addresses)
+{
+    const time_t now = time(NULL);
+    pthread_mutex_lock(&console_dns_lock);
+    for (int i = 0; i < CONSOLE_DNS_CACHE; ++i)
+    {
+        struct console_dns_entry *entry = &console_dns_cache[i];
+        if (entry->count > 0 && strcmp(entry->name, name) == 0 &&
+            now - entry->stored < CONSOLE_DNS_TTL)
+        {
+            memcpy(addresses, entry->addresses, sizeof(entry->addresses));
+            const int count = entry->count;
+            pthread_mutex_unlock(&console_dns_lock);
+            return count;
+        }
+    }
+    const int skip = console_dns_unreachable;
+    pthread_mutex_unlock(&console_dns_lock);
+    if (skip || strlen(name) >= sizeof(console_dns_cache[0].name))
+        return 0;
+
+    int count = 0;
+    int answered = 0;
+    for (int i = 0; i < CONSOLE_DNS_SERVERS && count <= 0; ++i)
+    {
+        count = console_dns_query(console_curl_dns_servers[i], name, addresses, CONSOLE_DNS_MAX);
+        if (count != -1)
+            answered = 1;
+        if (count > 0)
+        {
+            pthread_mutex_lock(&console_dns_lock);
+            snprintf(console_dns_last_server, sizeof(console_dns_last_server), "%s",
+                     console_curl_dns_servers[i]);
+            pthread_mutex_unlock(&console_dns_lock);
+        }
+    }
+    pthread_mutex_lock(&console_dns_lock);
+    if (!answered)
+        console_dns_unreachable = 1; /* this network blocks them: stop waiting */
+    if (count > 0)
+    {
+        struct console_dns_entry *entry = &console_dns_cache[console_dns_next];
+        console_dns_next = (console_dns_next + 1) % CONSOLE_DNS_CACHE;
+        snprintf(entry->name, sizeof(entry->name), "%s", name);
+        memset(entry->addresses, 0, sizeof(entry->addresses));
+        memcpy(entry->addresses, addresses, (size_t)count * sizeof(uint32_t));
+        entry->count = count;
+        entry->stored = now;
+    }
+    pthread_mutex_unlock(&console_dns_lock);
+    return count > 0 ? count : 0;
+}
+
+/* The addresses for a name: ours first, then the console's resolver. */
+static int console_curl_lookup(const char *name, uint32_t *addresses, int *count)
+{
+    struct in_addr address;
+    *count = 0;
+    if (inet_pton(AF_INET, name, &address) == 1)
+    {
+        addresses[0] = address.s_addr;
+        *count = 1;
+        return 0;
+    }
+    *count = console_curl_own_lookup(name, addresses);
+    if (*count > 0)
+        return 0;
+    const int failed = console_curl_system_lookup(name, &address);
+    if (failed != 0)
+        return failed;
+    addresses[0] = address.s_addr;
+    *count = 1;
+    return 0;
+}
+
+static void console_dns_format(uint32_t address, char *out, size_t size)
+{
+    const uint8_t *b = (const uint8_t *)&address; /* network order */
+    snprintf(out, size, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+}
+
+void console_curl_describe_lookup(const char *name, char *out, size_t size)
+{
+    uint32_t own[CONSOLE_DNS_MAX];
+    struct in_addr system_address;
+    char own_text[INET_ADDRSTRLEN] = "-", system_text[INET_ADDRSTRLEN] = "-";
+    const int own_count = console_curl_own_lookup(name, own);
+    if (own_count > 0)
+        console_dns_format(own[0], own_text, sizeof(own_text));
+    if (console_curl_system_lookup(name, &system_address) == 0)
+        console_dns_format(system_address.s_addr, system_text, sizeof(system_text));
+    pthread_mutex_lock(&console_dns_lock);
+    snprintf(out, size, "DNS own %s%s%s%s, PS5 %s", own_text, own_count > 0 ? " (" : "",
+             own_count > 0 ? console_dns_last_server : "", own_count > 0 ? ")" : "",
+             system_text);
+    pthread_mutex_unlock(&console_dns_lock);
+}
+
 int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints,
                 struct addrinfo **result)
 {
@@ -195,43 +379,56 @@ int getaddrinfo(const char *node, const char *service, const struct addrinfo *hi
     if (family != AF_UNSPEC && family != AF_INET)
         return EAI_FAMILY;
 
-    struct in_addr address;
-    address.s_addr = htonl(INADDR_LOOPBACK);
+    uint32_t addresses[CONSOLE_DNS_MAX];
+    int count = 1;
+    addresses[0] = htonl(INADDR_LOOPBACK);
     if (node != NULL)
     {
         if (hints != NULL && (hints->ai_flags & AI_NUMERICHOST) != 0)
         {
-            if (inet_pton(AF_INET, node, &address) != 1)
+            struct in_addr numeric;
+            if (inet_pton(AF_INET, node, &numeric) != 1)
                 return EAI_NONAME;
+            addresses[0] = numeric.s_addr;
         }
         else
         {
-            const int failed = console_curl_lookup(node, &address);
+            const int failed = console_curl_lookup(node, addresses, &count);
             if (failed != 0)
                 return failed;
         }
     }
     else if (hints != NULL && (hints->ai_flags & AI_PASSIVE) != 0)
     {
-        address.s_addr = htonl(INADDR_ANY);
+        addresses[0] = htonl(INADDR_ANY);
     }
 
-    /* The entry and its address in one allocation: freeaddrinfo frees once. */
-    struct addrinfo *entry = calloc(1, sizeof(struct addrinfo) + sizeof(struct sockaddr_in));
-    if (entry == NULL)
-        return EAI_MEMORY;
-    struct sockaddr_in *in = (struct sockaddr_in *)(entry + 1);
-    in->sin_len = sizeof(*in);
-    in->sin_family = AF_INET;
-    in->sin_port = htons((uint16_t)(service != NULL ? atoi(service) : 0));
-    in->sin_addr = address;
-    entry->ai_family = AF_INET;
-    entry->ai_socktype =
-        hints != NULL && hints->ai_socktype != 0 ? hints->ai_socktype : SOCK_STREAM;
-    entry->ai_protocol = hints != NULL ? hints->ai_protocol : 0;
-    entry->ai_addrlen = sizeof(*in);
-    entry->ai_addr = (struct sockaddr *)in;
-    *result = entry;
+    /* One entry per address, so curl moves on when one refuses to connect.
+     * Each entry and its address are one allocation; freeaddrinfo frees each. */
+    struct addrinfo *head = NULL, **tail = &head;
+    for (int i = 0; i < count; ++i)
+    {
+        struct addrinfo *entry = calloc(1, sizeof(struct addrinfo) + sizeof(struct sockaddr_in));
+        if (entry == NULL)
+        {
+            freeaddrinfo(head);
+            return EAI_MEMORY;
+        }
+        struct sockaddr_in *in = (struct sockaddr_in *)(entry + 1);
+        in->sin_len = sizeof(*in);
+        in->sin_family = AF_INET;
+        in->sin_port = htons((uint16_t)(service != NULL ? atoi(service) : 0));
+        in->sin_addr.s_addr = addresses[i];
+        entry->ai_family = AF_INET;
+        entry->ai_socktype =
+            hints != NULL && hints->ai_socktype != 0 ? hints->ai_socktype : SOCK_STREAM;
+        entry->ai_protocol = hints != NULL ? hints->ai_protocol : 0;
+        entry->ai_addrlen = sizeof(*in);
+        entry->ai_addr = (struct sockaddr *)in;
+        *tail = entry;
+        tail = &entry->ai_next;
+    }
+    *result = head;
     return 0;
 }
 

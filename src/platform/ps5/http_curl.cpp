@@ -95,6 +95,13 @@ const char *describe(CURLcode code)
 
 } // namespace
 
+std::string describe_lookup(const std::string &host)
+{
+    char line[160];
+    console_curl_describe_lookup(host.c_str(), line, sizeof(line));
+    return line;
+}
+
 Response perform(const Request &request)
 {
     Response response;

@@ -13,6 +13,11 @@
 namespace yt::http
 {
 
+std::string describe_lookup(const std::string &host)
+{
+    return "stub: " + host;
+}
+
 Response perform(const Request &request)
 {
     return hui::testing::HttpStub::instance().perform(request);

@@ -49,9 +49,14 @@ void *net_test_main(void *)
     };
     for (const auto &target : kTargets)
     {
+        std::string host = target[1];
+        host = host.substr(host.find("//") + 2);
+        host = host.substr(0, host.find('/'));
+        const std::string lookup = yt::http::describe_lookup(host);
         const yt::http::Response response = yt::http::get(target[1], {}, 12);
-        std::string outcome = response.ok() ? "OK (HTTP " + std::to_string(response.status) + ")"
-                                            : "FAILED: " + response.error;
+        std::string outcome = (response.ok() ? "OK (HTTP " + std::to_string(response.status) + ")"
+                                             : "FAILED: " + response.error) +
+                              " - " + lookup;
         yt::log::line("nettest: %s %s -> %s", target[0], target[1], outcome.c_str());
         std::lock_guard<std::mutex> lock(net_test().mutex);
         net_test().results.emplace_back(target[0], std::move(outcome));

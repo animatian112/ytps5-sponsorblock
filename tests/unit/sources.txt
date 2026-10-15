@@ -44,6 +44,7 @@ src/yt/qr.cpp
 src/yt/log.cpp
 src/yt/service.cpp
 src/yt/sponsorblock.cpp
+src/yt/dns.c
 src/sponsorblock/sponsorblock.c
 src/yt/types.cpp
 src/yt/update.cpp

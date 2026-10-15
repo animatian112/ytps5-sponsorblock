@@ -16,6 +16,11 @@
 namespace yt::http
 {
 
+std::string describe_lookup(const std::string &host)
+{
+    return "host resolver: " + host;
+}
+
 namespace
 {
 

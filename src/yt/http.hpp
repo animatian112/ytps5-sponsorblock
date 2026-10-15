@@ -59,6 +59,10 @@ Response get(const std::string &url, const std::vector<Header> &headers = {}, lo
 Response post_json(const std::string &url, const std::vector<Header> &headers,
                    const std::string &body, long timeout_s = 20);
 
+// For the network test: how the name of `host` resolves on this platform
+// ("DNS own 1.2.3.4 (1.1.1.1), PS5 5.6.7.8" on the console).
+std::string describe_lookup(const std::string &host);
+
 // "Authorization: Bearer <token>" when token is not empty, else nothing.
 std::vector<Header> bearer_headers(const std::string &token);
 
