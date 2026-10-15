@@ -6,6 +6,7 @@
 // its own item list and only touches the service when the revision changed.
 
 #include "app/home_screen.hpp"
+#include "yt/log.hpp"
 
 #include "app/theme.hpp"
 #include "yt/service.hpp"
@@ -123,6 +124,24 @@ void HomeScreen::draw(const Context &context, Frame &frame) const
         bones.draw(skeleton);
     }
     feed_.draw(canvas, context);
+
+    // Nothing to show: the last log lines name what the network did, so a
+    // failure is readable on the television without FTP.
+    if (view.items.empty() && view.state != yt::Load::loading)
+    {
+        std::string lines[8];
+        const std::size_t count = yt::log::recent(lines, 8);
+        float y = 1000.0f - static_cast<float>(count) * 24.0f;
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            std::string shown = lines[i];
+            if (shown.size() > 110)
+                shown.resize(110);
+            ui::text(canvas.list, context.fonts.mono, shown, 360.0f, y, 18.0f,
+                     gfx::Color::rgb(0x8a8a8a));
+            y += 24.0f;
+        }
+    }
 }
 
 std::span<const TourStep> HomeScreen::tour() const

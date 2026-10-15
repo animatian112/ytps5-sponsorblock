@@ -5,14 +5,79 @@
 #include "app/settings_screen.hpp"
 
 #include "app/theme.hpp"
+#include "yt/http.hpp"
+#include "yt/log.hpp"
 #include "yt/service.hpp"
 #include "yt/update.hpp"
 #include "ui/components.hpp"
+
+#include <pthread.h>
+
+#include <memory>
+#include <mutex>
 
 namespace hui::app
 {
 namespace
 {
+
+// ---- Network test --------------------------------------------------------------------------
+// Settings > Network test: one request to each service the app needs, on a
+// worker thread, each answer shown as a toast and logged. Any HTTP status
+// means the service was reached; only a transport error is a failure.
+struct NetTest
+{
+    std::mutex mutex;
+    std::vector<std::pair<std::string, std::string>> results; // label, outcome
+    bool running = false;
+};
+
+NetTest &net_test()
+{
+    static NetTest test;
+    return test;
+}
+
+void *net_test_main(void *)
+{
+    static const char *const kTargets[][2] = {
+        {"Plain HTTP (DNS + network)", "http://connectivitycheck.gstatic.com/generate_204"},
+        {"Google HTTPS", "https://www.google.com/generate_204"},
+        {"YouTube", "https://www.youtube.com/generate_204"},
+        {"Google sign-in", "https://oauth2.googleapis.com/device/code"},
+        {"SponsorBlock", "https://sponsor.ajay.app/api/skipSegments?videoID=dQw4w9WgXcQ"},
+    };
+    for (const auto &target : kTargets)
+    {
+        const yt::http::Response response = yt::http::get(target[1], {}, 12);
+        std::string outcome = response.ok() ? "OK (HTTP " + std::to_string(response.status) + ")"
+                                            : "FAILED: " + response.error;
+        yt::log::line("nettest: %s %s -> %s", target[0], target[1], outcome.c_str());
+        std::lock_guard<std::mutex> lock(net_test().mutex);
+        net_test().results.emplace_back(target[0], std::move(outcome));
+    }
+    std::lock_guard<std::mutex> lock(net_test().mutex);
+    net_test().running = false;
+    return nullptr;
+}
+
+void start_net_test()
+{
+    std::lock_guard<std::mutex> lock(net_test().mutex);
+    if (net_test().running)
+        return;
+    pthread_attr_t attributes;
+    if (pthread_attr_init(&attributes) != 0)
+        return;
+    pthread_attr_setstacksize(&attributes, 1u << 20);
+    pthread_t thread;
+    if (pthread_create(&thread, &attributes, net_test_main, nullptr) == 0)
+    {
+        pthread_detach(thread);
+        net_test().running = true;
+    }
+    pthread_attr_destroy(&attributes);
+}
 
 enum : int
 {
@@ -28,6 +93,7 @@ enum : int
     kSaveAccount,
     kSignOut,
     kCheckUpdates,
+    kNetTest,
 };
 
 constexpr int kHeights[] = {720, 1080, 1440, 2160};
@@ -194,6 +260,8 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         "Write a token copy into the app folder";
     form_.add_action(kSignOut, "Sign out");
     form_.add_header("About");
+    form_.add_action(kNetTest, "Network test").description =
+        "Try YouTube, Google sign-in and SponsorBlock and show what answers";
     form_.add_action(kCheckUpdates, "Check for updates").description =
         "Not in the SponsorBlock build: install new builds by hand";
 }
@@ -287,6 +355,13 @@ void SettingsScreen::activate(int id)
             context_.toasts.push(ui::StatusKind::warning, "Copy not possible", where);
         return;
     }
+    if (id == kNetTest)
+    {
+        context_.toasts.push(ui::StatusKind::info, "Network test running",
+                             "Results appear one by one", 4.0f);
+        start_net_test();
+        return;
+    }
     if (id == kCheckUpdates)
     {
         // The upstream feed would offer a build without SponsorBlock, so the
@@ -317,6 +392,20 @@ void SettingsScreen::update(const InputFrame &input, float dt, ui::Feedback &fee
         break;
     }
     form_.update(dt);
+
+    {
+        std::vector<std::pair<std::string, std::string>> done;
+        {
+            std::lock_guard<std::mutex> lock(net_test().mutex);
+            done.swap(net_test().results);
+        }
+        for (auto &result : done)
+        {
+            const bool ok = result.second.starts_with("OK");
+            context_.toasts.push(ok ? ui::StatusKind::success : ui::StatusKind::danger,
+                                 result.first, result.second, 15.0f);
+        }
+    }
 
     if (!update_watching_)
         return;
