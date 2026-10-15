@@ -104,6 +104,7 @@ struct Service::Impl
         bool home = false;
         bool home_force = false;
         bool subscriptions = false;
+        bool history = false;
         bool more = false;
         FeedKind more_kind = FeedKind::home;
         bool channel = false;
@@ -122,11 +123,18 @@ struct Service::Impl
         bool sign_out = false;
         bool refresh = false;
         bool import_token = false;
+        bool rate = false;
+        std::string rate_video;
+        std::string rating;
+        bool subscribe = false;
+        std::string subscribe_channel;
+        bool subscribe_on = false;
     } job;
 
     // Results.
     FeedView home;
     FeedView subscriptions;
+    FeedView history;
     FeedView search;
     FeedView related;
     FeedView channel_feed; // one channel's videos, opened from search
@@ -256,6 +264,8 @@ struct Service::Impl
             return &related;
         case FeedKind::channel:
             return &channel_feed;
+        case FeedKind::history:
+            return &history;
         default:
             return &search;
         }
@@ -292,6 +302,8 @@ struct Service::Impl
         home.revision++;
         subscriptions = FeedView{};
         subscriptions.revision++;
+        history = FeedView{};
+        history.revision++;
     }
 
     // ---- jobs ----
@@ -426,6 +438,9 @@ struct Service::Impl
         case FeedKind::subscriptions:
             ok = tube.subscriptions(&page, continuation);
             break;
+        case FeedKind::history:
+            ok = tube.history(&page, continuation);
+            break;
         default:
             ok = tube.search(query, &page, continuation);
             break;
@@ -445,6 +460,9 @@ struct Service::Impl
                     break;
                 case FeedKind::subscriptions:
                     ok = tube.subscriptions(&page, continuation);
+                    break;
+                case FeedKind::history:
+                    ok = tube.history(&page, continuation);
                     break;
                 default:
                     ok = tube.search(query, &page, continuation);
@@ -945,7 +963,18 @@ struct Service::Impl
                 // leaves the previous row in place.
                 FeedPage related_page;
                 if (tube.related(video_id, &related_page))
+                {
+                    if (related_page.meta_known)
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        video.like_status = related_page.like_status;
+                        video.subscribed = related_page.subscribed;
+                        if (video.info.channel_id.empty())
+                            video.info.channel_id = related_page.channel_id;
+                        video.revision++;
+                    }
                     publish(FeedKind::related, Load::ready, related_page.items, {}, {});
+                }
                 else
                     publish(FeedKind::related, Load::failed, {}, {}, tube.last_error());
                 return;
@@ -1139,6 +1168,8 @@ struct Service::Impl
                 do_feed(FeedKind::home, {}, false);
             if (taken.subscriptions)
                 do_feed(FeedKind::subscriptions, {}, false);
+            if (taken.history)
+                do_feed(FeedKind::history, {}, false);
             if (taken.channel)
                 do_channel_page(taken.channel_id);
             if (taken.channel_tab)
@@ -1153,6 +1184,28 @@ struct Service::Impl
             }
             if (taken.more)
                 do_feed(taken.more_kind, taken.search_query, true);
+            if (taken.rate)
+            {
+                const bool done = tube.rate(taken.rate_video, taken.rating);
+                std::lock_guard<std::mutex> lock(mutex);
+                if (done && video.info.video_id == taken.rate_video)
+                {
+                    video.like_status = taken.rating == "like"      ? "LIKE"
+                                        : taken.rating == "dislike" ? "DISLIKE"
+                                                                    : "INDIFFERENT";
+                    video.revision++;
+                }
+            }
+            if (taken.subscribe)
+            {
+                const bool done = tube.subscribe(taken.subscribe_channel, taken.subscribe_on);
+                std::lock_guard<std::mutex> lock(mutex);
+                if (done && video.info.channel_id == taken.subscribe_channel)
+                {
+                    video.subscribed = taken.subscribe_on;
+                    video.revision++;
+                }
+            }
             if (taken.video)
                 do_video(taken.video_id, taken.choice, taken.video_generation);
             if (taken.sign_in)
@@ -1162,9 +1215,10 @@ struct Service::Impl
 
     bool any_request()
     {
-        return job.home || job.subscriptions || job.more || job.search || job.channel ||
-               job.channel_tab || job.video || job.close_video || job.sign_in ||
-               job.cancel_sign_in || job.sign_out || job.refresh || job.import_token;
+        return job.home || job.subscriptions || job.history || job.more || job.search ||
+               job.channel || job.channel_tab || job.video || job.close_video || job.sign_in ||
+               job.cancel_sign_in || job.sign_out || job.refresh || job.import_token || job.rate ||
+               job.subscribe;
     }
 };
 
@@ -1225,6 +1279,31 @@ void Service::request_subscriptions(bool force)
     impl_->wake.notify_all();
 }
 
+void Service::rate_video(std::string video_id, std::string rating)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.rate = true;
+    impl_->job.rate_video = std::move(video_id);
+    impl_->job.rating = std::move(rating);
+    impl_->wake.notify_all();
+}
+
+void Service::set_subscribed(std::string channel_id, bool on)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.subscribe = true;
+    impl_->job.subscribe_channel = std::move(channel_id);
+    impl_->job.subscribe_on = on;
+    impl_->wake.notify_all();
+}
+
+void Service::request_history()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.history = true;
+    impl_->wake.notify_all();
+}
+
 void Service::request_more(FeedKind kind)
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -1282,6 +1361,8 @@ void Service::request_video(std::string video_id, CodecChoice choice)
     impl_->video.stage = "Warteschlange";
     impl_->video.error.clear();
     impl_->video.info = VideoInfo{};
+    impl_->video.like_status.clear();
+    impl_->video.subscribed = false;
     impl_->video.source_client.clear();
     impl_->video.attempts.clear();
     impl_->video.revision++;
@@ -1492,6 +1573,8 @@ std::uint64_t Service::revision(FeedKind kind) const
         return impl_->related.revision;
     case FeedKind::channel:
         return impl_->channel_feed.revision;
+    case FeedKind::history:
+        return impl_->history.revision;
     default:
         return impl_->search.revision;
     }
@@ -1510,6 +1593,8 @@ FeedView Service::feed(FeedKind kind) const
         return impl_->related;
     case FeedKind::channel:
         return impl_->channel_feed;
+    case FeedKind::history:
+        return impl_->history;
     default:
         return impl_->search;
     }

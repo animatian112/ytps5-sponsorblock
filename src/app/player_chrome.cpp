@@ -108,6 +108,17 @@ void PlayerChrome::set_badges(bool captions_on, std::string speed, std::string q
         focus_ = Button::play;
 }
 
+void PlayerChrome::set_account(bool signed_in, bool liked, bool disliked, bool subscribed)
+{
+    signed_in_ = signed_in;
+    liked_ = liked;
+    disliked_ = disliked;
+    subscribed_ = subscribed;
+    if (!signed_in_ &&
+        (focus_ == Button::like || focus_ == Button::dislike || focus_ == Button::subscribe))
+        focus_ = Button::play;
+}
+
 std::vector<PlayerChrome::Button> PlayerChrome::buttons() const
 {
     std::vector<Button> out{Button::restart, Button::rewind, Button::play, Button::forward};
@@ -115,6 +126,12 @@ std::vector<PlayerChrome::Button> PlayerChrome::buttons() const
         out.push_back(Button::next);
     if (!segment_.empty())
         out.push_back(Button::skip);
+    if (signed_in_)
+    {
+        out.push_back(Button::like);
+        out.push_back(Button::dislike);
+        out.push_back(Button::subscribe);
+    }
     out.push_back(Button::captions);
     out.push_back(Button::speed);
     out.push_back(Button::quality);
@@ -126,7 +143,8 @@ std::vector<PlayerChrome::Button> PlayerChrome::buttons() const
 bool PlayerChrome::right_side(Button button)
 {
     return button == Button::skip || button == Button::captions || button == Button::speed ||
-           button == Button::quality || button == Button::audio;
+           button == Button::quality || button == Button::audio || button == Button::like ||
+           button == Button::dislike || button == Button::subscribe;
 }
 
 std::string PlayerChrome::button_label(Button button) const
@@ -143,6 +161,12 @@ std::string PlayerChrome::button_label(Button button) const
         return quality_label_.empty() ? std::string("Quality") : quality_label_;
     case Button::audio:
         return "Audio";
+    case Button::like:
+        return liked_ ? "Liked" : "Like";
+    case Button::dislike:
+        return disliked_ ? "Disliked" : "Dislike";
+    case Button::subscribe:
+        return subscribed_ ? "Subscribed" : "Subscribe";
     default:
         return {};
     }
@@ -218,6 +242,12 @@ PlayerChrome::Command PlayerChrome::press(Button button)
         return Command::open_quality;
     case Button::audio:
         return Command::open_audio;
+    case Button::like:
+        return Command::like;
+    case Button::dislike:
+        return Command::dislike;
+    case Button::subscribe:
+        return Command::subscribe;
     }
     return Command::none;
 }
@@ -471,6 +501,9 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
             fill = kInk;
         else if (button == Button::skip)
             fill = gfx::Color::rgb(0xffffff, 0.2f);
+        else if ((button == Button::like && liked_) || (button == Button::dislike && disliked_) ||
+                 (button == Button::subscribe && subscribed_))
+            fill = gfx::Color::rgb(0xff0033, 0.85f); // YouTube's red for "on"
         list.rounded_rect(pill, kButtonRadius, fill);
         const gfx::Color ink = (focused || lit) ? kDark : kInk;
         ui::text(list, fonts.semibold, button_label(button), pill.cx(), cy + 8.0f, 22.0f, ink,

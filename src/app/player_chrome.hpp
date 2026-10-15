@@ -39,6 +39,9 @@ class PlayerChrome
         open_speed,
         open_quality,
         open_audio,
+        like,
+        dislike,
+        subscribe,
         pick, // a panel choice: panel() and picked()
     };
     enum class Panel
@@ -61,6 +64,9 @@ class PlayerChrome
     // the speed ("1.5x"), the quality ("1080p"); the sound-track button only
     // shows when the video has more than one track.
     void set_badges(bool captions_on, std::string speed, std::string quality, bool audio_tracks);
+    // The account buttons (signed in only): like, dislike and subscribe, lit
+    // for the standing YouTube reports.
+    void set_account(bool signed_in, bool liked, bool disliked, bool subscribed);
 
     // Reads the frame. `back` is consumed (closes the panel, then hides the
     // controls) when they are on screen; the screen leaves on the next Circle.
@@ -121,6 +127,9 @@ class PlayerChrome
         speed,
         quality,
         audio,
+        like,
+        dislike,
+        subscribe,
     };
     enum class Zone
     {
@@ -152,6 +161,10 @@ class PlayerChrome
     std::string speed_label_ = "1x";
     std::string quality_label_;
     bool audio_tracks_ = false;
+    bool signed_in_ = false;
+    bool liked_ = false;
+    bool disliked_ = false;
+    bool subscribed_ = false;
 
     bool shown_ = true;
     float visibility_ = 1.0f;

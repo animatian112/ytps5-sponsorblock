@@ -25,6 +25,7 @@ enum class FeedKind : unsigned char
     related,
     // One channel's uploads, opened from a search result.
     channel,
+    history,
 };
 
 struct FeedView
@@ -41,6 +42,10 @@ struct VideoView
 {
     Load state = Load::idle;
     VideoInfo info;
+    // The account's standing toward the playing video, from its watch page:
+    // like_status "LIKE" / "DISLIKE" / "INDIFFERENT" (empty: unknown).
+    std::string like_status;
+    bool subscribed = false;
     std::string error;
     // What the pipeline is doing right now ("Player info", "Streams",
     // "Decoder"): the player screen shows it instead of guessing.
@@ -93,6 +98,7 @@ class Service
     // ---- requests, called from the frame thread ----
     void request_home(bool force = false);
     void request_subscriptions(bool force = false);
+    void request_history();
     void request_more(FeedKind kind);
     void request_search(std::string query);
     // Opens a channel page (channel_id "UC..."): header, tabs and the videos
@@ -107,6 +113,11 @@ class Service
     // playback ping went out when the video started). Cheap; call it every
     // half minute of playback and when the video is left.
     void report_watch_progress(double position_s);
+    // Like / dislike / clear ("like", "dislike", "removelike"), and subscribe
+    // or unsubscribe; both need the account and run on the worker. The video
+    // view's like_status / subscribed follow once YouTube accepted them.
+    void rate_video(std::string video_id, std::string rating);
+    void set_subscribed(std::string channel_id, bool on);
     // Starts the device flow and then polls until it is answered.
     void request_sign_in();
     void cancel_sign_in();

@@ -14,17 +14,21 @@ namespace hui::app
 {
 
 // Screen indices the app assumes elsewhere; keep the order in sync.
-inline constexpr std::size_t kHomeScreen = 0;
-inline constexpr std::size_t kSearchScreen = 1;
+// SmartTube's rail order: Search on top, then Home, Subscriptions, History,
+// and Settings last.
+inline constexpr std::size_t kSearchScreen = 0;
+inline constexpr std::size_t kHomeScreen = 1;
 inline constexpr std::size_t kSubscriptionsScreen = 2;
-inline constexpr std::size_t kSettingsScreen = 3;
-inline constexpr std::size_t kLoginScreen = 4;
-inline constexpr std::size_t kPlayerScreen = 5;
-inline constexpr std::size_t kTabCount = 4;
+inline constexpr std::size_t kHistoryScreen = 3;
+inline constexpr std::size_t kSettingsScreen = 4;
+inline constexpr std::size_t kLoginScreen = 5;
+inline constexpr std::size_t kPlayerScreen = 6;
+inline constexpr std::size_t kTabCount = 5;
 
 std::unique_ptr<Screen> make_home_screen(Context &context);
 std::unique_ptr<Screen> make_search_screen(Context &context);
 std::unique_ptr<Screen> make_subscriptions_screen(Context &context);
+std::unique_ptr<Screen> make_history_screen(Context &context);
 std::unique_ptr<Screen> make_settings_screen(Context &context);
 std::unique_ptr<Screen> make_login_screen(Context &context);
 std::unique_ptr<Screen> make_player_screen(Context &context);

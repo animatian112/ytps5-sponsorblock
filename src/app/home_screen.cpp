@@ -18,18 +18,14 @@ namespace
 
 const TourStep kTour[] = {
     {1.4f, 0, Direction::none, "start", 0, 0, 0, 0, 0},
-    // The cursor walk: right and left across the grid, then down/down down
-    // the rail to Subscriptions; confirm leaves home for that section.
-    {0.9f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
-    // Two lefts: the first only walks back to column 0, the second leaves the
-    // grid at its left edge and hands the focus to the rail.
-    {0.9f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
-    {0.9f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
+    // Rows: right along "Recommended", down to "Trending".
+    {0.6f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
+    {0.9f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
+    {1.0f, 0, Direction::none, "rows", 0, 0, 0, 0, 0},
+    // Left twice: back to the first card, then out into the rail.
+    {0.6f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
+    {0.6f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
     {1.0f, 0, Direction::none, "rail", 0, 0, 0, 0, 0},
-    {0.9f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
-    {0.9f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
-    {1.0f, 0, Direction::none, "rail-subs", 0, 0, 0, 0, 0},
-    {0.9f, hui::action_bit(Action::confirm), Direction::none, "subscriptions", 0, 0, 0, 0, 0},
 };
 
 // The empty state names the cause: "signed out" and "nothing recommended"
@@ -44,6 +40,7 @@ const char *kSignedInEmpty = "No feed available - use Search";
 HomeScreen::HomeScreen(Context &context) : context_(context)
 {
     feed_.grid().set_bounds({kContentX, 150.0f, kContentW, 860.0f});
+    rows_.set_bounds({kContentX, 140.0f, kContentW, 880.0f});
     feed_.set_active(true);
     seen_revision_ = context_.service.revision(yt::FeedKind::home);
     refresh_from_service();
@@ -60,6 +57,9 @@ void HomeScreen::refresh_from_service()
 {
     const yt::FeedView view = context_.service.feed(yt::FeedKind::home);
     feed_.set_items(view.items, context_);
+    use_rows_ = RowsView::shelf_count(view.items) >= 2;
+    if (use_rows_)
+        rows_.set_items(view.items, context_);
     if (context_.service.signed_in())
     {
         feed_.set_empty_text(kSignedInEmpty);
@@ -86,6 +86,24 @@ void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedbac
     }
 
     const std::size_t before = feed_.items().size();
+    const yt::FeedView view = context_.service.feed(yt::FeedKind::home);
+    if (use_rows_)
+    {
+        rows_.set_active(true);
+        if (rows_.handle(input, feedback) && rows_.has_activation())
+        {
+            context_.nav.open_video = true;
+            context_.nav.video_id = rows_.activated();
+            rows_.clear_activation();
+        }
+        if (!more_requested_ && !view.continuation.empty() && rows_.near_end())
+        {
+            more_requested_ = true;
+            context_.service.request_more(yt::FeedKind::home);
+        }
+        rows_.update(dt, context_);
+        return;
+    }
     feed_.set_active(true);
     if (feed_.handle(input, feedback, context_) && feed_.has_activation())
     {
@@ -96,7 +114,6 @@ void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedbac
     if (feed_.items().size() != before)
         more_requested_ = false;
 
-    const yt::FeedView view = context_.service.feed(yt::FeedKind::home);
     if (!more_requested_ && !view.continuation.empty() && feed_.at_last_row())
     {
         more_requested_ = true;
@@ -121,7 +138,10 @@ void HomeScreen::draw(const Context &context, Frame &frame) const
         ui::Canvas skeleton{frame.scene, context.fonts, frame.glass_texture, clock_};
         bones.draw(skeleton);
     }
-    feed_.draw(canvas, context);
+    if (use_rows_)
+        rows_.draw(canvas);
+    else
+        feed_.draw(canvas, context);
 
     // Nothing to show: the last log lines name what the network did, so a
     // failure is readable on the television without FTP.

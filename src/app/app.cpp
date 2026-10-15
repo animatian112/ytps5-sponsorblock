@@ -107,10 +107,11 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     rail_.style.panel = false; // set each frame: only the open rail has its panel
     rail_.style.current_plate = true;
     rail_.style.icon_size = 34.0f;
-    rail_.set_entries({{"Home", {}, {}, false, false, false, 0},
-                       {"Search", {}, {}, false, false, false, 1},
+    rail_.set_entries({{"Search", {}, {}, false, false, false, 0},
+                       {"Home", {}, {}, false, false, false, 1},
                        {"Subscriptions", {}, {}, false, false, false, 2},
-                       {"Settings", {}, {}, false, false, false, 3}});
+                       {"History", {}, {}, false, false, false, 3},
+                       {"Settings", {}, {}, false, false, false, 4}});
     rail_.icon = [](ui::Canvas &canvas, const gfx::Rect &box, const ui::NavEntry &, int index,
                     float, gfx::Color ink)
     {
@@ -120,12 +121,12 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
         const float s = box.w * 0.5f;
         switch (index)
         {
-        case 0: // home
+        case 1: // home
             canvas.list.triangle({centre_x - s, centre_y - s * 0.92f, s * 1.7f, s * 0.9f}, ink);
             canvas.list.rounded_rect(
                 {centre_x - s * 0.62f, centre_y - s * 0.16f, s * 1.24f, s * 0.96f}, 2.0f, ink);
             break;
-        case 1: // search
+        case 0: // search
             canvas.list.ring(centre_x - s * 0.16f, centre_y - s * 0.16f, s * 0.56f, s * 0.16f, ink);
             canvas.list.line(centre_x + s * 0.24f, centre_y + s * 0.24f, centre_x + s * 0.84f,
                              centre_y + s * 0.84f, s * 0.17f, ink);
@@ -142,6 +143,12 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
             canvas.list.triangle({centre_x + s * 0.24f, centre_y + s * 0.45f, s * 0.34f, s * 0.3f},
                                  ink, 0.0f, 1.5708f);
             break;
+        case 3: // history: a clock
+            canvas.list.ring(centre_x, centre_y, s * 0.82f, s * 0.15f, ink);
+            canvas.list.line(centre_x, centre_y, centre_x, centre_y - s * 0.5f, s * 0.14f, ink);
+            canvas.list.line(centre_x, centre_y, centre_x + s * 0.38f, centre_y + s * 0.1f,
+                             s * 0.14f, ink);
+            break;
         default: // settings: sliders
             for (int row = 0; row < 3; ++row)
             {
@@ -154,9 +161,11 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     };
     rail_.set_bounds({0.0f, 108.0f, 320.0f, 820.0f});
 
-    screens_.push_back(make_home_screen(context_));
+    // In the order of the kXxxScreen indices (screens.hpp).
     screens_.push_back(make_search_screen(context_));
+    screens_.push_back(make_home_screen(context_));
     screens_.push_back(make_subscriptions_screen(context_));
+    screens_.push_back(make_history_screen(context_));
     screens_.push_back(make_settings_screen(context_));
     screens_.push_back(make_login_screen(context_));
     screens_.push_back(make_player_screen(context_));
@@ -208,7 +217,7 @@ void App::show(std::size_t index)
     if (index >= screens_.size() || index == current_)
         return;
     screens_[current_]->leave();
-    if (index < 4)
+    if (index < kTabCount)
         last_tab_ = index;
     current_ = index;
     screens_[current_]->enter();
@@ -461,11 +470,11 @@ void App::handle_global(const InputFrame &input, float dt)
     // L1 / R1 switch tabs on the four tab screens - unless the screen says it
     // uses them itself (a channel page switches its tabs with them); the
     // player seeks with them and the login screen ignores them.
-    if (current_ < 4 && !screens_[current_]->consumes_section_keys())
+    if (current_ < kTabCount && !screens_[current_]->consumes_section_keys())
     {
         if (input.is_pressed(Action::page_prev) && current_ > 0)
             show(current_ - 1);
-        else if (input.is_pressed(Action::page_next) && current_ + 1 < 4)
+        else if (input.is_pressed(Action::page_next) && current_ + 1 < kTabCount)
             show(current_ + 1);
     }
 }
@@ -546,23 +555,24 @@ void App::update(const InputFrame &input, float dt)
     if (ask.open_video && !ask.video_id.empty())
     {
         active_video_ = ask.video_id;
-        const std::size_t player = 5;
+        const std::size_t player = kPlayerScreen;
         if (current_ != player)
             show(player); // the player screen reads the id when it enters
     }
-    if (ask.leave_player && current_ == 5)
+    if (ask.leave_player && current_ == kPlayerScreen)
     {
         active_video_.clear();
         service_.request_close_video();
         show(previous_tab());
     }
-    if (ask.go_to && ask.screen_index >= 0 && ask.screen_index < 4)
+    if (ask.go_to && ask.screen_index >= 0 &&
+        static_cast<std::size_t>(ask.screen_index) < kTabCount)
         show(static_cast<std::size_t>(ask.screen_index));
     if (ask.start_login)
     {
         service_.request_sign_in();
-        login_return_ = current_ == 4 ? previous_tab() : current_;
-        show(4);
+        login_return_ = current_ == kLoginScreen ? previous_tab() : current_;
+        show(kLoginScreen);
     }
     if (ask.cancel_login)
         service_.cancel_sign_in();
@@ -583,7 +593,7 @@ void App::update(const InputFrame &input, float dt)
         // carry no content: request both again now that the token is loaded.
         service_.request_home(true);
         service_.request_subscriptions(true);
-        if (login_return_ < screens_.size() && current_ == 4)
+        if (login_return_ < screens_.size() && current_ == kLoginScreen)
             show(login_return_); // the player picks the video up again by itself
         // The restore message only appears when the install-folder token was
         // really restored and loaded, never on a plain boot or a sign-in
@@ -624,7 +634,7 @@ void App::update(const InputFrame &input, float dt)
 void App::draw_chrome(Frame &frame)
 {
     ui::Canvas overlay{frame.overlay, fonts_, frame.glass_texture, clock_};
-    if (current_ < 4)
+    if (current_ < kTabCount)
     {
         // YouTube's layout: the rail on the left, the section title on top of
         // the content.

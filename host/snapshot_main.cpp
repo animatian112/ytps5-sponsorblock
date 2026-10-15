@@ -108,6 +108,9 @@ std::vector<yt::FeedItem> feed_fixture()
         item.author = authors[index];
         item.length_s = 92.0 + index * 137.0;
         item.live = index == 3;
+        item.detail = std::to_string(12 + index * 37) + "K views \xE2\x80\xA2 " +
+                      std::to_string(index + 1) + " days ago";
+        item.watched = index % 4 == 1 ? 0.35f : -1.0f;
         items.push_back(std::move(item));
     }
     return items;
@@ -293,7 +296,12 @@ int main(int argc, char **argv)
     search_page.channels = {{"UCfixture0001", "PS5 Homebrew", {}, "128K subscribers"},
                             {"UCfixture0002", "Digital Foundry DE", {}, "874K subscribers"},
                             {"UCfixture0003", "Code & Coffee", {}, "41K subscribers"}};
-    service.inject_feed(yt::FeedKind::home, items, "continuation-fixture");
+    // Home as SmartTube shows it: rows per shelf.
+    std::vector<yt::FeedItem> shelves = items;
+    for (std::size_t i = 0; i < shelves.size(); ++i)
+        shelves[i].shelf = i < 6 ? "Recommended" : (i < 9 ? "Trending" : "Music");
+    service.inject_feed(yt::FeedKind::home, shelves, "continuation-fixture");
+    service.inject_feed(yt::FeedKind::history, items, {});
     service.inject_feed(yt::FeedKind::subscriptions, items, {});
     service.inject_channels(yt::FeedKind::search, search_page.channels);
     // The channel page the search screen opens: the first card's id must match

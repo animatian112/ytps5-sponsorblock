@@ -8,6 +8,7 @@
 #include "app/thumbs.hpp"
 #include "ui/motion.hpp"
 
+#include <algorithm>
 #include <cstdio>
 
 namespace hui::app
@@ -86,7 +87,11 @@ void FeedView::set_items(const std::vector<yt::FeedItem> &items, const Context &
     {
         ui::CardItem card;
         card.title = item.title.empty() ? item.video_id : item.title;
+        // SmartTube's info line: channel, views and age.
         card.subtitle = item.author;
+        if (!item.detail.empty())
+            card.subtitle += (card.subtitle.empty() ? "" : "  \xE2\x80\xA2  ") + item.detail;
+        card.progress = item.watched >= 0.0f ? std::max(item.watched, 0.03f) : -1.0f;
         card.texture = context.thumbs.texture(card_thumbnail(item));
         card.image_aspect = 16.0f / 9.0f;
         if (item.live)

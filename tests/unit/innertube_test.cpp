@@ -394,4 +394,36 @@ TEST(InnerTube, ReadsTheTvClientsTiles)
     EXPECT_FALSE(page.items[0].live);
     EXPECT_EQ(page.items[1].video_id, "bbbbbbbbbbb");
     EXPECT_TRUE(page.items[1].live);
+    EXPECT_EQ(page.items[0].detail, "1M views");
+}
+
+TEST(InnerTube, ShelvesNameTheirItemsAndTheWatchedShareIsRead)
+{
+    const char *json = R"({"contents":{"sectionListRenderer":{"contents":[
+      {"shelfRenderer":{"headerRenderer":{"shelfHeaderRenderer":{"title":{"simpleText":"Trending"}}},
+        "content":{"horizontalListRenderer":{"items":[
+        {"tileRenderer":{"header":{"tileHeaderRenderer":{"thumbnailOverlays":[
+            {"thumbnailOverlayResumePlaybackRenderer":{"percentDurationWatched":40}}]}},
+          "metadata":{"tileMetadataRenderer":{"title":{"simpleText":"One"},
+            "lines":[{"lineRenderer":{"items":[{"lineItemRenderer":{"text":{"simpleText":"Chan"}}}]}},
+                     {"lineRenderer":{"items":[{"lineItemRenderer":{"text":{"simpleText":"5K views"}}},
+                                               {"lineItemRenderer":{"text":{"simpleText":"\u2022"}}},
+                                               {"lineItemRenderer":{"text":{"simpleText":"2 days ago"}}}]}}]}},
+          "onSelectCommand":{"watchEndpoint":{"videoId":"ccccccccccc"}}}}]}}}},
+      {"shelfRenderer":{"title":{"runs":[{"text":"Music"}]},
+        "content":{"horizontalListRenderer":{"items":[
+        {"tileRenderer":{"metadata":{"tileMetadataRenderer":{"title":{"simpleText":"Two"}}},
+          "onSelectCommand":{"watchEndpoint":{"videoId":"ddddddddddd"}}}}]}}}}]},
+      "subscribeButtonRenderer":{"subscribed":true,"channelId":"UCabc"}}})";
+    yt::FeedPage page;
+    ASSERT_TRUE(yt::parse_feed_page(json, &page));
+    ASSERT_EQ(page.items.size(), 2u);
+    EXPECT_EQ(page.items[0].shelf, "Trending");
+    EXPECT_EQ(page.items[1].shelf, "Music");
+    EXPECT_EQ(page.items[0].detail, "5K views \xE2\x80\xA2 2 days ago");
+    EXPECT_FLOAT_EQ(page.items[0].watched, 0.4f);
+    EXPECT_FLOAT_EQ(page.items[1].watched, -1.0f);
+    EXPECT_TRUE(page.meta_known);
+    EXPECT_TRUE(page.subscribed);
+    EXPECT_EQ(page.channel_id, "UCabc");
 }

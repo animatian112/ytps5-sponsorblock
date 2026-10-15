@@ -20,7 +20,8 @@ const TourStep kTour[] = {
 
 } // namespace
 
-SubscriptionsScreen::SubscriptionsScreen(Context &context) : context_(context)
+SubscriptionsScreen::SubscriptionsScreen(Context &context, yt::FeedKind kind)
+    : context_(context), kind_(kind)
 {
     subs_.set_bounds({kContentX, 150.0f, kContentW, 860.0f});
     subs_.set_active(true);
@@ -31,7 +32,7 @@ SubscriptionsScreen::SubscriptionsScreen(Context &context) : context_(context)
     sign_in_.set_bounds({810.0f, 560.0f, 300.0f, 64.0f});
     sign_in_.set_active(true);
 
-    seen_revision_ = context_.service.revision(yt::FeedKind::subscriptions);
+    seen_revision_ = context_.service.revision(kind_);
     refresh_from_service();
 }
 
@@ -41,22 +42,27 @@ void SubscriptionsScreen::enter()
     subs_.set_active(true);
     sign_in_.set_active(true);
     refresh_from_service();
+    // History changes with every video watched: fetch it fresh on each visit.
+    if (kind_ == yt::FeedKind::history && context_.service.signed_in())
+        request();
 }
 
 void SubscriptionsScreen::refresh_from_service()
 {
-    const yt::FeedView view = context_.service.feed(yt::FeedKind::subscriptions);
+    const yt::FeedView view = context_.service.feed(kind_);
     subs_.set_items(view.items, context_);
     if (context_.service.signed_in())
     {
-        subs_.set_empty_text("No subscriptions found");
+        subs_.set_empty_text(kind_ == yt::FeedKind::history ? "No watch history yet"
+                                                            : "No subscriptions found");
         subs_.set_state(view.state, view.error);
     }
     else
     {
         // Not signed in: the cause is the missing account, and no text may
         // claim there are no subscriptions.
-        subs_.set_empty_text("Sign in to see your subscriptions");
+        subs_.set_empty_text(kind_ == yt::FeedKind::history ? "Sign in to see your history"
+                                                            : "Sign in to see your subscriptions");
         subs_.set_state(yt::Load::idle, {});
     }
     more_requested_ = false;
@@ -76,20 +82,20 @@ void SubscriptionsScreen::update(const InputFrame &input, float dt, ui::Feedback
         return;
     }
 
-    const std::uint64_t revision = context_.service.revision(yt::FeedKind::subscriptions);
+    const std::uint64_t revision = context_.service.revision(kind_);
     if (revision != seen_revision_)
     {
         seen_revision_ = revision;
         refresh_from_service();
     }
 
-    const yt::FeedView view = context_.service.feed(yt::FeedKind::subscriptions);
+    const yt::FeedView view = context_.service.feed(kind_);
 
     // First load once the account is known.
     if (!requested_ && view.state == yt::Load::idle)
     {
         requested_ = true;
-        context_.service.request_subscriptions();
+        request();
     }
 
     const std::size_t before = subs_.items().size();
@@ -107,7 +113,7 @@ void SubscriptionsScreen::update(const InputFrame &input, float dt, ui::Feedback
         subs_.at_last_row())
     {
         more_requested_ = true;
-        context_.service.request_more(yt::FeedKind::subscriptions);
+        context_.service.request_more(kind_);
     }
 
     subs_.update(dt, context_);
@@ -123,15 +129,17 @@ void SubscriptionsScreen::draw(const Context &context, Frame &frame) const
         panel.style.theme = youtube_theme();
         panel.set_bounds({610.0f, 300.0f, 700.0f, 420.0f});
         panel.draw(canvas);
-        ui::text(canvas.list, context.fonts.semibold, "Subscriptions", 960.0f, 400.0f, 40.0f,
+        ui::text(canvas.list, context.fonts.semibold, title(), 960.0f, 400.0f, 40.0f,
                  gfx::Color::rgb(0xf1f1f1), gfx::Align::center);
-        ui::text(canvas.list, context.fonts.regular, "Sign in to see your subscriptions.", 960.0f,
-                 470.0f, 24.0f, gfx::Color::rgb(0xaaaaaa), gfx::Align::center);
+        ui::text(canvas.list, context.fonts.regular,
+                 kind_ == yt::FeedKind::history ? "Sign in to see your watch history."
+                                                : "Sign in to see your subscriptions.",
+                 960.0f, 470.0f, 24.0f, gfx::Color::rgb(0xaaaaaa), gfx::Align::center);
         sign_in_.draw(canvas);
         return;
     }
 
-    ui::text(canvas.list, context.fonts.semibold, "Subscriptions", kContentX, kSectionTitleY,
+    ui::text(canvas.list, context.fonts.semibold, title(), kContentX, kSectionTitleY,
              kSectionTitleSize, gfx::Color::rgb(0xf1f1f1));
     subs_.draw(canvas, context);
 }
@@ -141,9 +149,22 @@ std::span<const TourStep> SubscriptionsScreen::tour() const
     return kTour;
 }
 
+void SubscriptionsScreen::request()
+{
+    if (kind_ == yt::FeedKind::history)
+        context_.service.request_history();
+    else
+        context_.service.request_subscriptions();
+}
+
 std::unique_ptr<Screen> make_subscriptions_screen(Context &context)
 {
     return std::make_unique<SubscriptionsScreen>(context);
+}
+
+std::unique_ptr<Screen> make_history_screen(Context &context)
+{
+    return std::make_unique<SubscriptionsScreen>(context, yt::FeedKind::history);
 }
 
 } // namespace hui::app

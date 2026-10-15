@@ -7,6 +7,7 @@
 
 #include "app/frame.hpp"
 #include "app/screen.hpp"
+#include "app/screens.hpp"
 #include "app/telemetry.hpp"
 #include "core/settings.hpp"
 #include "core/tween.hpp"
@@ -138,9 +139,9 @@ class App
     std::string active_video_;
     Context context_;
     std::vector<std::unique_ptr<Screen>> screens_;
-    std::vector<std::unique_ptr<Screen>>::size_type current_ = 0;
-    std::size_t last_tab_ = 0;     // the tab a non-tab screen returns to
-    std::size_t login_return_ = 0; // where a finished sign-in goes back to
+    std::vector<std::unique_ptr<Screen>>::size_type current_ = kHomeScreen;
+    std::size_t last_tab_ = kHomeScreen; // the tab a non-tab screen returns to
+    std::size_t login_return_ = 0;       // where a finished sign-in goes back to
     Nav nav_;
     ui::ToastStack toasts_;
     ui::NotificationStack updates_;

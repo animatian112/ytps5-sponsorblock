@@ -428,6 +428,7 @@ bool is_ad_key(const char *name)
 // ---- the feed walker ------------------------------------------------------------------------
 
 yyjson_val *find_object(yyjson_val *value, const char *key);
+std::string text_of(yyjson_val *value);
 
 // Case-insensitive "haystack contains needle".
 bool contains_text(const char *haystack, const char *needle)
@@ -614,6 +615,22 @@ double lockup_length(yyjson_val *thumbnail_view_model, bool *live)
     return 0.0;
 }
 
+// thumbnailOverlayResumePlaybackRenderer.percentDurationWatched as 0..1, or
+// -1 when the video was not started.
+float watched_share(yyjson_val *overlays)
+{
+    for (std::size_t i = 0, n = yyjson_arr_size(overlays); i < n; ++i)
+    {
+        yyjson_val *resume =
+            yyjson_obj_get(yyjson_arr_get(overlays, i), "thumbnailOverlayResumePlaybackRenderer");
+        yyjson_val *percent = yyjson_obj_get(resume, "percentDurationWatched");
+        if (yyjson_is_num(percent))
+            return static_cast<float>(std::min(100.0, std::max(0.0, yyjson_get_num(percent))) /
+                                      100.0);
+    }
+    return -1.0f;
+}
+
 // A lockupViewModel video: contentId (11-char video id), title, thumbnail,
 // duration badge and author line. Playlists, channels and Shorts are skipped.
 void collect_lockup(yyjson_val *obj, FeedPage *page)
@@ -653,6 +670,7 @@ void collect_lockup(yyjson_val *obj, FeedPage *page)
     item.thumbnail_url = lockup_thumbnail(lockup);
     item.live = contains_text(content_type.c_str(), "live");
     item.length_s = lockup_length(yyjson_obj_get(content_image, "thumbnailViewModel"), &item.live);
+    item.shelf = page->current_shelf;
     page->items.push_back(std::move(item));
 }
 
@@ -695,6 +713,24 @@ void collect_tile(yyjson_val *tile, FeedPage *page)
     yyjson_val *first_item = yyjson_obj_get(
         yyjson_arr_get_first(yyjson_obj_get(first_line, "items")), "lineItemRenderer");
     item.author = renderer_text(yyjson_obj_get(first_item, "text"));
+    // Everything after the channel: views and age ("1.2M views", "â¢",
+    // "3 days ago"), on the same line or the next.
+    for (std::size_t line = 0, line_count = yyjson_arr_size(lines); line < line_count; ++line)
+    {
+        yyjson_val *renderer = yyjson_obj_get(yyjson_arr_get(lines, line), "lineRenderer");
+        yyjson_val *parts = yyjson_obj_get(renderer, "items");
+        for (std::size_t i = line == 0 ? 1 : 0, n = yyjson_arr_size(parts); i < n; ++i)
+        {
+            const std::string text = renderer_text(yyjson_obj_get(
+                yyjson_obj_get(yyjson_arr_get(parts, i), "lineItemRenderer"), "text"));
+            if (text.empty() || text == "\xE2\x80\xA2" || text == " \xE2\x80\xA2 ")
+                continue;
+            if (!item.detail.empty())
+                item.detail += " \xE2\x80\xA2 ";
+            item.detail += text;
+        }
+    }
+    item.shelf = page->current_shelf;
     item.thumbnail_url = thumbnail_text(header);
     yyjson_val *overlays = yyjson_obj_get(header, "thumbnailOverlays");
     const std::size_t overlay_count = yyjson_arr_size(overlays);
@@ -711,6 +747,7 @@ void collect_tile(yyjson_val *tile, FeedPage *page)
         if (!length.empty() && item.length_s <= 0.0)
             item.length_s = parse_clock(length.c_str());
     }
+    item.watched = watched_share(overlays);
     page->items.push_back(std::move(item));
 }
 
@@ -743,6 +780,17 @@ void collect_item(yyjson_val *obj, FeedPage *page)
     item.thumbnail_url = thumbnail_text(obj);
     item.length_s = length_seconds(obj);
     item.live = is_live(obj);
+    {
+        std::string views = renderer_text(yyjson_obj_get(obj, "shortViewCountText"));
+        if (views.empty())
+            views = renderer_text(yyjson_obj_get(obj, "viewCountText"));
+        const std::string age = renderer_text(yyjson_obj_get(obj, "publishedTimeText"));
+        item.detail = views;
+        if (!age.empty())
+            item.detail += (item.detail.empty() ? "" : " \xE2\x80\xA2 ") + age;
+    }
+    item.shelf = page->current_shelf;
+    item.watched = watched_share(yyjson_obj_get(obj, "thumbnailOverlays"));
     page->items.push_back(std::move(item));
 }
 
@@ -832,6 +880,24 @@ void walk_feed(yyjson_val *value, FeedPage *page, std::string *continuation)
                 collect_channel_lockup(child, page);
             if (std::strcmp(name, "tileRenderer") == 0)
                 collect_tile(child, page);
+            if (std::strcmp(name, "shelfRenderer") == 0 ||
+                std::strcmp(name, "richShelfRenderer") == 0)
+            {
+                // A shelf: its items carry its title, so the screen can show
+                // the feed as rows the way SmartTube does.
+                std::string title = text_of(yyjson_obj_get(child, "title"));
+                if (title.empty())
+                {
+                    yyjson_val *header = find_object(child, "shelfHeaderRenderer");
+                    title = text_of(yyjson_obj_get(header, "title"));
+                }
+                const std::string outer = page->current_shelf;
+                if (!title.empty())
+                    page->current_shelf = title;
+                walk_feed(child, page, continuation);
+                page->current_shelf = outer;
+                continue;
+            }
             if (std::strcmp(name, "continuationCommand") == 0)
             {
                 yyjson_val *token = yyjson_obj_get(child, "token");
@@ -1488,6 +1554,22 @@ bool parse_feed_page(std::string_view json, FeedPage *page)
     std::string continuation;
     walk_feed(root, page, &continuation);
 
+    // The account's standing toward the video (a /next answer).
+    yyjson_val *subscribe = find_object(root, "subscribeButtonRenderer");
+    if (subscribe != nullptr)
+    {
+        page->meta_known = true;
+        page->channel_id = string_field(subscribe, "channelId");
+        yyjson_val *subscribed = yyjson_obj_get(subscribe, "subscribed");
+        page->subscribed = yyjson_is_bool(subscribed) && yyjson_get_bool(subscribed);
+    }
+    yyjson_val *like = find_object(root, "likeButtonRenderer");
+    if (like != nullptr)
+    {
+        page->meta_known = true;
+        page->like_status = string_field(like, "likeStatus");
+    }
+
     // An empty page carrying an error is an error; an empty page without one
     // is the end of the feed.
     if (page->items.empty() && has_error_field(root))
@@ -1730,6 +1812,7 @@ bool parse_video_info(std::string_view json, VideoInfo *info)
     info->video_id = string_field(details, "videoId");
     info->title = string_field(details, "title");
     info->author = string_field(details, "author");
+    info->channel_id = string_field(details, "channelId");
     info->length_s = number_field(details, "lengthSeconds", 0.0);
     yyjson_val *live = yyjson_obj_get(details, "isLiveContent");
     info->live = yyjson_is_bool(live) && yyjson_get_bool(live);
@@ -2282,6 +2365,47 @@ bool InnerTube::subscriptions(FeedPage *page, const std::string &continuation)
                                     : field_string("continuation", continuation);
     const bool parsed =
         impl_->feed_call("browse", extra, fresh ? "FEsubscriptions" : "continuation", page);
+    if (!parsed)
+        page->error = impl_->error;
+    return parsed;
+}
+
+bool InnerTube::action(const char *endpoint, const std::string &extra)
+{
+    // Account actions go to the TV client with the Bearer token: the WEB
+    // client refuses it.
+    Impl::Attempt attempt = impl_->post_once(endpoint, extra, kTvClient);
+    log::line("action: %s -> %ld %s", endpoint, attempt.status, attempt.error.c_str());
+    if (!attempt.transport_ok)
+        return false;
+    return attempt.http_ok;
+}
+
+bool InnerTube::rate(const std::string &video_id, const std::string &rating)
+{
+    // like/like, like/dislike, like/removelike with the video as the target.
+    const std::string endpoint = "like/" + rating;
+    return action(endpoint.c_str(), "\"target\":{" + field_string("videoId", video_id) + "}");
+}
+
+bool InnerTube::subscribe(const std::string &channel_id, bool on)
+{
+    std::string ids = "\"channelIds\":[";
+    append_json_string(ids, channel_id);
+    ids += ']';
+    return action(on ? "subscription/subscribe" : "subscription/unsubscribe", ids);
+}
+
+bool InnerTube::history(FeedPage *page, const std::string &continuation)
+{
+    if (page == nullptr)
+        return false;
+    *page = FeedPage{};
+    const bool fresh = continuation.empty();
+    const std::string extra =
+        fresh ? field_string("browseId", "FEhistory") : field_string("continuation", continuation);
+    const bool parsed =
+        impl_->feed_call("browse", extra, fresh ? "FEhistory" : "continuation", page);
     if (!parsed)
         page->error = impl_->error;
     return parsed;

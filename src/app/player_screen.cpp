@@ -445,6 +445,8 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         chrome_.set_badges(!caption_language_.empty() && !caption_url_.empty(), speed, quality,
                            yt::audio_tracks(view.info.formats).size() > 1);
     }
+    chrome_.set_account(context_.service.signed_in() && view.state == yt::Load::ready,
+                        view.like_status == "LIKE", view.like_status == "DISLIKE", view.subscribed);
     update_captions();
 
     bool back_used = false;
@@ -507,6 +509,25 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             break;
         case PlayerChrome::Command::pick:
             apply_pick();
+            break;
+        case PlayerChrome::Command::like:
+        case PlayerChrome::Command::dislike:
+        {
+            // A second press on the lit button takes the rating back.
+            const bool like = command == PlayerChrome::Command::like;
+            const bool lit = view.like_status == (like ? "LIKE" : "DISLIKE");
+            const std::string id = playing_id_.empty() ? requested_id_ : playing_id_;
+            context_.service.rate_video(id, lit ? "removelike" : (like ? "like" : "dislike"));
+            break;
+        }
+        case PlayerChrome::Command::subscribe:
+            if (!view.info.channel_id.empty())
+            {
+                context_.service.set_subscribed(view.info.channel_id, !view.subscribed);
+                context_.toasts.push(ui::StatusKind::info,
+                                     view.subscribed ? "Unsubscribed" : "Subscribed",
+                                     view.info.author, 2.0f);
+            }
             break;
         case PlayerChrome::Command::none:
             break;

@@ -118,6 +118,7 @@ struct VideoInfo
     // account's history (see yt/watch.hpp). Empty when the answer has none.
     std::string playback_url;
     std::string watchtime_url;
+    std::string channel_id; // videoDetails.channelId
     std::vector<CaptionTrack> captions;
     int preroll_ads = 0;
     // std::chrono::steady_clock milliseconds when the URLs start to play:
@@ -139,6 +140,13 @@ struct FeedItem
     std::string thumbnail_url;
     double length_s = 0.0;
     bool live = false;
+    // "1.2M views • 3 days ago", as the feed words it; empty when absent.
+    std::string detail;
+    // The shelf the feed placed it on ("Recommended", "Trending"); empty for
+    // a flat feed. Consecutive items with the same shelf form one row.
+    std::string shelf;
+    // 0..1 of it already watched (YouTube's red bar), -1 for none.
+    float watched = -1.0f;
 };
 
 // A channel as search answers with it (avatar, name, subscriber line).
@@ -181,6 +189,15 @@ struct FeedPage
     std::vector<ChannelItem> channels;
     std::string continuation; // empty = no further page
     std::string error;
+    // While parsing: the shelf being walked, stamped on its items.
+    std::string current_shelf;
+    // A watch page (/next) also says how the account stands to the video:
+    // its channel, whether it is subscribed, and "LIKE" / "DISLIKE" /
+    // "INDIFFERENT". meta_known is false when the answer named none of it.
+    bool meta_known = false;
+    std::string channel_id;
+    bool subscribed = false;
+    std::string like_status;
     bool ok() const
     {
         return error.empty();

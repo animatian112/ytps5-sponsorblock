@@ -21,15 +21,16 @@ namespace hui::app
 class SubscriptionsScreen final : public Screen
 {
   public:
-    explicit SubscriptionsScreen(Context &context);
+    // An account feed shown as a grid: Subscriptions, or History.
+    explicit SubscriptionsScreen(Context &context, yt::FeedKind kind = yt::FeedKind::subscriptions);
 
     const char *id() const override
     {
-        return "subscriptions";
+        return kind_ == yt::FeedKind::history ? "history" : "subscriptions";
     }
     const char *title() const override
     {
-        return "Subscriptions";
+        return kind_ == yt::FeedKind::history ? "History" : "Subscriptions";
     }
     const char *hint() const override
     {
@@ -49,7 +50,10 @@ class SubscriptionsScreen final : public Screen
   private:
     void refresh_from_service();
 
+    void request();
+
     Context &context_;
+    yt::FeedKind kind_;
     FeedView subs_;
     ui::PushButton sign_in_;
     std::uint64_t seen_revision_ = 0;

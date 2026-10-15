@@ -333,10 +333,12 @@ void draw_card(Canvas &canvas, const ComponentStyle &style, const CardLook &look
             theme.corner == Corner::round && theme.radius >= 2.0f ? track.h * 0.5f : 0.0f;
         // The track takes the colour that reads against the fill, so the bar
         // shows on any picture.
-        list.rounded_rect(track, round, Painter::on(theme.accent).with_alpha(0.5f));
+        // The bar is the theme's primary colour (YouTube's red "watched" bar),
+        // so a theme whose accent paints the badges can still keep it red.
+        list.rounded_rect(track, round, gfx::Color::rgb(0xffffff, 0.35f));
         const float filled = track.w * tween::clamp01(item.progress);
         if (filled > 1.0f)
-            list.rounded_rect({track.x, track.y, filled, track.h}, round, theme.accent);
+            list.rounded_rect({track.x, track.y, filled, track.h}, round, theme.primary);
     }
     if (!item.badge.empty())
     {

@@ -6,6 +6,7 @@
 
 #include "app/context.hpp"
 #include "app/feed_view.hpp"
+#include "app/rows_view.hpp"
 #include "app/screen.hpp"
 
 #include <memory>
@@ -34,7 +35,7 @@ class HomeScreen final : public Screen
     // the rail.
     bool wants_rail_focus() const override
     {
-        return feed_.wants_rail_focus();
+        return use_rows_ ? rows_.wants_rail_focus() : feed_.wants_rail_focus();
     }
     void enter() override;
     void update(const InputFrame &input, float dt, ui::Feedback &feedback) override;
@@ -46,6 +47,9 @@ class HomeScreen final : public Screen
 
     Context &context_;
     FeedView feed_;
+    // SmartTube's Home: one row per shelf when the feed has shelves.
+    RowsView rows_;
+    bool use_rows_ = false;
     std::uint64_t seen_revision_ = 0;
     bool more_requested_ = false;
     float clock_ = 0.0f;
