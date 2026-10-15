@@ -14,7 +14,6 @@ extern "C"
 }
 
 #include <pthread.h>
-#include <strings.h>
 
 #include <algorithm>
 #include <chrono>
@@ -144,13 +143,39 @@ std::size_t on_write(char *data, std::size_t size, std::size_t items, void *opaq
     return take == length ? length : 0; // a full ring ends this request early
 }
 
+// A short sleep with the lock released. condition_variable::wait_for is not
+// used: on the console its pthread_cond_timedwait answers with a code libc++
+// takes for a failure, and without exceptions that aborts the app ("privileged
+// instruction fault"). Plain wait() and sleeps are safe.
+void poll_pause(std::unique_lock<std::mutex> &lock)
+{
+    lock.unlock();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    lock.lock();
+}
+
+// Header names compare without strncasecmp, one libc import fewer for a
+// sandboxed title to resolve.
+bool starts_with_nocase(const char *text, const char *prefix)
+{
+    for (; *prefix != '\0'; ++text, ++prefix)
+    {
+        char c = *text;
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+        if (c != *prefix)
+            return false;
+    }
+    return true;
+}
+
 // "Content-Range: bytes 0-524287/12345678" names the file length.
 std::size_t on_header(char *data, std::size_t size, std::size_t items, void *opaque)
 {
     auto &transfer = *static_cast<Transfer *>(opaque);
     const std::size_t length = size * items;
     static constexpr char kName[] = "content-range:";
-    if (length > sizeof(kName) && strncasecmp(data, kName, sizeof(kName) - 1) == 0)
+    if (length > sizeof(kName) && starts_with_nocase(data, kName))
     {
         const std::string line(data, length);
         const std::size_t slash = line.find('/');
@@ -393,7 +418,7 @@ int RangeStream::start(std::string *error)
                 *error = "interrupted";
             return AVERROR_EXIT;
         }
-        state_->changed.wait_for(lock, std::chrono::milliseconds(20));
+        poll_pause(lock);
     }
 }
 
@@ -422,7 +447,7 @@ int RangeStream::read(std::uint8_t *buffer, int size)
             return AVERROR_EOF;
         if (interrupt_ != nullptr && interrupt_(opaque_) != 0)
             return AVERROR_EXIT;
-        state.changed.wait_for(lock, std::chrono::milliseconds(20));
+        poll_pause(lock);
     }
 }
 
