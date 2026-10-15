@@ -28,8 +28,14 @@ void sceLibcMspaceFree(void *mspace, void *address);
 int sceLibcMspacePosixMemalign(void *mspace, void **address, size_t alignment, size_t size);
 size_t sceLibcMspaceMallocUsableSize(const void *address);
 
-/* Fixed, process-lifetime heap: do not unmap underneath late C++ destructors. */
-#define HUI_HEAP_SIZE (128u * 1024u * 1024u)
+/* Fixed, process-lifetime heap: do not unmap underneath late C++ destructors.
+ * 1080p playback (decoded frames, two demuxers, their download buffers) next
+ * to the UI's textures outgrew 128 MiB, and a failed operator new aborts the
+ * app (SIGILL). The largest size the console maps is taken, 128 MiB at least. */
+static const size_t hui_heap_sizes[] = {384u * 1024u * 1024u, 256u * 1024u * 1024u,
+                                        128u * 1024u * 1024u};
+static size_t hui_heap_size;
+#define HUI_HEAP_SIZE hui_heap_size
 
 static atomic_int hui_heap_state;
 static void *hui_heap_base;
@@ -81,7 +87,16 @@ static int hui_heap_ready(void)
                                                  memory_order_acq_rel, memory_order_acquire))
         return expected == 2;
 
-    void *base = mmap(NULL, HUI_HEAP_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    void *base = MAP_FAILED;
+    for (size_t i = 0; i < sizeof(hui_heap_sizes) / sizeof(hui_heap_sizes[0]); ++i)
+    {
+        base = mmap(NULL, hui_heap_sizes[i], PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (base != MAP_FAILED)
+        {
+            hui_heap_size = hui_heap_sizes[i];
+            break;
+        }
+    }
     if (base == MAP_FAILED)
     {
         atomic_store_explicit(&hui_heap_state, -1, memory_order_release);
@@ -185,4 +200,10 @@ void hui_heap_stats(size_t *live_bytes, size_t *peak_bytes, size_t *blocks, size
         *blocks = atomic_load_explicit(&hui_heap_blocks, memory_order_relaxed);
     if (failures)
         *failures = atomic_load_explicit(&hui_heap_failures, memory_order_relaxed);
+}
+
+/* The mapped size of the owned heap; 0 before the first allocation or when it fell back. */
+size_t hui_heap_capacity(void)
+{
+    return atomic_load_explicit(&hui_heap_state, memory_order_acquire) == 2 ? hui_heap_size : 0;
 }

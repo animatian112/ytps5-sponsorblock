@@ -50,6 +50,12 @@ extern "C"
 #include <new>
 #include <string>
 
+extern "C"
+{
+    void hui_heap_stats(size_t *live_bytes, size_t *peak_bytes, size_t *blocks, size_t *failures);
+    size_t hui_heap_capacity(void);
+}
+
 namespace yt
 {
 
@@ -549,6 +555,14 @@ bool FfmpegPlayer::open(const std::string &video_url, const std::string &audio_u
         return false;
     };
 
+    {
+        size_t live = 0;
+        size_t peak = 0;
+        size_t failures = 0;
+        hui_heap_stats(&live, &peak, nullptr, &failures);
+        log::line("heap: %zu MiB used, peak %zu, of %zu MiB, %zu failed", live >> 20, peak >> 20,
+                  hui_heap_capacity() >> 20, failures);
+    }
     if (!open_demuxer(video_, video_url, true))
         return fail(error_);
     quality_ = make_quality_label();

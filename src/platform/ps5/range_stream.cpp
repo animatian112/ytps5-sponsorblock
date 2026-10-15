@@ -31,9 +31,9 @@ namespace hui::ps5
 namespace
 {
 
-constexpr std::size_t kRingBytes = 8u << 20;    // per stream
-constexpr std::int64_t kFirstChunk = 512 << 10; // a quick first answer
-constexpr std::int64_t kChunk = 4 << 20;        // yt-dlp's cap is 10 MiB
+constexpr std::size_t kRingBytes = 3u << 20; // per stream: the app heap is shared with the frames
+constexpr std::int64_t kFirstChunk = 256 << 10; // a quick first answer
+constexpr std::int64_t kChunk = 1 << 20;        // well under yt-dlp's 10 MiB cap
 constexpr int kForbiddenRetries = 3;            // a 403 can be the ad wait ending late
 constexpr int kTransientRetries = 6;
 constexpr std::size_t kWorkerStack = 1u << 20; // console threads need an explicit stack
