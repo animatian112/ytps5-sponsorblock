@@ -22,8 +22,7 @@ const TourStep kTour[] = {
 
 SubscriptionsScreen::SubscriptionsScreen(Context &context) : context_(context)
 {
-    subs_.grid().style.theme = youtube_theme();
-    subs_.set_bounds({360.0f, 150.0f, 1420.0f, 820.0f});
+    subs_.set_bounds({kContentX, 150.0f, kContentW, 860.0f});
     subs_.set_active(true);
 
     sign_in_.style.theme = youtube_theme();
@@ -132,8 +131,8 @@ void SubscriptionsScreen::draw(const Context &context, Frame &frame) const
         return;
     }
 
-    ui::text(canvas.list, context.fonts.semibold, "Subscriptions", 150.0f, 120.0f, 40.0f,
-             gfx::Color::rgb(0xf1f1f1));
+    ui::text(canvas.list, context.fonts.semibold, "Subscriptions", kContentX, kSectionTitleY,
+             kSectionTitleSize, gfx::Color::rgb(0xf1f1f1));
     subs_.draw(canvas, context);
 }
 

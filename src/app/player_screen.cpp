@@ -25,10 +25,17 @@ namespace
 {
 
 const TourStep kTour[] = {
-    {2.2f, 0, Direction::none, "video", 0, 0, 0, 0, 0},
-    {0.8f, 0, Direction::none, "controls", 0, 0, 0, 0, 0},
+    // Playing: the controls hide on their own, the picture is clear.
+    {5.0f, 0, Direction::none, "video", 0, 0, 0, 0, 0},
+    // Any button brings them back with the focus on play/pause.
+    {0.9f, 0, Direction::up, nullptr, 0, 0, 0, 0, 0},
+    {0.9f, 0, Direction::none, "controls", 0, 0, 0, 0, 0},
+    {0.9f, 0, Direction::up, nullptr, 0, 0, 0, 0, 0},
+    {0.9f, 0, Direction::none, "seek", 0, 0, 0, 0, 0},
     {0.9f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
-    {0.9f, 0, Direction::right, "related", 0, 0, 0, 0, 0},
+    {0.9f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
+    {0.9f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
+    {1.0f, 0, Direction::none, "related", 0, 0, 0, 0, 0},
 };
 
 constexpr const char *kNoStream = "No stream for the enabled codecs";
@@ -80,20 +87,17 @@ gfx::Color segment_color(const std::string &category)
 
 PlayerScreen::PlayerScreen(Context &context) : context_(context)
 {
-    controls_.style.theme = youtube_theme();
-    controls_.style.auto_hide = 3.0f;
-    controls_.style.show_volume = false;
-    controls_.style.show_shuffle = false;
-    controls_.style.show_repeat = false;
-    controls_.style.skip_seconds = 10.0f;
-    controls_.style.exits.down = true;
-    controls_.set_bounds({480.0f, 840.0f, 960.0f, 170.0f});
-
-    related_.style.theme = youtube_theme();
+    related_.style.theme = card_theme();
     related_.style.card.art_aspect = 16.0f / 9.0f;
     related_.style.card.text = ui::CardText::below;
     related_.style.card.title_size = 21.0f;
-    related_.set_bounds({150.0f, 560.0f, 1620.0f, 250.0f});
+    related_.style.card.subtitle_size = 18.0f;
+    related_.style.card.badge_corner = ui::CardCorner::bottom_right;
+    related_.style.card.radius = 8.0f;
+    related_.style.item_width = 330.0f;
+    related_.style.counter = false;
+    related_.title = "Suggestions";
+    related_.set_bounds({96.0f, 1080.0f, 1728.0f, 290.0f});
     related_.set_active(false);
 }
 
@@ -120,9 +124,9 @@ void PlayerScreen::enter()
     login_retry_sent_ = false;
     ended_ = false;
     in_related_ = false;
-    controls_.set_active(true);
     related_.set_active(false);
-    controls_.wake();
+    chrome_.set_lifted(false);
+    chrome_.show();
     if (!context_.active_video.empty() && context_.active_video != playing_id_)
         request_video(context_.active_video);
 }
@@ -168,7 +172,7 @@ void PlayerScreen::reset_sponsorblock()
     sponsor_video_.clear();
     sponsor_here_.clear();
     sponsor_revision_ = sponsor_.revision();
-    controls_.set_ranges({});
+    chrome_.set_ranges({});
 }
 
 void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &feedback)
@@ -209,7 +213,7 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
             range.color = segment_color(segment.category);
             ranges.push_back(range);
         }
-        controls_.set_ranges(std::move(ranges));
+        chrome_.set_ranges(std::move(ranges));
         yt::log::line("sponsorblock: %zu segments on the bar (%s)", sponsor_.segments().size(),
                       sponsor_.status().c_str());
     }
@@ -235,16 +239,21 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
     }
 
     if (input.is_pressed(Action::north) && !sponsor_here_.empty())
+        skip_segment_now(feedback);
+}
+
+void PlayerScreen::skip_segment_now(ui::Feedback &feedback)
+{
+    if (player_ == nullptr)
+        return;
+    const yt::sponsorblock::Decision manual =
+        sponsor_.skip_now(player_->clock_s(), player_->duration_s());
+    if (manual.kind == yt::sponsorblock::Kind::skip)
     {
-        const sb::Decision manual = sponsor_.skip_now(position, duration);
-        if (manual.kind == sb::Kind::skip)
-        {
-            player_->seek(manual.target_s);
-            context_.toasts.push(ui::StatusKind::info, "Skipped " + manual.label, "SponsorBlock",
-                                 2.5f);
-            feedback.rumble(0.2f, 0.02f);
-            sponsor_here_.clear();
-        }
+        player_->seek(manual.target_s);
+        context_.toasts.push(ui::StatusKind::info, "Skipped " + manual.label, "SponsorBlock", 2.5f);
+        feedback.rumble(0.2f, 0.02f);
+        sponsor_here_.clear();
     }
 }
 
@@ -358,68 +367,76 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     // Transport.
     if (player_ != nullptr)
     {
-        controls_.set_duration(static_cast<float>(player_->duration_s()));
-        controls_.set_position(static_cast<float>(player_->clock_s()));
-        controls_.set_buffered(static_cast<float>(player_->clock_s() + player_->buffered_s()));
-        controls_.set_playing(!player_->paused());
+        chrome_.set_times(player_->clock_s(), player_->duration_s(),
+                          player_->clock_s() + player_->buffered_s());
+        chrome_.set_playing(!player_->paused() && !ended_);
     }
+    chrome_.set_has_next(!related_items_.empty());
+    chrome_.set_info(view.info.title.empty() ? playing_id_ : view.info.title, view.info.author,
+                     player_ != nullptr ? player_->quality_label() : std::string());
 
     update_sponsorblock(input, feedback);
+    chrome_.set_segment(sponsor_here_);
 
-    const bool controls_active = !in_related_;
-    controls_.set_active(controls_active);
-    related_.set_active(in_related_);
-
-    if (controls_active)
+    bool back_used = false;
+    if (!in_related_)
     {
-        const ui::Event event = controls_.handle(input, feedback);
-        if (event == ui::Event::changed || event == ui::Event::activated)
+        const PlayerChrome::Command command = chrome_.handle(input, feedback, &back_used);
+        switch (command)
         {
+        case PlayerChrome::Command::toggle_pause:
             if (player_ != nullptr)
             {
-                switch (controls_.command())
-                {
-                case ui::MediaCommand::play:
-                    player_->set_paused(false);
-                    break;
-                case ui::MediaCommand::pause:
-                    player_->set_paused(true);
-                    break;
-                case ui::MediaCommand::rewind:
-                    player_->seek(player_->clock_s() - 10.0);
-                    break;
-                case ui::MediaCommand::forward:
-                    player_->seek(player_->clock_s() + 10.0);
-                    break;
-                case ui::MediaCommand::seek:
-                {
-                    const double target = controls_.seek_position();
-                    if (target >= 0.0)
-                    {
-                        player_->seek(target);
-                        feedback.rumble(0.2f, 0.02f);
-                    }
-                    break;
-                }
-                default:
-                    break;
-                }
+                if (ended_)
+                    player_->seek(0.0);
+                player_->set_paused(ended_ ? false : !player_->paused());
             }
-        }
-        if (controls_.exit() == Direction::down)
-        {
-            in_related_ = !related_items_.empty();
-            feedback.play(audio::Cue::tab);
+            break;
+        case PlayerChrome::Command::seek:
+            if (player_ != nullptr)
+                player_->seek(chrome_.seek_target());
+            break;
+        case PlayerChrome::Command::restart:
+            if (player_ != nullptr)
+                player_->seek(0.0);
+            break;
+        case PlayerChrome::Command::next:
+            if (!related_items_.empty())
+            {
+                request_video(related_items_.front().video_id);
+                chrome_.show();
+            }
+            break;
+        case PlayerChrome::Command::skip_segment:
+            skip_segment_now(feedback);
+            break;
+        case PlayerChrome::Command::suggestions:
+            if (!related_items_.empty())
+            {
+                in_related_ = true;
+                chrome_.set_lifted(true);
+                feedback.play(audio::Cue::tab);
+            }
+            else
+                feedback.play(audio::Cue::error);
+            break;
+        case PlayerChrome::Command::none:
+            break;
         }
         if (input.is_pressed(Action::page_prev) && player_ != nullptr)
+        {
             player_->seek(player_->clock_s() - 10.0);
+            chrome_.show();
+        }
         if (input.is_pressed(Action::page_next) && player_ != nullptr)
+        {
             player_->seek(player_->clock_s() + 10.0);
-        if (input.is_pressed(Action::confirm) && player_ != nullptr)
-            player_->set_paused(!player_->paused());
+            chrome_.show();
+        }
     }
     else
     {
+        chrome_.show(); // the row keeps the controls up
         const ui::Event event = related_.handle(input, feedback);
         if (event == ui::Event::activated)
         {
@@ -428,32 +445,28 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             {
                 const std::string next = related_items_[index].video_id;
                 in_related_ = false;
-                related_.set_active(false);
-                controls_.set_active(true);
-                controls_.wake();
+                chrome_.set_lifted(false);
                 request_video(next);
             }
         }
-        else if (event == ui::Event::cancelled)
+        else if (event == ui::Event::cancelled || input.nav == Direction::up)
         {
             in_related_ = false;
+            chrome_.set_lifted(false);
+            back_used = event == ui::Event::cancelled;
+            if (input.nav == Direction::up)
+                feedback.play(audio::Cue::focus);
         }
     }
+    related_.set_active(in_related_);
 
-    if (input.is_pressed(Action::back))
-    {
-        if (in_related_)
-            in_related_ = false;
-        else
-            context_.nav.leave_player = true;
-    }
-    if (ended_ && !in_related_)
-    {
-        // Stay on the last frame; Circle leaves.
-        controls_.set_playing(false);
-    }
+    if (input.is_pressed(Action::back) && !back_used)
+        context_.nav.leave_player = true;
 
-    controls_.update(dt);
+    // The row sits under the block and slides up with it.
+    const float lift = chrome_.lift();
+    related_.set_bounds({96.0f, 1080.0f - 330.0f * lift + 10.0f, 1728.0f, 290.0f});
+    chrome_.update(dt);
     related_.update(dt);
 }
 
@@ -554,61 +567,35 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
         return;
     }
 
-    // Everything over the picture - scrim, title, "Up next" - follows the
-    // controls: it fades out with them and comes back on the next button
-    // press, so the video is unobstructed while it plays.
-    const float chrome = in_related_ ? 1.0f : controls_.visibility();
-    if (chrome > 0.01f)
+    // The controls, and the suggestions row under them when it is open.
+    const float lift = chrome_.lift();
+    chrome_.draw(canvas, context.fonts, 330.0f * lift);
+    if (lift > 0.01f && !related_items_.empty())
     {
-        // A scrim over the lower half: white text over bright video is unreadable.
-        canvas.list.gradient_rect({0.0f, 470.0f, gfx::kVirtualWidth, 610.0f}, 0.0f,
-                                  gfx::Color::rgb(0x000000, 0.0f),
-                                  gfx::Color::rgb(0x000000, 0.72f * chrome));
-
-        // Title and the codec/quality label, just above the controls.
-        const std::string full = view.info.title.empty() ? playing_id_ : view.info.title;
-        const std::string title = context.fonts.semibold.font != nullptr
-                                      ? context.fonts.semibold.font->fit(full, 28.0f, 700.0f)
-                                      : full;
-        ui::text(canvas.list, context.fonts.semibold, title, 480.0f, 826.0f, 28.0f,
-                 gfx::Color::rgb(0xf1f1f1, chrome));
-        if (player_ != nullptr)
-        {
-            const std::string label = player_->quality_label();
-            if (!label.empty())
-            {
-                ui::text(canvas.list, context.fonts.mono, label, 1440.0f, 826.0f, 24.0f,
-                         gfx::Color::rgb(0xd0d0d0, chrome), gfx::Align::right);
-            }
-        }
+        canvas.list.push_opacity(std::min(1.0f, lift * 1.5f));
+        related_.draw(canvas);
+        canvas.list.pop_opacity();
     }
+
     if (player_ != nullptr && ended_)
         ui::text(canvas.list, context.fonts.semibold, "Ended", gfx::kVirtualWidth * 0.5f, 500.0f,
                  30.0f, gfx::Color::rgb(0xf5a524), gfx::Align::center);
 
-    if (!sponsor_here_.empty())
+    if (!sponsor_here_.empty() && chrome_.visibility() < 0.5f)
     {
-        // The skip offer: bottom right, above the controls, visible even while
-        // they are hidden.
+        // The skip offer while the controls are away (they carry their own
+        // "Skip" button): bottom right, Triangle skips.
         const std::string text = "Triangle  Skip " + sponsor_here_;
         constexpr float kSize = 26.0f;
         const float width = (context.fonts.semibold.font != nullptr
                                  ? context.fonts.semibold.font->measure(text, kSize)
                                  : 14.0f * static_cast<float>(text.size())) +
                             48.0f;
-        const gfx::Rect pill{1680.0f - width, 740.0f, width, 58.0f};
+        const gfx::Rect pill{1824.0f - width, 940.0f, width, 58.0f};
         canvas.list.rounded_rect(pill, 29.0f, gfx::Color::rgb(0x000000, 0.75f));
         ui::text(canvas.list, context.fonts.semibold, text, pill.x + 24.0f, pill.y + 40.0f, kSize,
                  gfx::Color::rgb(0xf1f1f1));
     }
-
-    if (!related_items_.empty() && chrome > 0.5f)
-    {
-        ui::text(canvas.list, context.fonts.semibold, "Up next", 150.0f, 548.0f, 26.0f,
-                 in_related_ ? gfx::Color::rgb(0xf1f1f1) : gfx::Color::rgb(0x9a9a9a, chrome));
-        related_.draw(canvas);
-    }
-    controls_.draw(canvas);
 }
 
 std::span<const TourStep> PlayerScreen::tour() const

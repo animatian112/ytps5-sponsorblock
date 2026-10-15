@@ -4,6 +4,7 @@
 
 #include "app/feed_view.hpp"
 
+#include "app/theme.hpp"
 #include "app/thumbs.hpp"
 #include "ui/motion.hpp"
 
@@ -37,13 +38,19 @@ std::string format_duration(double seconds)
 
 FeedView::FeedView()
 {
-    grid_.style.columns = 4;
-    grid_.style.gap_x = 26.0f;
-    grid_.style.gap_y = 34.0f;
+    // SmartTube's grid: five thumbnails a row, the duration bottom right.
+    grid_.style.theme = card_theme();
+    grid_.style.columns = 5;
+    grid_.style.gap_x = 24.0f;
+    grid_.style.gap_y = 30.0f;
     grid_.style.card.art_aspect = 16.0f / 9.0f;
     grid_.style.card.text = ui::CardText::below;
-    grid_.style.card.title_size = 23.0f;
-    grid_.style.card.subtitle_size = 19.0f;
+    grid_.style.card.title_size = 21.0f;
+    grid_.style.card.subtitle_size = 18.0f;
+    grid_.style.card.text_gap = 10.0f;
+    grid_.style.card.badge_corner = ui::CardCorner::bottom_right;
+    grid_.style.card.badge_size = 15.0f;
+    grid_.style.card.focus_scale = 1.08f;
     grid_.style.card.ring = true;
     grid_.style.pitch_by_row = true;
     grid_.style.exits.up = true;

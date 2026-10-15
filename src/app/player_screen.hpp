@@ -5,6 +5,7 @@
 #pragma once
 
 #include "app/context.hpp"
+#include "app/player_chrome.hpp"
 #include "app/screen.hpp"
 #include "yt/player.hpp"
 #include "yt/service.hpp"
@@ -36,7 +37,7 @@ class PlayerScreen final : public Screen
     }
     const char *hint() const override
     {
-        return "L1/R1 skip 10s   Triangle skip segment   Circle back   Options quit";
+        return "";
     }
     void enter() override;
     void leave() override;
@@ -51,12 +52,13 @@ class PlayerScreen final : public Screen
     void draw_hud(ui::Canvas &canvas, const Context &context) const;
     void update_sponsorblock(const InputFrame &input, ui::Feedback &feedback);
     void reset_sponsorblock();
+    void skip_segment_now(ui::Feedback &feedback);
 
     Context &context_;
     std::unique_ptr<yt::Player> player_;
     std::string requested_id_;
     std::string playing_id_;
-    ui::MediaControls controls_;
+    PlayerChrome chrome_;
     ui::Carousel related_;
     std::vector<yt::FeedItem> related_items_;
     std::uint64_t related_revision_ = 0;

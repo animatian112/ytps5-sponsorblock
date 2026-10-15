@@ -104,7 +104,7 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     rail_.style.collapsed_width = 104.0f;
     rail_.style.expanded_width = 320.0f;
     rail_.style.row_height = 72.0f;
-    rail_.style.panel = false;
+    rail_.style.panel = false; // set each frame: only the open rail has its panel
     rail_.style.current_plate = true;
     rail_.style.icon_size = 34.0f;
     rail_.set_entries({{"Home", {}, {}, false, false, false, 0},
@@ -536,6 +536,8 @@ void App::update(const InputFrame &input, float dt)
     rail_.set_expanded(rail_focused_ || rail_pinned_ || rail_keep_expanded);
     rail_.set_current(static_cast<int>(current_ < kTabCount ? current_ : previous_tab()), false);
     rail_.update(dt);
+    // Collapsed, the rail is bare icons; its panel comes with the labels.
+    rail_.style.panel = rail_.expansion() > 0.05f;
 
     // Apply what the screen asked for.
     const Nav &ask = context_.nav;
@@ -634,7 +636,7 @@ void App::draw_chrome(Frame &frame)
             std::string line = version_;
             if (!update_latest_.empty())
                 line += "   latest " + update_latest_;
-            ui::text(overlay.list, fonts_.mono, line, 360.0f, 1046.0f, 20.0f,
+            ui::text(overlay.list, fonts_.mono, line, kContentX, 1046.0f, 20.0f,
                      gfx::Color::rgb(0x777777));
         }
         ui::text(overlay.list, fonts_.regular, screens_[current_]->hint(), 1820.0f, 1046.0f, 20.0f,

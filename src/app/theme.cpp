@@ -47,4 +47,18 @@ const ui::Theme &youtube_theme()
     return value;
 }
 
+const ui::Theme &card_theme()
+{
+    static const ui::Theme value = []
+    {
+        ui::Theme theme = youtube_theme();
+        theme.id = "youtube-cards";
+        theme.accent = gfx::Color::rgb(0x000000, 0.82f);
+        theme.radius_card = 8.0f;
+        theme.radius = 8.0f;
+        return theme;
+    }();
+    return value;
+}
+
 } // namespace hui::app

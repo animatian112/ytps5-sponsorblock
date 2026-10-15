@@ -53,8 +53,6 @@ const gfx::Color kMuted = gfx::Color::rgb(0xaaaaaa);
 const gfx::Color kWell = gfx::Color::rgb(0x272727);
 
 // The content column, and the room the channel row and the results grid share.
-constexpr float kContentX = 360.0f;
-constexpr float kContentW = 1420.0f;
 constexpr float kChannelRowY = 230.0f;
 constexpr float kChannelRowH = 200.0f;
 constexpr float kResultsY = 300.0f;
@@ -79,7 +77,7 @@ SearchScreen::SearchScreen(Context &context) : context_(context)
     field_.style.theme = youtube_theme();
     field_.set_placeholder("Search videos");
     // provider stays empty: no suggestions from the network.
-    field_.set_bounds({360.0f, 150.0f, 1420.0f, 64.0f});
+    field_.set_bounds({kContentX, 140.0f, kContentW, 64.0f});
     field_.set_active(true);
 
     keys_.style.theme = youtube_theme();
@@ -90,7 +88,7 @@ SearchScreen::SearchScreen(Context &context) : context_(context)
     keys_.on_backspace = [this] { field_.backspace(); };
     keys_.on_done = [this] { run_search(); };
 
-    results_.grid().style.theme = youtube_theme();
+    results_.grid().style.theme = card_theme();
     results_.set_bounds({kContentX, kResultsY, kContentW, kResultsH});
     results_.set_empty_text("No results");
     results_.set_active(false);
@@ -538,7 +536,8 @@ void SearchScreen::draw_channel(ui::Canvas &canvas, const Context &context) cons
 void SearchScreen::draw(const Context &context, Frame &frame) const
 {
     ui::Canvas canvas{frame.scene, context.fonts, frame.glass_texture, clock_};
-    ui::text(canvas.list, context.fonts.semibold, "Search", 150.0f, 120.0f, 40.0f, kInk);
+    ui::text(canvas.list, context.fonts.semibold, "Search", kContentX, kSectionTitleY,
+             kSectionTitleSize, kInk);
     field_.draw(canvas);
     if (in_channel_)
     {

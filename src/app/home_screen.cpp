@@ -43,9 +43,7 @@ const char *kSignedInEmpty = "No feed available - use Search";
 
 HomeScreen::HomeScreen(Context &context) : context_(context)
 {
-    feed_.grid().style.theme = youtube_theme();
-    feed_.grid().style.columns = 4;
-    feed_.grid().set_bounds({360.0f, 180.0f, 1420.0f, 800.0f});
+    feed_.grid().set_bounds({kContentX, 150.0f, kContentW, 860.0f});
     feed_.set_active(true);
     seen_revision_ = context_.service.revision(yt::FeedKind::home);
     refresh_from_service();
@@ -111,15 +109,15 @@ void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedbac
 void HomeScreen::draw(const Context &context, Frame &frame) const
 {
     ui::Canvas canvas{frame.scene, context.fonts, frame.glass_texture, clock_};
-    ui::text(canvas.list, context.fonts.semibold, "Home", 360.0f, 130.0f, 40.0f,
-             gfx::Color::rgb(0xf1f1f1));
+    ui::text(canvas.list, context.fonts.semibold, "Home", kContentX, kSectionTitleY,
+             kSectionTitleSize, gfx::Color::rgb(0xf1f1f1));
     const yt::FeedView view = context.service.feed(yt::FeedKind::home);
     if (view.state == yt::Load::loading && view.items.empty())
     {
         ui::Skeleton bones;
         bones.style.theme = youtube_theme();
         bones.style.kind = ui::SkeletonKind::card;
-        bones.set_bounds({360.0f, 200.0f, 1420.0f, 700.0f});
+        bones.set_bounds({kContentX, 170.0f, kContentW, 700.0f});
         ui::Canvas skeleton{frame.scene, context.fonts, frame.glass_texture, clock_};
         bones.draw(skeleton);
     }
@@ -137,7 +135,7 @@ void HomeScreen::draw(const Context &context, Frame &frame) const
             std::string shown = lines[i];
             if (shown.size() > 110)
                 shown.resize(110);
-            ui::text(canvas.list, context.fonts.mono, shown, 360.0f, y, 18.0f,
+            ui::text(canvas.list, context.fonts.mono, shown, kContentX, y, 18.0f,
                      gfx::Color::rgb(0x8a8a8a));
             y += 24.0f;
         }
