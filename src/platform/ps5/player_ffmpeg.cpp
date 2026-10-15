@@ -452,6 +452,12 @@ class FfmpegPlayer final : public Player
     std::uint64_t audio_frames_written_ = 0;
     std::uint64_t audio_frames_decoded_ = 0;
     double audio_base_s_ = 0.0;
+    // After seek(): the demuxers restart at the keyframe before the target, so
+    // audio and video decoded before it are discarded until each reaches it
+    // (negative: no seek pending for that stream).
+    double audio_seek_target_ = -1.0;
+    double video_seek_target_ = -1.0;
+    int video_seek_skipped_ = 0; // frames dropped on the way to the target
     bool audio_first_write_logged_ = false;
     std::string audio_silence_reason_;
     std::chrono::steady_clock::time_point last_audio_log_{};
@@ -1072,6 +1078,19 @@ void FfmpegPlayer::pump_video(int budget)
             // though it is late: a black screen and a frozen picture are both
             // ruled out.
             const double pts = frame_pts(video_.frame);
+            if (video_seek_target_ >= 0.0)
+            {
+                // Still before the seek target: decoded only to reach it.
+                // Capped (10 s at 60 fps): odd timestamps must never leave the
+                // picture black.
+                if (pts + kLateFrameToleranceS < video_seek_target_ && ++video_seek_skipped_ < 600)
+                {
+                    av_frame_unref(video_.frame);
+                    ++work;
+                    continue;
+                }
+                video_seek_target_ = -1.0;
+            }
             if (frame_seen_ && late_drop_run_ < kMaxLateDropRun && audio_active_ && clock_ > 0.0 &&
                 pts + kLateFrameToleranceS < clock_)
             {
@@ -1628,8 +1647,36 @@ void FfmpegPlayer::emit_audio(AVFrame *frame)
         note_audio_silence("resampler produced no frames");
         return;
     }
-    push_audio(reinterpret_cast<const float *>(audio_scratch_.get()),
-               static_cast<std::size_t>(converted));
+    const float *samples = reinterpret_cast<const float *>(audio_scratch_.get());
+    std::size_t count = static_cast<std::size_t>(converted);
+    if (audio_seek_target_ >= 0.0)
+    {
+        // Sound from before the seek target (the demuxer restarted at an
+        // earlier keyframe) must not play: the clock already says "target".
+        std::int64_t stamp = frame->best_effort_timestamp;
+        if (stamp == AV_NOPTS_VALUE)
+            stamp = frame->pts;
+        if (stamp == AV_NOPTS_VALUE || audio_.stream == nullptr)
+        {
+            audio_seek_target_ = -1.0; // no timing: play it rather than guess
+        }
+        else
+        {
+            const double start = static_cast<double>(stamp) * av_q2d(audio_.stream->time_base);
+            const double skip_s = audio_seek_target_ - start;
+            if (skip_s > 0.0)
+            {
+                const std::size_t skip =
+                    static_cast<std::size_t>(skip_s * static_cast<double>(kOutputRate));
+                if (skip >= count)
+                    return; // the whole frame is before the target
+                samples += skip * 2u;
+                count -= skip;
+            }
+            audio_seek_target_ = -1.0;
+        }
+    }
+    push_audio(samples, count);
 }
 
 void FfmpegPlayer::push_audio(const float *stereo, std::size_t frames)
@@ -1828,6 +1875,9 @@ void FfmpegPlayer::seek(double seconds)
     carry_frames_ = 0;
     audio_frames_written_ = 0;
     audio_base_s_ = seconds;
+    audio_seek_target_ = audio_.format != nullptr ? seconds : -1.0;
+    video_seek_target_ = video_.format != nullptr ? seconds : -1.0;
+    video_seek_skipped_ = 0;
     if (sink_ != nullptr)
     {
         sink_->drain();
