@@ -36,6 +36,13 @@ std::string format_duration(double seconds)
     return text;
 }
 
+std::string card_thumbnail(const yt::FeedItem &item)
+{
+    if (item.video_id.size() == 11)
+        return "https://i.ytimg.com/vi/" + item.video_id + "/mqdefault.jpg";
+    return item.thumbnail_url;
+}
+
 FeedView::FeedView()
 {
     // SmartTube's grid: five thumbnails a row, the duration bottom right.
@@ -80,7 +87,7 @@ void FeedView::set_items(const std::vector<yt::FeedItem> &items, const Context &
         ui::CardItem card;
         card.title = item.title.empty() ? item.video_id : item.title;
         card.subtitle = item.author;
-        card.texture = context.thumbs.texture(item.thumbnail_url);
+        card.texture = context.thumbs.texture(card_thumbnail(item));
         card.image_aspect = 16.0f / 9.0f;
         if (item.live)
             card.badge = "LIVE";
@@ -125,7 +132,7 @@ bool FeedView::handle(const InputFrame &input, ui::Feedback &feedback, const Con
         if (grid_.item(index).texture == 0)
         {
             const std::uint32_t texture =
-                context.thumbs.texture(items_[static_cast<std::size_t>(index)].thumbnail_url);
+                context.thumbs.texture(card_thumbnail(items_[static_cast<std::size_t>(index)]));
             if (texture != 0)
                 grid_.item(index).texture = texture;
         }
@@ -142,7 +149,7 @@ void FeedView::update(float dt, const Context &context)
         if (grid_.item(index).texture == 0)
         {
             const std::uint32_t texture =
-                context.thumbs.texture(items_[static_cast<std::size_t>(index)].thumbnail_url);
+                context.thumbs.texture(card_thumbnail(items_[static_cast<std::size_t>(index)]));
             if (texture != 0)
                 grid_.item(index).texture = texture;
         }

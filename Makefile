@@ -25,7 +25,7 @@ override APP_IMPORT_STUBS := $(strip $(OPENGL_SDK)/lib/libSceAgc.so \
 # The PacBrew packages this app links: curl for the network, OpenSSL for TLS,
 # the ffmpeg libraries for the decoder. A clean checkout (and CI) builds with
 # these; an ignored .env can override the list for a different app.
-PACBREW_PACKAGES ?= libcurl openssl libavformat libavcodec libavutil libswscale libswresample
+PACBREW_PACKAGES ?= libcurl openssl libavformat libavfilter libavcodec libavutil libswscale libswresample
 PACBREW_INCLUDE_PATHS ?=
 PACBREW_STATIC_ARCHIVES ?=
 PS5_HOST ?=

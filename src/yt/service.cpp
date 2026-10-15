@@ -15,6 +15,8 @@
 #include "yt/codec.hpp"
 #include "yt/decipher.hpp"
 #include "yt/innertube.hpp"
+#include "yt/watch.hpp"
+#include "yt/http.hpp"
 
 #include <pthread.h>
 
@@ -24,6 +26,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -137,6 +140,16 @@ struct Service::Impl
     float video_wait_s = 0.0f;
     // True while the worker sits out a pre-roll wait: the watchdog's clock stops.
     bool video_holding = false;
+
+    // Watch history for the video playing (see yt/watch.hpp), under `mutex`.
+    struct WatchSession
+    {
+        std::string watchtime_url;
+        std::string cpn;
+        std::string token;
+        double length_s = 0.0;
+        double reported_s = 0.0;
+    } watch;
     bool video_running = false;
     // The device flow runs on the worker; `login_running` tells the frame
     // thread that it is still in flight and `login_cancel` is the frame's
@@ -815,7 +828,7 @@ struct Service::Impl
                 }
                 selected_any = true;
                 any_format = true;
-                const Format *audio_format = select_audio_format(info.formats);
+                const Format *audio_format = select_audio_format(info.formats, choice.audio_track);
                 const bool has_n = video_format->url.find("&n=") != std::string::npos ||
                                    video_format->url.find("?n=") != std::string::npos ||
                                    video_format->url.find("/n/") != std::string::npos;
@@ -910,6 +923,14 @@ struct Service::Impl
                     opened_video = video_id;
                     opened_choice = choice;
                     video.info = info;
+                    // Subtitles: the stream's client may answer without the
+                    // caption list another client gave.
+                    for (const VideoInfo &variant : variants)
+                    {
+                        if (!video.info.captions.empty())
+                            break;
+                        video.info.captions = variant.captions;
+                    }
                     video.state = Load::ready;
                     video.stage.clear();
                     video.source_client = info.client;
@@ -919,6 +940,7 @@ struct Service::Impl
                 }
 
                 log::line("video: playing via %s", info.client.c_str());
+                start_watch_history(info, variants);
                 // The related row under the player; best effort, a failure
                 // leaves the previous row in place.
                 FeedPage related_page;
@@ -947,6 +969,52 @@ struct Service::Impl
         }
         log::line("video: every client failed, first error=%s", first_error.c_str());
         fail_video(generation, first_error.empty() ? std::string("unavailable") : first_error);
+    }
+
+    // Watch history: the playback ping, sent with the account's token so the
+    // video is added to its history. The tracking URLs of a TV client answer
+    // (the one that saw the token) are preferred over the stream's client.
+    void start_watch_history(const VideoInfo &playing, const std::vector<VideoInfo> &variants)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            watch = WatchSession{};
+        }
+        if (!auth.signed_in())
+            return;
+        const VideoInfo *source = &playing;
+        for (const VideoInfo &variant : variants)
+        {
+            if (variant.client == "TVHTML5" && !variant.playback_url.empty())
+            {
+                source = &variant;
+                break;
+            }
+        }
+        if (source->playback_url.empty())
+        {
+            log::line("history: no playbackTracking in the %s answer", source->client.c_str());
+            return;
+        }
+        const std::string cpn = watch::make_cpn(static_cast<std::uint64_t>(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+        const std::string token = auth.access_token();
+        const http::Response response =
+            http::get(watch::playback_ping(source->playback_url, cpn), watch_headers(token), 8);
+        log::line("history: playback ping (%s) -> %ld %s", source->client.c_str(), response.status,
+                  response.error.c_str());
+        std::lock_guard<std::mutex> lock(mutex);
+        watch.watchtime_url = source->watchtime_url;
+        watch.cpn = cpn;
+        watch.token = token;
+        watch.length_s = playing.length_s;
+    }
+
+    static std::vector<http::Header> watch_headers(const std::string &token)
+    {
+        return {{"Authorization", "Bearer " + token},
+                {"User-Agent", "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold "
+                               "(unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)"}};
     }
 
     void finish_login(Load state, const std::string &error)
@@ -1261,6 +1329,55 @@ void Service::video_watchdog(float dt)
         impl_->video.revision++;
         impl_->video_wait_s = 0.0f;
     }
+}
+
+namespace
+{
+
+struct DetachedGet
+{
+    std::string url;
+    std::vector<http::Header> headers;
+};
+
+void *run_detached_get(void *argument)
+{
+    std::unique_ptr<DetachedGet> job(static_cast<DetachedGet *>(argument));
+    const http::Response response = http::get(job->url, job->headers, 8);
+    log::line("history: watchtime ping -> %ld %s", response.status, response.error.c_str());
+    return nullptr;
+}
+
+} // namespace
+
+void Service::report_watch_progress(double position_s)
+{
+    DetachedGet *job = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        Impl::WatchSession &watch = impl_->watch;
+        if (watch.watchtime_url.empty() || watch.token.empty() ||
+            position_s <= watch.reported_s + 1.0)
+            return;
+        job = new DetachedGet{watch::watchtime_ping(watch.watchtime_url, watch.cpn,
+                                                    watch.reported_s, position_s, watch.length_s),
+                              Impl::watch_headers(watch.token)};
+        watch.reported_s = position_s;
+    }
+    // Off the frame thread: the request may take a second.
+    pthread_attr_t attributes;
+    if (pthread_attr_init(&attributes) != 0)
+    {
+        delete job;
+        return;
+    }
+    (void)pthread_attr_setstacksize(&attributes, 1u << 20);
+    pthread_t thread;
+    if (pthread_create(&thread, &attributes, &run_detached_get, job) == 0)
+        pthread_detach(thread);
+    else
+        delete job;
+    pthread_attr_destroy(&attributes);
 }
 
 void Service::request_close_video()

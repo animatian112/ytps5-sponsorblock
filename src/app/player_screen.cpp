@@ -17,7 +17,11 @@
 
 #include <GL/glcorearb.h>
 
+#include "yt/codec.hpp"
+
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 
 namespace hui::app
 {
@@ -32,7 +36,18 @@ const TourStep kTour[] = {
     {0.9f, 0, Direction::none, "controls", 0, 0, 0, 0, 0},
     {0.9f, 0, Direction::up, nullptr, 0, 0, 0, 0, 0},
     {0.9f, 0, Direction::none, "seek", 0, 0, 0, 0, 0},
-    {0.9f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
+    {0.6f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
+    // Right to the speed pill, and its panel.
+    {0.4f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
+    {0.4f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
+    {0.4f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
+    {0.4f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
+    {0.9f, hui::action_bit(Action::confirm), Direction::none, nullptr, 0, 0, 0, 0, 0},
+    {0.9f, 0, Direction::none, "speed-menu", 0, 0, 0, 0, 0},
+    {0.9f, hui::action_bit(Action::back), Direction::none, nullptr, 0, 0, 0, 0, 0},
+    {0.6f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
+    {0.6f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
+    {0.6f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
     {0.9f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
     {0.9f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
     {1.0f, 0, Direction::none, "related", 0, 0, 0, 0, 0},
@@ -133,6 +148,8 @@ void PlayerScreen::enter()
 
 void PlayerScreen::leave()
 {
+    if (player_ != nullptr)
+        context_.service.report_watch_progress(player_->clock_s());
     reset_sponsorblock();
     player_.reset();
     drop_texture();
@@ -149,11 +166,23 @@ yt::CodecChoice PlayerScreen::codec_choice() const
     choice.av1 = context_.settings.codec_av1;
     choice.max_height = context_.settings.max_height;
     choice.decode = context_.settings.decode_mode;
+    if (quality_override_ > 0)
+        choice.max_height = quality_override_;
+    choice.audio_track = audio_track_;
     return choice;
 }
 
 void PlayerScreen::request_video(const std::string &video_id)
 {
+    if (player_ != nullptr)
+        context_.service.report_watch_progress(player_->clock_s());
+    history_reported_s_ = 0.0;
+    const std::string current = playing_id_.empty() ? requested_id_ : playing_id_;
+    if (video_id != current)
+    {
+        resume_s_ = -1.0;
+        audio_track_.clear(); // a track id belongs to one video
+    }
     requested_id_ = video_id;
     // Keep the app's notion of the open video in step, so the divergence check
     // in update() only fires on a video genuinely handed in from outside.
@@ -271,6 +300,11 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             playing_id_ = requested_id_;
             consumed_player_ = true;
             ended_ = false;
+            if (resume_s_ > 0.0)
+                player_->seek(resume_s_);
+            resume_s_ = -1.0;
+            if (speed_ != 1.0)
+                player_->set_speed(speed_);
         }
     }
 
@@ -354,7 +388,8 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             ui::CardItem card;
             card.title = item.title.empty() ? item.video_id : item.title;
             card.subtitle = item.author;
-            card.texture = context_.thumbs.texture(item.thumbnail_url);
+            card.texture = context_.thumbs.texture(card_thumbnail(item));
+            card.image_aspect = 16.0f / 9.0f;
             if (item.live)
                 card.badge = "LIVE";
             else
@@ -362,6 +397,24 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             cards.push_back(std::move(card));
         }
         related_.set_items(std::move(cards));
+    }
+
+    // Watch history: the span watched, every half minute of playback.
+    if (player_ != nullptr && !player_->paused() &&
+        player_->clock_s() >= history_reported_s_ + 30.0)
+    {
+        history_reported_s_ = player_->clock_s();
+        context_.service.report_watch_progress(history_reported_s_);
+    }
+
+    // Suggestion thumbnails that arrived after the row was filled.
+    for (int index = 0; index < static_cast<int>(related_.items().size()) &&
+                        index < static_cast<int>(related_items_.size());
+         ++index)
+    {
+        if (related_.item(index).texture == 0)
+            related_.item(index).texture = context_.thumbs.texture(
+                card_thumbnail(related_items_[static_cast<std::size_t>(index)]));
     }
 
     // Transport.
@@ -377,6 +430,22 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
 
     update_sponsorblock(input, feedback);
     chrome_.set_segment(sponsor_here_);
+    {
+        static const char *const kSpeedLabels[] = {"0.25x", "0.5x", "0.75x", "1x",
+                                                   "1.25x", "1.5x", "1.75x", "2x"};
+        static const double kSpeeds[] = {0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0};
+        std::string speed = "1x";
+        for (std::size_t i = 0; i < 8; ++i)
+        {
+            if (std::abs(kSpeeds[i] - speed_) < 0.01)
+                speed = kSpeedLabels[i];
+        }
+        std::string quality = player_ != nullptr ? player_->quality_label() : std::string();
+        quality = quality.substr(0, quality.find(' '));
+        chrome_.set_badges(!caption_language_.empty() && !caption_url_.empty(), speed, quality,
+                           yt::audio_tracks(view.info.formats).size() > 1);
+    }
+    update_captions();
 
     bool back_used = false;
     if (!in_related_)
@@ -401,12 +470,22 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
                 player_->seek(0.0);
             break;
         case PlayerChrome::Command::next:
-            if (!related_items_.empty())
+        {
+            // The first suggestion that is not this video: the list YouTube
+            // answers can start with the one playing, which only restarted it.
+            const std::string current = playing_id_.empty() ? requested_id_ : playing_id_;
+            for (const yt::FeedItem &item : related_items_)
             {
-                request_video(related_items_.front().video_id);
-                chrome_.show();
+                if (!item.video_id.empty() && item.video_id != current)
+                {
+                    yt::log::line("player: next -> %s", item.video_id.c_str());
+                    request_video(item.video_id);
+                    chrome_.show();
+                    break;
+                }
             }
             break;
+        }
         case PlayerChrome::Command::skip_segment:
             skip_segment_now(feedback);
             break;
@@ -419,6 +498,15 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             }
             else
                 feedback.play(audio::Cue::error);
+            break;
+        case PlayerChrome::Command::open_captions:
+        case PlayerChrome::Command::open_speed:
+        case PlayerChrome::Command::open_quality:
+        case PlayerChrome::Command::open_audio:
+            open_menu(command);
+            break;
+        case PlayerChrome::Command::pick:
+            apply_pick();
             break;
         case PlayerChrome::Command::none:
             break;
@@ -468,6 +556,230 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     related_.set_bounds({96.0f, 1080.0f - 330.0f * lift + 10.0f, 1728.0f, 290.0f});
     chrome_.update(dt);
     related_.update(dt);
+}
+
+void PlayerScreen::reopen()
+{
+    const std::string id = playing_id_.empty() ? requested_id_ : playing_id_;
+    if (id.empty())
+        return;
+    const double at = player_ != nullptr ? player_->clock_s() : 0.0;
+    request_video(id);
+    resume_s_ = at; // after request_video: the same id keeps its place
+}
+
+void PlayerScreen::open_menu(PlayerChrome::Command command)
+{
+    const yt::VideoView view = context_.service.video();
+    switch (command)
+    {
+    case PlayerChrome::Command::open_captions:
+    {
+        std::vector<std::string> options{"Off"};
+        int selected = 0;
+        for (std::size_t i = 0; i < view.info.captions.size(); ++i)
+        {
+            options.push_back(view.info.captions[i].name);
+            if (!caption_url_.empty() && view.info.captions[i].url == caption_url_)
+                selected = static_cast<int>(i) + 1;
+        }
+        if (options.size() == 1)
+            options[0] = "Off (this video has no subtitles)";
+        chrome_.open_panel(PlayerChrome::Panel::captions, "Subtitles", std::move(options),
+                           selected);
+        break;
+    }
+    case PlayerChrome::Command::open_speed:
+    {
+        static const double kSpeeds[] = {0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0};
+        std::vector<std::string> options{"0.25x", "0.5x", "0.75x", "Normal",
+                                         "1.25x", "1.5x", "1.75x", "2x"};
+        int selected = 3;
+        for (int i = 0; i < 8; ++i)
+        {
+            if (std::abs(kSpeeds[i] - speed_) < 0.01)
+                selected = i;
+        }
+        chrome_.open_panel(PlayerChrome::Panel::speed, "Playback speed", std::move(options),
+                           selected);
+        break;
+    }
+    case PlayerChrome::Command::open_quality:
+    {
+        // The heights this video offers in the codecs Settings allow.
+        const yt::CodecChoice choice = codec_choice();
+        menu_heights_.clear();
+        for (const yt::Format &format : view.info.formats)
+        {
+            if (!yt::is_video_codec(format.codec) || format.height <= 0)
+                continue;
+            if ((format.codec == yt::Codec::avc && !choice.avc) ||
+                (format.codec == yt::Codec::vp9 && !choice.vp9) ||
+                (format.codec == yt::Codec::av1 && !choice.av1))
+                continue;
+            if (std::find(menu_heights_.begin(), menu_heights_.end(), format.height) ==
+                menu_heights_.end())
+                menu_heights_.push_back(format.height);
+        }
+        std::sort(menu_heights_.rbegin(), menu_heights_.rend());
+        std::vector<std::string> options{
+            "Auto (Settings: " + std::to_string(context_.settings.max_height) + "p)"};
+        int selected = 0;
+        for (std::size_t i = 0; i < menu_heights_.size(); ++i)
+        {
+            options.push_back(std::to_string(menu_heights_[i]) + "p");
+            if (menu_heights_[i] == quality_override_)
+                selected = static_cast<int>(i) + 1;
+        }
+        chrome_.open_panel(PlayerChrome::Panel::quality, "Quality", std::move(options), selected);
+        break;
+    }
+    case PlayerChrome::Command::open_audio:
+    {
+        const std::vector<yt::AudioTrack> tracks = yt::audio_tracks(view.info.formats);
+        menu_tracks_.clear();
+        std::vector<std::string> options;
+        int selected = 0;
+        for (std::size_t i = 0; i < tracks.size(); ++i)
+        {
+            menu_tracks_.push_back(tracks[i].id);
+            options.push_back(tracks[i].name + (tracks[i].is_default ? "  (original)" : ""));
+            if ((audio_track_.empty() && tracks[i].is_default) || tracks[i].id == audio_track_)
+                selected = static_cast<int>(i);
+        }
+        chrome_.open_panel(PlayerChrome::Panel::audio, "Audio track", std::move(options), selected);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+void PlayerScreen::apply_pick()
+{
+    const int pick = chrome_.picked();
+    const PlayerChrome::Panel panel = chrome_.panel();
+    chrome_.close_panel();
+    const yt::VideoView view = context_.service.video();
+    switch (panel)
+    {
+    case PlayerChrome::Panel::captions:
+        if (pick <= 0 || pick > static_cast<int>(view.info.captions.size()))
+        {
+            caption_language_.clear();
+            caption_url_.clear();
+            captions_.clear();
+        }
+        else
+        {
+            const yt::CaptionTrack &track = view.info.captions[static_cast<std::size_t>(pick - 1)];
+            caption_language_ = track.language;
+            caption_url_ = track.url;
+            captions_for_ = playing_id_;
+            captions_.load(track.url);
+            yt::log::line("captions: %s (%s)", track.name.c_str(), track.language.c_str());
+        }
+        break;
+    case PlayerChrome::Panel::speed:
+    {
+        static const double kSpeeds[] = {0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0};
+        if (pick >= 0 && pick < 8)
+        {
+            speed_ = kSpeeds[pick];
+            if (player_ != nullptr)
+                player_->set_speed(speed_);
+        }
+        break;
+    }
+    case PlayerChrome::Panel::quality:
+    {
+        const int height = pick <= 0 || pick > static_cast<int>(menu_heights_.size())
+                               ? 0
+                               : menu_heights_[static_cast<std::size_t>(pick - 1)];
+        if (height != quality_override_)
+        {
+            quality_override_ = height;
+            reopen();
+        }
+        break;
+    }
+    case PlayerChrome::Panel::audio:
+        if (pick >= 0 && pick < static_cast<int>(menu_tracks_.size()) &&
+            menu_tracks_[static_cast<std::size_t>(pick)] != audio_track_)
+        {
+            audio_track_ = menu_tracks_[static_cast<std::size_t>(pick)];
+            reopen();
+        }
+        break;
+    case PlayerChrome::Panel::none:
+        break;
+    }
+}
+
+void PlayerScreen::update_captions()
+{
+    const yt::VideoView view = context_.service.video();
+    // A new video: turn the chosen language on again when it has it.
+    if (!caption_language_.empty() && !playing_id_.empty() && captions_for_ != playing_id_ &&
+        view.state == yt::Load::ready && !view.info.captions.empty())
+    {
+        captions_for_ = playing_id_;
+        caption_url_.clear();
+        captions_.clear();
+        const yt::CaptionTrack *best = nullptr;
+        for (const yt::CaptionTrack &track : view.info.captions)
+        {
+            if (track.language == caption_language_ &&
+                (best == nullptr || (best->automatic && !track.automatic)))
+                best = &track;
+        }
+        if (best != nullptr)
+        {
+            caption_url_ = best->url;
+            captions_.load(best->url);
+        }
+    }
+    caption_text_.clear();
+    if (!caption_url_.empty() && player_ != nullptr)
+        caption_text_ = captions_.text_at(player_->clock_s());
+}
+
+void PlayerScreen::draw_captions(ui::Canvas &canvas, const Context &context) const
+{
+    if (caption_text_.empty() || context.fonts.semibold.font == nullptr)
+        return;
+    std::vector<std::string> lines;
+    std::size_t at = 0;
+    while (at <= caption_text_.size())
+    {
+        const std::size_t end = caption_text_.find('\n', at);
+        const std::string line =
+            caption_text_.substr(at, end == std::string::npos ? std::string::npos : end - at);
+        if (!line.empty())
+        {
+            // Long lines wrap at 1400 pixels.
+            for (const std::string &part : context.fonts.semibold.font->wrap(line, 38.0f, 1400.0f))
+                lines.push_back(part);
+        }
+        if (end == std::string::npos)
+            break;
+        at = end + 1;
+    }
+    if (lines.size() > 4)
+        lines.erase(lines.begin(), lines.end() - 4);
+    // Above the controls while they are up, near the bottom edge otherwise.
+    const float bottom = 1030.0f - (330.0f * chrome_.lift() + 290.0f) * chrome_.visibility();
+    float y = bottom - static_cast<float>(lines.size()) * 52.0f;
+    for (const std::string &line : lines)
+    {
+        const float width = context.fonts.semibold.measure(line, 38.0f);
+        canvas.list.rounded_rect(
+            {gfx::kVirtualWidth * 0.5f - width * 0.5f - 16.0f, y, width + 32.0f, 50.0f}, 6.0f,
+            gfx::Color::rgb(0x000000, 0.72f));
+        ui::text(canvas.list, context.fonts.semibold, line, gfx::kVirtualWidth * 0.5f, y + 38.0f,
+                 38.0f, gfx::Color::rgb(0xffffff), gfx::Align::center);
+        y += 52.0f;
+    }
 }
 
 void PlayerScreen::draw_hud(ui::Canvas &canvas, const Context &context) const
@@ -566,6 +878,8 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
             draw_log_tail(canvas, context);
         return;
     }
+
+    draw_captions(canvas, context);
 
     // The controls, and the suggestions row under them when it is open.
     const float lift = chrome_.lift();

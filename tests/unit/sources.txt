@@ -48,3 +48,5 @@ src/yt/dns.c
 src/third_party/sponsorblock/sponsorblock.c
 src/yt/types.cpp
 src/yt/update.cpp
+src/yt/watch.cpp
+src/yt/captions.cpp

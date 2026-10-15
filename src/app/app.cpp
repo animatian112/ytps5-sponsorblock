@@ -81,7 +81,7 @@ std::string download_body(const yt::update::Snapshot &snapshot)
 App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::GlBatch &batch,
          yt::Service &service)
     : fonts_(fonts), data_root_(std::move(data_root)), settings_(settings), service_(service),
-      thumbs_(std::make_unique<ThumbCache>(batch, &delete_texture, 72)),
+      thumbs_(std::make_unique<ThumbCache>(batch, &delete_texture, 192)),
       context_{fonts_, telemetry_, settings_, false, *thumbs_,
                batch,  service_,   toasts_,   nav_,  active_video_}
 {

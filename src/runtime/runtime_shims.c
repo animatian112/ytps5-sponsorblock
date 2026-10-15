@@ -159,3 +159,34 @@ int pclose(FILE *stream)
     errno = ENOSYS;
     return -1;
 }
+
+/* libavfilter (for atempo, the playback speed) links libass, harfbuzz and
+ * fontconfig through its subtitle filters, which the app never builds. Their
+ * locale and temp-file calls have no console libc import; these stand-ins
+ * fail cleanly should one ever run. */
+typedef void *hui_locale_t;
+hui_locale_t newlocale(int mask, const char *locale, hui_locale_t base)
+{
+    (void)mask;
+    (void)locale;
+    (void)base;
+    errno = ENOENT;
+    return (hui_locale_t)0;
+}
+
+hui_locale_t uselocale(hui_locale_t locale)
+{
+    (void)locale;
+    return (hui_locale_t)0;
+}
+
+void freelocale(hui_locale_t locale)
+{
+    (void)locale;
+}
+
+int mkostemp(char *template_name, int flags)
+{
+    (void)flags;
+    return mkstemp(template_name);
+}

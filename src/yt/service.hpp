@@ -103,6 +103,10 @@ class Service
     // Resolves the streams and opens the player (on the worker).
     void request_video(std::string video_id, CodecChoice choice);
     void request_close_video();
+    // Watch history: reports the span watched since the last report (the
+    // playback ping went out when the video started). Cheap; call it every
+    // half minute of playback and when the video is left.
+    void report_watch_progress(double position_s);
     // Starts the device flow and then polls until it is answered.
     void request_sign_in();
     void cancel_sign_in();

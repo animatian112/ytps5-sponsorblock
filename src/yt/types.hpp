@@ -58,6 +58,30 @@ struct Format
     std::string cipher_s;
     std::string cipher_sp;
     bool ciphered = false;
+    // Videos with dubbed sound carry one audio format per language:
+    // audioTrack.id ("en.4"), its displayName ("English (United States)
+    // original") and audioIsDefault for the track YouTube would play.
+    std::string audio_track_id;
+    std::string audio_track_name;
+    bool audio_default = false;
+    bool drc = false; // a dynamic-range-compressed copy of another format
+};
+
+// One subtitle track of a video (captions.playerCaptionsTracklistRenderer).
+struct CaptionTrack
+{
+    std::string url;      // baseUrl; "&fmt=json3" gives the timed text as JSON
+    std::string language; // "en"
+    std::string name;     // "English (auto-generated)"
+    bool automatic = false;
+};
+
+// One selectable sound track of a video.
+struct AudioTrack
+{
+    std::string id;
+    std::string name;
+    bool is_default = false;
 };
 
 struct VideoInfo
@@ -90,6 +114,11 @@ struct VideoInfo
     // answer was handed out: the length of the pre-roll ads it scheduled, or
     // their skip offset (yt-dlp `_get_available_at_timestamp`). 0 = none.
     double preroll_wait_s = 0.0;
+    // playbackTracking: the stats URLs that put a watched video in the
+    // account's history (see yt/watch.hpp). Empty when the answer has none.
+    std::string playback_url;
+    std::string watchtime_url;
+    std::vector<CaptionTrack> captions;
     int preroll_ads = 0;
     // std::chrono::steady_clock milliseconds when the URLs start to play:
     // the answer's arrival plus preroll_wait_s. Filled by player_variants().
@@ -178,6 +207,8 @@ struct CodecChoice
     bool av1 = true;
     int max_height = 1080;
     DecodeMode decode = DecodeMode::auto_detect;
+    // audioTrack.id to play; empty picks the video's original track.
+    std::string audio_track;
 };
 
 // Load state of anything that arrives from the network.

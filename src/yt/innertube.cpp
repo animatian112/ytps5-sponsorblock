@@ -1285,6 +1285,16 @@ bool read_format(yyjson_val *obj, Format *format)
     format->bitrate = integer_field(obj, "bitrate", 0);
     format->content_length = integer_field(obj, "contentLength", 0);
     format->sample_rate = static_cast<int>(integer_field(obj, "audioSampleRate", 0));
+    yyjson_val *track = yyjson_obj_get(obj, "audioTrack");
+    if (yyjson_is_obj(track))
+    {
+        format->audio_track_id = string_field(track, "id");
+        format->audio_track_name = string_field(track, "displayName");
+        yyjson_val *is_default = yyjson_obj_get(track, "audioIsDefault");
+        format->audio_default = yyjson_is_bool(is_default) && yyjson_get_bool(is_default);
+    }
+    yyjson_val *drc = yyjson_obj_get(obj, "isDrc");
+    format->drc = yyjson_is_bool(drc) && yyjson_get_bool(drc);
     return true;
 }
 
@@ -1785,6 +1795,37 @@ bool parse_video_info(std::string_view json, VideoInfo *info)
     }
 
     read_preroll(root, info);
+    {
+        yyjson_val *tracks = yyjson_obj_get(
+            yyjson_obj_get(yyjson_obj_get(root, "captions"), "playerCaptionsTracklistRenderer"),
+            "captionTracks");
+        for (std::size_t i = 0, n = yyjson_arr_size(tracks); i < n; ++i)
+        {
+            yyjson_val *entry = yyjson_arr_get(tracks, i);
+            CaptionTrack track;
+            track.url = string_field(entry, "baseUrl");
+            if (track.url.empty())
+                continue;
+            if (track.url.rfind("/", 0) == 0)
+                track.url = "https://www.youtube.com" + track.url;
+            track.language = string_field(entry, "languageCode");
+            yyjson_val *name = yyjson_obj_get(entry, "name");
+            track.name = string_field(name, "simpleText");
+            if (track.name.empty())
+                track.name = string_field(yyjson_arr_get(yyjson_obj_get(name, "runs"), 0), "text");
+            if (track.name.empty())
+                track.name = track.language;
+            track.automatic = string_field(entry, "kind") == "asr";
+            info->captions.push_back(std::move(track));
+        }
+    }
+    {
+        yyjson_val *tracking = yyjson_obj_get(root, "playbackTracking");
+        info->playback_url =
+            string_field(yyjson_obj_get(tracking, "videostatsPlaybackUrl"), "baseUrl");
+        info->watchtime_url =
+            string_field(yyjson_obj_get(tracking, "videostatsWatchtimeUrl"), "baseUrl");
+    }
 
     // The player JS a ciphered format needs. Answers name it directly
     // (assets.js); a few only publish the hash, from which the TV player's

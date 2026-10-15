@@ -388,6 +388,44 @@ TEST(Codec, OpusBeatsAacAndTheHigherBitrateWinsInsideOneCodec)
     EXPECT_EQ(yt::select_audio_format({}), nullptr);
 }
 
+TEST(Codec, TheOriginalSoundTrackBeatsDubsAndAnAskedTrackBeatsBoth)
+{
+    const auto track =
+        [](const char *id, const char *name, bool is_default, long long bitrate, bool drc = false)
+    {
+        Format format = audio(Codec::opus, 48000, bitrate);
+        format.audio_track_id = id;
+        format.audio_track_name = name;
+        format.audio_default = is_default;
+        format.drc = drc;
+        return format;
+    };
+    // A German dub is listed first and has the higher bitrate.
+    const std::vector<Format> formats = {track("de.3", "German", false, 200'000),
+                                         track("en.4", "English original", true, 140'000),
+                                         track("en.4", "English original", true, 160'000, true),
+                                         track("es.3", "Spanish", false, 150'000)};
+    const Format *picked = yt::select_audio_format(formats);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->audio_track_id, "en.4");
+    EXPECT_FALSE(picked->drc);
+
+    picked = yt::select_audio_format(formats, "es.3");
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->audio_track_id, "es.3");
+
+    // A track the answer does not offer falls back to the original.
+    picked = yt::select_audio_format(formats, "fr.3");
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->audio_track_id, "en.4");
+
+    const std::vector<yt::AudioTrack> tracks = yt::audio_tracks(formats);
+    ASSERT_EQ(tracks.size(), 3u);
+    EXPECT_EQ(tracks[1].id, "en.4");
+    EXPECT_TRUE(tracks[1].is_default);
+    EXPECT_EQ(tracks[0].name, "German");
+}
+
 TEST(Codec, CodecEnabledFollowsTheSwitches)
 {
     CodecChoice choice;

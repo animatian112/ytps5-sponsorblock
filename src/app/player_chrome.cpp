@@ -23,7 +23,6 @@ constexpr float kTimeY = 968.0f;
 constexpr float kButtonY = 1016.0f;
 constexpr float kButtonRadius = 30.0f;
 constexpr float kButtonPitch = 80.0f;
-constexpr float kSkipHeight = 56.0f;
 constexpr float kHideAfter = 4.0f; // seconds without input while playing
 constexpr double kSeekStep = 10.0;
 constexpr float kQuarter = 1.5707963f;
@@ -56,13 +55,6 @@ float approach(float value, float target, float rate, float dt)
 void triangle(gfx::DrawList &list, float cx, float cy, float size, float dir, gfx::Color c)
 {
     list.triangle({cx - size * 0.5f, cy - size * 0.5f, size, size}, c, 0.0f, kQuarter * dir);
-}
-
-float skip_width(const ui::Fonts &fonts, const std::string &text)
-{
-    return (fonts.semibold.font != nullptr ? fonts.semibold.measure(text, 24.0f)
-                                           : 13.0f * static_cast<float>(text.size())) +
-           56.0f;
 }
 
 } // namespace
@@ -105,6 +97,17 @@ void PlayerChrome::set_segment(std::string label)
         focus_ = Button::play;
 }
 
+void PlayerChrome::set_badges(bool captions_on, std::string speed, std::string quality,
+                              bool audio_tracks)
+{
+    captions_on_ = captions_on;
+    speed_label_ = std::move(speed);
+    quality_label_ = std::move(quality);
+    audio_tracks_ = audio_tracks;
+    if (!audio_tracks_ && focus_ == Button::audio)
+        focus_ = Button::play;
+}
+
 std::vector<PlayerChrome::Button> PlayerChrome::buttons() const
 {
     std::vector<Button> out{Button::restart, Button::rewind, Button::play, Button::forward};
@@ -112,7 +115,47 @@ std::vector<PlayerChrome::Button> PlayerChrome::buttons() const
         out.push_back(Button::next);
     if (!segment_.empty())
         out.push_back(Button::skip);
+    out.push_back(Button::captions);
+    out.push_back(Button::speed);
+    out.push_back(Button::quality);
+    if (audio_tracks_)
+        out.push_back(Button::audio);
     return out;
+}
+
+bool PlayerChrome::right_side(Button button)
+{
+    return button == Button::skip || button == Button::captions || button == Button::speed ||
+           button == Button::quality || button == Button::audio;
+}
+
+std::string PlayerChrome::button_label(Button button) const
+{
+    switch (button)
+    {
+    case Button::skip:
+        return "Skip " + segment_;
+    case Button::captions:
+        return "CC";
+    case Button::speed:
+        return speed_label_;
+    case Button::quality:
+        return quality_label_.empty() ? std::string("Quality") : quality_label_;
+    case Button::audio:
+        return "Audio";
+    default:
+        return {};
+    }
+}
+
+float PlayerChrome::button_width(const ui::Fonts &fonts, Button button) const
+{
+    if (!right_side(button))
+        return kButtonRadius * 2.0f;
+    const std::string label = button_label(button);
+    const float text = fonts.semibold.font != nullptr ? fonts.semibold.measure(label, 22.0f)
+                                                      : 12.0f * static_cast<float>(label.size());
+    return std::max(kButtonRadius * 2.0f, text + 44.0f);
 }
 
 void PlayerChrome::show()
@@ -130,6 +173,7 @@ void PlayerChrome::hide()
 {
     shown_ = false;
     lifted_ = false;
+    panel_ = Panel::none;
 }
 
 void PlayerChrome::wake()
@@ -166,6 +210,67 @@ PlayerChrome::Command PlayerChrome::press(Button button)
         return Command::next;
     case Button::skip:
         return Command::skip_segment;
+    case Button::captions:
+        return Command::open_captions;
+    case Button::speed:
+        return Command::open_speed;
+    case Button::quality:
+        return Command::open_quality;
+    case Button::audio:
+        return Command::open_audio;
+    }
+    return Command::none;
+}
+
+void PlayerChrome::open_panel(Panel panel, std::string title, std::vector<std::string> options,
+                              int selected)
+{
+    panel_ = panel;
+    panel_title_ = std::move(title);
+    panel_options_ = std::move(options);
+    panel_selected_ = selected;
+    panel_focus_ =
+        selected >= 0 && selected < static_cast<int>(panel_options_.size()) ? selected : 0;
+    picked_ = -1;
+    show();
+}
+
+void PlayerChrome::close_panel()
+{
+    panel_ = Panel::none;
+}
+
+PlayerChrome::Command PlayerChrome::handle_panel(const InputFrame &input, ui::Feedback &feedback,
+                                                 bool *consumed_back)
+{
+    const int count = static_cast<int>(panel_options_.size());
+    if (input.is_pressed(Action::back) || input.nav == Direction::left)
+    {
+        if (consumed_back != nullptr)
+            *consumed_back = input.is_pressed(Action::back);
+        close_panel();
+        feedback.play(audio::Cue::back);
+        return Command::none;
+    }
+    if ((input.nav == Direction::up || input.nav == Direction::down) && count > 0)
+    {
+        const int step = input.nav == Direction::down ? 1 : -1;
+        const int next = panel_focus_ + step;
+        if (next >= 0 && next < count)
+        {
+            panel_focus_ = next;
+            feedback.play(audio::Cue::focus);
+        }
+        else
+            feedback.play(audio::Cue::error);
+        return Command::none;
+    }
+    if (input.is_pressed(Action::confirm) && count > 0)
+    {
+        picked_ = panel_focus_;
+        panel_selected_ = panel_focus_;
+        feedback.play(audio::Cue::select);
+        return Command::pick; // the screen reads panel() and closes it
     }
     return Command::none;
 }
@@ -202,6 +307,8 @@ PlayerChrome::Command PlayerChrome::handle(const InputFrame &input, ui::Feedback
     }
 
     wake();
+    if (panel_ != Panel::none)
+        return handle_panel(input, feedback, consumed_back);
     if (input.is_pressed(Action::back))
     {
         if (consumed_back != nullptr)
@@ -269,7 +376,8 @@ PlayerChrome::Command PlayerChrome::handle(const InputFrame &input, ui::Feedback
 
 void PlayerChrome::update(float dt)
 {
-    if (shown_ && playing_ && !lifted_)
+    panel_open_ = approach(panel_open_, panel_ != Panel::none ? 1.0f : 0.0f, 16.0f, dt);
+    if (shown_ && playing_ && !lifted_ && panel_ == Panel::none)
     {
         idle_ += dt;
         if (idle_ >= kHideAfter)
@@ -344,24 +452,39 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
         ui::text(list, fonts.regular, quality_, kRight, kTimeY - rise, 22.0f, kMuted,
                  gfx::Align::right);
 
-    // The buttons.
+    // The buttons: transport on the left, the pills on the right.
     const std::vector<Button> row = buttons();
     const float cy = kButtonY - rise;
     float cx = kLeft + kButtonRadius;
+    float right_x = kRight;
+    for (auto it = row.rbegin(); it != row.rend(); ++it)
+    {
+        if (!right_side(*it))
+            continue;
+        const Button button = *it;
+        const bool focused = !seek_focus && panel_ == Panel::none && button == focus_;
+        const bool lit = button == focus_ && panel_ != Panel::none;
+        const float w = button_width(fonts, button);
+        const gfx::Rect pill{right_x - w, cy - kButtonRadius, w, kButtonRadius * 2.0f};
+        gfx::Color fill = gfx::Color::rgb(0xffffff, 0.12f);
+        if (focused || lit)
+            fill = kInk;
+        else if (button == Button::skip)
+            fill = gfx::Color::rgb(0xffffff, 0.2f);
+        list.rounded_rect(pill, kButtonRadius, fill);
+        const gfx::Color ink = (focused || lit) ? kDark : kInk;
+        ui::text(list, fonts.semibold, button_label(button), pill.cx(), cy + 8.0f, 22.0f, ink,
+                 gfx::Align::center);
+        if (button == Button::captions && captions_on_)
+            list.rounded_rect({pill.cx() - 14.0f, pill.y + pill.h - 12.0f, 28.0f, 4.0f}, 2.0f,
+                              kRed);
+        right_x -= w + 16.0f;
+    }
     for (const Button button : row)
     {
-        const bool focused = !seek_focus && button == focus_;
-        if (button == Button::skip)
-        {
-            const std::string label = "Skip " + segment_;
-            const float w = skip_width(fonts, label);
-            const gfx::Rect pill{kRight - w, cy - kSkipHeight * 0.5f, w, kSkipHeight};
-            list.rounded_rect(pill, kSkipHeight * 0.5f,
-                              focused ? kInk : gfx::Color::rgb(0xffffff, 0.16f));
-            ui::text(list, fonts.semibold, label, pill.cx(), cy + 8.5f, 24.0f,
-                     focused ? kDark : kInk, gfx::Align::center);
+        if (right_side(button))
             continue;
-        }
+        const bool focused = !seek_focus && panel_ == Panel::none && button == focus_;
         const gfx::Color ink = focused ? kDark : kInk;
         list.circle(cx, cy, kButtonRadius, focused ? kInk : gfx::Color::rgb(0xffffff, 0.12f));
         switch (button)
@@ -391,10 +514,47 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
             triangle(list, cx - 3.0f, cy, 20.0f, 1.0f, ink);
             list.rounded_rect({cx + 7.0f, cy - 10.0f, 4.0f, 20.0f}, 1.5f, ink);
             break;
-        case Button::skip:
+        default:
             break;
         }
         cx += kButtonPitch;
+    }
+    list.pop_opacity();
+    draw_panel(canvas, fonts);
+}
+
+void PlayerChrome::draw_panel(ui::Canvas &canvas, const ui::Fonts &fonts) const
+{
+    if (panel_open_ < 0.01f)
+        return;
+    gfx::DrawList &list = canvas.list;
+    constexpr float kWidth = 560.0f;
+    constexpr float kRowHeight = 68.0f;
+    constexpr float kTop = 170.0f;
+    const float x = gfx::kVirtualWidth - kWidth * panel_open_;
+    list.push_opacity(std::min(1.0f, panel_open_ * 1.4f));
+    list.rounded_rect({x, 0.0f, kWidth, gfx::kVirtualHeight}, 0.0f,
+                      gfx::Color::rgb(0x161616, 0.97f));
+    ui::text(list, fonts.semibold, panel_title_, x + 48.0f, 112.0f, 34.0f, kInk);
+    const int count = static_cast<int>(panel_options_.size());
+    const int visible = static_cast<int>((gfx::kVirtualHeight - kTop - 40.0f) / kRowHeight);
+    int first = std::max(0, panel_focus_ - visible / 2);
+    first = std::min(first, std::max(0, count - visible));
+    for (int i = first; i < count && i < first + visible; ++i)
+    {
+        const float y = kTop + static_cast<float>(i - first) * kRowHeight;
+        const bool focused = i == panel_focus_;
+        const gfx::Rect row{x + 24.0f, y, kWidth - 48.0f, kRowHeight - 8.0f};
+        if (focused)
+            list.rounded_rect(row, 10.0f, kInk);
+        const gfx::Color ink = focused ? kDark : kInk;
+        if (i == panel_selected_)
+            list.circle(row.x + 30.0f, row.cy(), 8.0f, focused ? kRed : kRed);
+        if (fonts.regular.font != nullptr)
+            ui::text(list, fonts.regular,
+                     fonts.regular.font->fit(panel_options_[static_cast<std::size_t>(i)], 26.0f,
+                                             row.w - 80.0f),
+                     row.x + 60.0f, row.cy() + 9.0f, 26.0f, ink);
     }
     list.pop_opacity();
 }

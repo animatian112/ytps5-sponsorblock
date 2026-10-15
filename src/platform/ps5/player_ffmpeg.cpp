@@ -27,6 +27,9 @@
 extern "C"
 {
 #include <libavcodec/avcodec.h>
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersink.h>
+#include <libavfilter/buffersrc.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/dict.h>
@@ -45,6 +48,8 @@ extern "C"
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -281,6 +286,11 @@ class FfmpegPlayer final : public Player
     {
         return paused_;
     }
+    void set_speed(double speed) override;
+    double speed() const override
+    {
+        return speed_;
+    }
     double buffered_s() const override;
     bool ended() const override
     {
@@ -375,6 +385,16 @@ class FfmpegPlayer final : public Player
 
     SwsContext *sws_ = nullptr;
     SwrContext *swr_ = nullptr;
+    // Playback speed and the atempo graph that stretches the 48 kHz output
+    // to it (none at 1x).
+    double speed_ = 1.0;
+    AVFilterGraph *tempo_graph_ = nullptr;
+    AVFilterContext *tempo_src_ = nullptr;
+    AVFilterContext *tempo_sink_ = nullptr;
+    std::int64_t tempo_pts_ = 0;
+    bool build_tempo();
+    void free_tempo();
+    void push_tempo(const float *stereo, std::size_t frames);
 
     // Decoded pictures waiting for their presentation time. The RGBA buffers
     // live in a pool (a 1080p frame is ~8 MiB, so they are reused, never
@@ -532,6 +552,8 @@ bool FfmpegPlayer::open(const std::string &video_url, const std::string &audio_u
     release();
     error_.clear();
     sink_ = sink;
+    if (sink_ != nullptr)
+        sink_->set_paused(false);
 
     if (video_url.empty())
     {
@@ -1735,7 +1757,123 @@ void FfmpegPlayer::emit_audio(AVFrame *frame)
             audio_seek_target_ = -1.0;
         }
     }
-    push_audio(samples, count);
+    if (tempo_graph_ != nullptr)
+        push_tempo(samples, count);
+    else
+        push_audio(samples, count);
+}
+
+bool FfmpegPlayer::build_tempo()
+{
+    free_tempo();
+    if (speed_ > 0.99 && speed_ < 1.01)
+        return true;
+    tempo_graph_ = avfilter_graph_alloc();
+    if (tempo_graph_ == nullptr)
+        return false;
+    char args[160];
+    std::snprintf(args, sizeof(args),
+                  "sample_rate=%d:sample_fmt=flt:channel_layout=stereo:time_base=1/%d", kOutputRate,
+                  kOutputRate);
+    int result = avfilter_graph_create_filter(&tempo_src_, avfilter_get_by_name("abuffer"), "in",
+                                              args, nullptr, tempo_graph_);
+    if (result >= 0)
+        result = avfilter_graph_create_filter(&tempo_sink_, avfilter_get_by_name("abuffersink"),
+                                              "out", nullptr, nullptr, tempo_graph_);
+    // atempo takes 0.5 .. 100 per stage: 0.25x is two halves.
+    char chain[200];
+    if (speed_ < 0.5)
+        std::snprintf(chain, sizeof(chain), "atempo=0.5,atempo=%.4f", speed_ / 0.5);
+    else
+        std::snprintf(chain, sizeof(chain), "atempo=%.4f", speed_);
+    std::strncat(chain, ",aformat=sample_fmts=flt:sample_rates=48000:channel_layouts=stereo",
+                 sizeof(chain) - std::strlen(chain) - 1);
+    AVFilterInOut *outputs = avfilter_inout_alloc();
+    AVFilterInOut *inputs = avfilter_inout_alloc();
+    if (result >= 0 && outputs != nullptr && inputs != nullptr)
+    {
+        outputs->name = av_strdup("in");
+        outputs->filter_ctx = tempo_src_;
+        outputs->pad_idx = 0;
+        outputs->next = nullptr;
+        inputs->name = av_strdup("out");
+        inputs->filter_ctx = tempo_sink_;
+        inputs->pad_idx = 0;
+        inputs->next = nullptr;
+        result = avfilter_graph_parse_ptr(tempo_graph_, chain, &inputs, &outputs, nullptr);
+        if (result >= 0)
+            result = avfilter_graph_config(tempo_graph_, nullptr);
+    }
+    else if (result >= 0)
+        result = AVERROR(ENOMEM);
+    avfilter_inout_free(&inputs);
+    avfilter_inout_free(&outputs);
+    if (result < 0)
+    {
+        log::line("ffmpeg: atempo %.2f unavailable: %s", speed_, av_error(result).c_str());
+        free_tempo();
+        return false;
+    }
+    tempo_pts_ = 0;
+    log::line("ffmpeg: speed %.2fx (%s)", speed_, chain);
+    return true;
+}
+
+void FfmpegPlayer::free_tempo()
+{
+    if (tempo_graph_ != nullptr)
+        avfilter_graph_free(&tempo_graph_);
+    tempo_src_ = nullptr;
+    tempo_sink_ = nullptr;
+}
+
+void FfmpegPlayer::push_tempo(const float *stereo, std::size_t frames)
+{
+    AVFrame *in = av_frame_alloc();
+    if (in == nullptr)
+        return;
+    in->format = AV_SAMPLE_FMT_FLT;
+    in->sample_rate = kOutputRate;
+    av_channel_layout_default(&in->ch_layout, 2);
+    in->nb_samples = static_cast<int>(frames);
+    in->pts = tempo_pts_;
+    tempo_pts_ += static_cast<std::int64_t>(frames);
+    if (av_frame_get_buffer(in, 0) < 0)
+    {
+        av_frame_free(&in);
+        return;
+    }
+    std::memcpy(in->data[0], stereo, frames * 2 * sizeof(float));
+    const int added = av_buffersrc_add_frame(tempo_src_, in); // takes the reference
+    av_frame_free(&in);
+    if (added < 0)
+        return;
+    AVFrame *out = av_frame_alloc();
+    if (out == nullptr)
+        return;
+    while (av_buffersink_get_frame(tempo_sink_, out) >= 0)
+    {
+        if (out->nb_samples > 0)
+            push_audio(reinterpret_cast<const float *>(out->data[0]),
+                       static_cast<std::size_t>(out->nb_samples));
+        av_frame_unref(out);
+    }
+    av_frame_free(&out);
+}
+
+void FfmpegPlayer::set_speed(double speed)
+{
+    speed = std::clamp(speed, 0.25, 2.0);
+    if (std::abs(speed - speed_) < 0.001)
+        return;
+    const double at = clock_;
+    speed_ = speed;
+    // The buffered sound was stretched for the old speed: start the sound
+    // over at the clock with the new graph (a seek drains the sink).
+    if (running_)
+        seek(at);
+    else
+        build_tempo();
 }
 
 void FfmpegPlayer::push_audio(const float *stereo, std::size_t frames)
@@ -1847,7 +1985,7 @@ void FfmpegPlayer::update_clock()
         {
             played = 0.0;
         }
-        clock_ = audio_base_s_ + played / static_cast<double>(kOutputRate);
+        clock_ = audio_base_s_ + played * speed_ / static_cast<double>(kOutputRate);
     }
     else if (wall_anchor_)
     {
@@ -1858,7 +1996,7 @@ void FfmpegPlayer::update_clock()
         }
         if (elapsed > 0.0)
         {
-            clock_ += elapsed;
+            clock_ += elapsed * speed_;
         }
     }
     wall_last_ = now;
@@ -1934,6 +2072,7 @@ void FfmpegPlayer::seek(double seconds)
     carry_frames_ = 0;
     audio_frames_written_ = 0;
     audio_base_s_ = seconds;
+    build_tempo(); // a fresh graph: nothing stretched before the seek is left in it
     audio_seek_target_ = audio_.format != nullptr ? seconds : -1.0;
     video_seek_target_ = video_.format != nullptr ? seconds : -1.0;
     video_seek_skipped_ = 0;
@@ -1971,6 +2110,10 @@ void FfmpegPlayer::set_paused(bool paused)
         return;
     }
     paused_ = paused;
+    // The sink holds its buffered second of sound while paused; without this
+    // it played on after the picture stopped and resumed out of sync.
+    if (sink_ != nullptr && audio_active_)
+        sink_->set_paused(paused_);
     if (!paused_)
     {
         wall_last_ = std::chrono::steady_clock::now();
@@ -1983,7 +2126,7 @@ void FfmpegPlayer::set_paused(bool paused)
             {
                 played = 0.0;
             }
-            audio_base_s_ = clock_ - played / static_cast<double>(kOutputRate);
+            audio_base_s_ = clock_ - played * speed_ / static_cast<double>(kOutputRate);
         }
     }
 }
@@ -2048,6 +2191,7 @@ void FfmpegPlayer::release_demuxer(Demuxer &demuxer)
 void FfmpegPlayer::release()
 {
     abort_.store(true);
+    free_tempo();
     if (swr_ != nullptr)
     {
         swr_free(&swr_);
@@ -2070,6 +2214,8 @@ void FfmpegPlayer::release()
     carry_capacity_ = 0;
     carry_frames_ = 0;
 
+    if (sink_ != nullptr)
+        sink_->set_paused(false); // the next video must not start silent
     sink_ = nullptr;
     running_ = false;
     paused_ = false;

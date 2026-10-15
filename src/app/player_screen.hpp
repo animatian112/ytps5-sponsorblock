@@ -7,6 +7,7 @@
 #include "app/context.hpp"
 #include "app/player_chrome.hpp"
 #include "app/screen.hpp"
+#include "yt/captions.hpp"
 #include "yt/player.hpp"
 #include "yt/service.hpp"
 #include "yt/sponsorblock.hpp"
@@ -53,6 +54,13 @@ class PlayerScreen final : public Screen
     void update_sponsorblock(const InputFrame &input, ui::Feedback &feedback);
     void reset_sponsorblock();
     void skip_segment_now(ui::Feedback &feedback);
+    // Opens the same video again with the quality or sound track changed,
+    // resuming where it was.
+    void reopen();
+    void open_menu(PlayerChrome::Command command);
+    void apply_pick();
+    void update_captions();
+    void draw_captions(ui::Canvas &canvas, const Context &context) const;
 
     Context &context_;
     std::unique_ptr<yt::Player> player_;
@@ -73,6 +81,22 @@ class PlayerScreen final : public Screen
     bool consumed_player_ = false;
     bool login_retry_sent_ = false; // one retry per gate, not one per frame
     float clock_ = 0.0f;
+    double history_reported_s_ = 0.0; // the position last sent to watch history
+
+    // Choices made in the player's menus; they last until the app closes.
+    int quality_override_ = 0; // a height cap; 0 follows Settings
+    std::string audio_track_;  // an audioTrack.id; empty plays the original
+    double speed_ = 1.0;
+    double resume_s_ = -1.0; // where a reopened video continues
+    std::vector<int> menu_heights_;
+    std::vector<std::string> menu_tracks_;
+    // Subtitles: the language picked last is turned on again for the next
+    // video that has it.
+    yt::captions::Loader captions_;
+    std::string caption_language_; // empty: off
+    std::string caption_url_;      // the track loaded
+    std::string captions_for_;     // the video it was chosen for
+    std::string caption_text_;
 
     // SponsorBlock: the segments of playing_id_, the seek-bar ranges drawn from
     // them, and the segment under the playhead (for the Triangle hint).

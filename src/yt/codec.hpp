@@ -56,7 +56,15 @@ const Format *select_video_format(const std::vector<Format> &formats, const Code
 // line and available to the callers.
 std::string describe_selection(const Format *format, const CodecChoice &choice);
 
-// The audio format to play: Opus before AAC, higher bitrate first.
-const Format *select_audio_format(const std::vector<Format> &formats);
+// The audio format to play. On a video with several sound tracks: the one
+// named by `track` (an audioTrack.id) when it is offered, else the original
+// (audioIsDefault, or "original" in its name) - never a dub YouTube happened to
+// list first. Then: no DRC copy, Opus before AAC, higher bitrate first.
+const Format *select_audio_format(const std::vector<Format> &formats,
+                                  const std::string &track = {});
+
+// The distinct sound tracks of an answer, in the order offered (empty for a
+// video with a single unnamed track).
+std::vector<AudioTrack> audio_tracks(const std::vector<Format> &formats);
 
 } // namespace yt

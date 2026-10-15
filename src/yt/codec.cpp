@@ -161,12 +161,52 @@ const Format *select_video_format(const std::vector<Format> &formats, const Code
     return picked;
 }
 
-const Format *select_audio_format(const std::vector<Format> &formats)
+namespace
 {
-    const Format *best = nullptr;
+
+bool names_original(const std::string &name)
+{
+    std::string lower = name;
+    for (char &c : lower)
+        c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+    return lower.find("original") != std::string::npos;
+}
+
+} // namespace
+
+const Format *select_audio_format(const std::vector<Format> &formats, const std::string &track)
+{
+    // Which track: the asked one if offered, else the default/original one.
+    bool asked_offered = false;
+    bool any_default = false;
+    bool any_original = false;
+    bool any_plain = false; // a non-DRC copy exists
     for (const Format &format : formats)
     {
         if (!is_audio_codec(format.codec) || format.url.empty())
+            continue;
+        asked_offered = asked_offered || (!track.empty() && format.audio_track_id == track);
+        any_default = any_default || format.audio_default;
+        any_original = any_original || names_original(format.audio_track_name);
+        any_plain = any_plain || !format.drc;
+    }
+    const auto wanted = [&](const Format &format)
+    {
+        if (asked_offered)
+            return format.audio_track_id == track;
+        if (any_default)
+            return format.audio_default;
+        if (any_original)
+            return names_original(format.audio_track_name);
+        return true;
+    };
+
+    const Format *best = nullptr;
+    for (const Format &format : formats)
+    {
+        if (!is_audio_codec(format.codec) || format.url.empty() || !wanted(format))
+            continue;
+        if (any_plain && format.drc)
             continue;
         if (best == nullptr)
         {
@@ -185,6 +225,31 @@ const Format *select_audio_format(const std::vector<Format> &formats)
             best = &format;
     }
     return best;
+}
+
+std::vector<AudioTrack> audio_tracks(const std::vector<Format> &formats)
+{
+    std::vector<AudioTrack> out;
+    for (const Format &format : formats)
+    {
+        if (!is_audio_codec(format.codec) || format.audio_track_id.empty())
+            continue;
+        bool known = false;
+        for (AudioTrack &track : out)
+        {
+            if (track.id == format.audio_track_id)
+            {
+                known = true;
+                track.is_default = track.is_default || format.audio_default;
+            }
+        }
+        if (!known)
+            out.push_back(
+                {format.audio_track_id,
+                 format.audio_track_name.empty() ? format.audio_track_id : format.audio_track_name,
+                 format.audio_default});
+    }
+    return out;
 }
 
 } // namespace yt

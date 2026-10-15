@@ -91,6 +91,10 @@ class RingSink final : public yt::AudioSink
     {
         ring_.drain();
     }
+    void set_paused(bool paused) override
+    {
+        ring_.set_paused(paused);
+    }
 
   private:
     hui::audio::StreamRing &ring_;

@@ -77,6 +77,10 @@ class StreamRing
     // Consumer: copies up to frames stereo frames; returns how many were there.
     std::size_t read(float *stereo, std::size_t frames)
     {
+        // Paused: nothing is consumed, so the frames already decoded wait for
+        // the resume instead of playing on past the picture.
+        if (paused_.load(std::memory_order_acquire))
+            return 0;
         // The consumer is the only thread that stores tail_. A drain() posted
         // from the producer's thread is applied here as a cut instead of
         // moving tail_ there, so the two sides can never race on it: tail_
@@ -110,6 +114,16 @@ class StreamRing
         drop_until_.store(head_.load(std::memory_order_relaxed), std::memory_order_release);
     }
 
+    // Holds the frames in place (read() hands out none) until unpaused.
+    void set_paused(bool paused)
+    {
+        paused_.store(paused, std::memory_order_release);
+    }
+    bool paused() const
+    {
+        return paused_.load(std::memory_order_acquire);
+    }
+
     // Lifetime frame counts for the log: written on the producer's side, read
     // on the consumer's, each carried by its own atomic.
     std::uint64_t total_written() const
@@ -122,6 +136,7 @@ class StreamRing
     }
 
   private:
+    std::atomic<bool> paused_{false};
     std::vector<float> samples_;
     std::size_t capacity_;
     std::atomic<std::size_t> head_{0};       // frames written, ever (producer only)

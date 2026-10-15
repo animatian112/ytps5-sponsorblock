@@ -30,6 +30,11 @@ class AudioSink
     // How many frames are buffered but not yet played (the decoder's cushion).
     virtual std::size_t buffered() const = 0;
     virtual void drain() = 0;
+    // Stops (and resumes) playing what is buffered, keeping it for the resume.
+    virtual void set_paused(bool paused)
+    {
+        (void)paused;
+    }
 };
 
 // One frame, RGBA8, owned by the player; valid until the next poll_frame().
@@ -77,6 +82,15 @@ class Player
     virtual void seek(double seconds) = 0;
     virtual void set_paused(bool paused) = 0;
     virtual bool paused() const = 0;
+    // Playback speed, 0.25 .. 2; the sound keeps its pitch.
+    virtual void set_speed(double speed)
+    {
+        (void)speed;
+    }
+    virtual double speed() const
+    {
+        return 1.0;
+    }
     // Seconds of undecoded video ahead of the clock (0 while buffering).
     virtual double buffered_s() const = 0;
     virtual bool ended() const = 0;

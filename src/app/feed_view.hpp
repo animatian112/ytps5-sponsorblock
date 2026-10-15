@@ -79,4 +79,9 @@ class FeedView
 // "12:34" from seconds; also used by the player and the cards.
 std::string format_duration(double seconds);
 
+// The picture a video card shows: YouTube's 16:9 "mqdefault" (320x180) for
+// any video, which always exists and fits a card exactly. The thumbnails the
+// feeds name are often 4:3 with black bars baked in, which a 16:9 card squashed.
+std::string card_thumbnail(const yt::FeedItem &item);
+
 } // namespace hui::app
