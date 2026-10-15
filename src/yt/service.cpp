@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
@@ -134,6 +135,8 @@ struct Service::Impl
     // generation is stale publishes nothing.
     std::uint64_t video_generation = 0;
     float video_wait_s = 0.0f;
+    // True while the worker sits out a pre-roll wait: the watchdog's clock stops.
+    bool video_holding = false;
     bool video_running = false;
     // The device flow runs on the worker; `login_running` tells the frame
     // thread that it is still in flight and `login_cancel` is the frame's
@@ -547,6 +550,46 @@ struct Service::Impl
         video.revision++;
     }
 
+    // googlevideo refuses (403) the URLs of an answer that scheduled pre-roll
+    // ads until those ads would have played out. Sleeps until then, showing a
+    // countdown; the watchdog is held meanwhile. False when the request was
+    // dropped (closed, or a newer video) while waiting.
+    bool wait_for_preroll(std::uint64_t generation, const VideoInfo &info)
+    {
+        constexpr long long kMaxWaitMs = 180 * 1000;
+        for (;;)
+        {
+            const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now().time_since_epoch())
+                                         .count();
+            const long long left_ms = info.available_at_ms - now_ms;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (generation != video_generation)
+                    return false;
+                if (left_ms <= 0 || left_ms > kMaxWaitMs)
+                {
+                    video_holding = false;
+                    return true;
+                }
+                if (!video_holding)
+                    log::line("video: %s answer had %d pre-roll ad(s); waiting %.0f s",
+                              info.client.c_str(), info.preroll_ads,
+                              static_cast<double>(left_ms) / 1000.0);
+                video_holding = true;
+                char text[96];
+                std::snprintf(text, sizeof(text), "Waiting %lld s (YouTube ad time, no ad shown)",
+                              (left_ms + 999) / 1000);
+                if (video.stage != text)
+                {
+                    video.stage = text;
+                    video.revision++;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+    }
+
     // Records one stream the worker could not play, so a failure can name
     // every client that was tried.
     void add_attempt(std::uint64_t generation, const std::string &line)
@@ -773,11 +816,15 @@ struct Service::Impl
                 selected_any = true;
                 any_format = true;
                 const Format *audio_format = select_audio_format(info.formats);
-                log::line("video: selected client=%s itag=%d %dx%d %s audio=%d ciphered=%d",
+                const bool has_n = video_format->url.find("&n=") != std::string::npos ||
+                                   video_format->url.find("?n=") != std::string::npos ||
+                                   video_format->url.find("/n/") != std::string::npos;
+                log::line("video: selected client=%s itag=%d %dx%d %s audio=%d ciphered=%d n=%d "
+                          "wait=%.0fs",
                           info.client.c_str(), video_format->itag, video_format->width,
                           video_format->height, codec_label(video_format->codec),
                           audio_format != nullptr ? audio_format->itag : 0,
-                          video_format->ciphered ? 1 : 0);
+                          video_format->ciphered ? 1 : 0, has_n ? 1 : 0, info.preroll_wait_s);
 
                 // A ciphered format arrives with its unsigned base URL; the
                 // player JS has to descramble it before it plays. Without that
@@ -825,6 +872,9 @@ struct Service::Impl
                         }
                     }
                 }
+
+                if (!wait_for_preroll(generation, info))
+                    return;
 
                 set_stage(generation, "Decoder");
                 std::unique_ptr<Player> fresh = make_player();
@@ -1170,6 +1220,7 @@ void Service::request_video(std::string video_id, CodecChoice choice)
     impl_->video_wait_s = 0.0f;
     impl_->video.waiting_s = 0.0f;
     impl_->video_running = true;
+    impl_->video_holding = false;
     impl_->wake.notify_all();
 }
 
@@ -1181,6 +1232,12 @@ void Service::video_watchdog(float dt)
         if (!impl_->video_running || impl_->video.state != Load::loading)
         {
             impl_->video_wait_s = 0.0f;
+            impl_->video_holding = false;
+            return;
+        }
+        if (impl_->video_holding)
+        {
+            impl_->video_wait_s = 0.0f; // a known wait, not a hang
             return;
         }
         impl_->video_wait_s += dt;

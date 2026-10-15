@@ -201,6 +201,39 @@ TEST(InnerTubePlayer, AUsableAnswerIsNotSabrOnlyAndKeepsNoRawBody)
     EXPECT_TRUE(info.raw_body.empty());
 }
 
+TEST(InnerTubePlayer, ReadsThePrerollWaitFromAdPlacementsAndSlots)
+{
+    // Two start placements (one skippable after 5 s, one 15 s long), a mid-roll
+    // that does not count, and a before-content slot with a sequence of 6 s and
+    // 20 s ads: googlevideo refuses the URLs for 5 + 15 + 6 + 20 = 46 s.
+    const std::string body =
+        R"({"playabilityStatus":{"status":"OK"},)"
+        R"("videoDetails":{"videoId":"ADS-AHEAD-01","title":"t","lengthSeconds":"60"},)"
+        R"("streamingData":{"adaptiveFormats":[]},)"
+        R"("adPlacements":[)"
+        R"({"adPlacementRenderer":{"config":{"adPlacementConfig":{"kind":"AD_PLACEMENT_KIND_START"}},)"
+        R"("renderer":{"instreamVideoAdRenderer":{"skipOffsetMilliseconds":5000,"playerVars":"length_seconds=30"}}}},)"
+        R"({"adPlacementRenderer":{"config":{"adPlacementConfig":{"kind":"AD_PLACEMENT_KIND_START"}},)"
+        R"("renderer":{"instreamVideoAdRenderer":{"playerVars":"video_id=x&length_seconds=15&a=b"}}}},)"
+        R"({"adPlacementRenderer":{"config":{"adPlacementConfig":{"kind":"AD_PLACEMENT_KIND_MILLISECONDS"}},)"
+        R"("renderer":{"instreamVideoAdRenderer":{"playerVars":"length_seconds=99"}}}}],)"
+        R"("adSlots":[{"adSlotRenderer":{"adSlotMetadata":{"triggerEvent":"SLOT_TRIGGER_EVENT_BEFORE_CONTENT"},)"
+        R"("fulfillmentContent":{"fulfilledLayout":{"playerBytesAdLayoutRenderer":{"renderingContent":)"
+        R"({"playerBytesSequentialLayoutRenderer":{"sequentialLayouts":[)"
+        R"({"playerBytesAdLayoutRenderer":{"renderingContent":{"instreamVideoAdRenderer":{"playerVars":"length_seconds=6"}}}},)"
+        R"({"playerBytesAdLayoutRenderer":{"renderingContent":{"instreamVideoAdRenderer":{"playerVars":"length_seconds=20"}}}})"
+        R"(]}}}}}}}]})";
+    yt::VideoInfo info;
+    ASSERT_TRUE(yt::parse_video_info(body, &info)) << info.error;
+    EXPECT_EQ(info.preroll_ads, 4);
+    EXPECT_DOUBLE_EQ(info.preroll_wait_s, 46.0);
+
+    yt::VideoInfo plain;
+    ASSERT_TRUE(yt::parse_video_info(fixture("player_ok.json"), &plain)) << plain.error;
+    EXPECT_EQ(plain.preroll_ads, 0);
+    EXPECT_DOUBLE_EQ(plain.preroll_wait_s, 0.0);
+}
+
 TEST(InnerTubePlayer, ReadsTheSignatureTimestampFromPlayerJs)
 {
     // yt-dlp's `(?:signatureTimestamp|sts)\s*:\s*([0-9]{5})` over a snippet.

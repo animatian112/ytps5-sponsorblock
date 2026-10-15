@@ -22,6 +22,7 @@
 #include "third_party/yyjson/yyjson.h"
 
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -1344,6 +1345,103 @@ std::string field_string(const char *name, std::string_view value)
     return out;
 }
 
+// ---- pre-roll wait ----------------------------------------------------------------------------
+
+// The `length_seconds` value of an ad renderer's playerVars query string.
+double query_seconds(const std::string &query, const char *key)
+{
+    const std::string needle = std::string(key) + "=";
+    std::size_t at = 0;
+    while ((at = query.find(needle, at)) != std::string::npos)
+    {
+        if (at == 0 || query[at - 1] == '&' || query[at - 1] == '?')
+        {
+            const std::size_t start = at + needle.size();
+            const std::size_t end = query.find('&', start);
+            const std::string value =
+                query.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            char *stop = nullptr;
+            const double seconds = std::strtod(value.c_str(), &stop);
+            if (stop != value.c_str() && seconds >= 0.0)
+                return seconds;
+            return -1.0;
+        }
+        at += needle.size();
+    }
+    return -1.0;
+}
+
+// One instreamVideoAdRenderer: its skip offset when YouTube lets it be skipped,
+// else its full length. -1 when neither is known.
+double ad_wait_seconds(yyjson_val *renderer)
+{
+    if (!yyjson_is_obj(renderer))
+        return -1.0;
+    yyjson_val *skip = yyjson_obj_get(renderer, "skipOffsetMilliseconds");
+    if (yyjson_is_num(skip))
+        return yyjson_get_num(skip) / 1000.0;
+    if (yyjson_is_str(skip))
+        return std::strtod(yyjson_get_str(skip), nullptr) / 1000.0;
+    return query_seconds(string_field(renderer, "playerVars"), "length_seconds");
+}
+
+void add_ad(yyjson_val *renderer, double *wait, int *ads)
+{
+    const double seconds = ad_wait_seconds(renderer);
+    if (seconds < 0.0)
+        return;
+    *wait += seconds;
+    ++*ads;
+}
+
+// Since 2025 googlevideo answers 403 to a stream URL requested before the
+// pre-roll ads of its player answer would have finished, so a client that
+// skips them has to wait that long (yt-dlp `_get_available_at_timestamp`).
+// Reads adPlacements (AD_PLACEMENT_KIND_START) and adSlots
+// (SLOT_TRIGGER_EVENT_BEFORE_CONTENT, plain or sequential layouts).
+void read_preroll(yyjson_val *root, VideoInfo *info)
+{
+    double wait = 0.0;
+    int ads = 0;
+    yyjson_val *placements = yyjson_obj_get(root, "adPlacements");
+    for (std::size_t i = 0, n = yyjson_arr_size(placements); i < n; ++i)
+    {
+        yyjson_val *placement =
+            yyjson_obj_get(yyjson_arr_get(placements, i), "adPlacementRenderer");
+        yyjson_val *config =
+            yyjson_obj_get(yyjson_obj_get(placement, "config"), "adPlacementConfig");
+        if (string_field(config, "kind") != "AD_PLACEMENT_KIND_START")
+            continue;
+        add_ad(yyjson_obj_get(yyjson_obj_get(placement, "renderer"), "instreamVideoAdRenderer"),
+               &wait, &ads);
+    }
+    yyjson_val *slots = yyjson_obj_get(root, "adSlots");
+    for (std::size_t i = 0, n = yyjson_arr_size(slots); i < n; ++i)
+    {
+        yyjson_val *slot = yyjson_obj_get(yyjson_arr_get(slots, i), "adSlotRenderer");
+        if (string_field(yyjson_obj_get(slot, "adSlotMetadata"), "triggerEvent") !=
+            "SLOT_TRIGGER_EVENT_BEFORE_CONTENT")
+            continue;
+        yyjson_val *layout =
+            yyjson_obj_get(yyjson_obj_get(yyjson_obj_get(yyjson_obj_get(slot, "fulfillmentContent"),
+                                                         "fulfilledLayout"),
+                                          "playerBytesAdLayoutRenderer"),
+                           "renderingContent");
+        add_ad(yyjson_obj_get(layout, "instreamVideoAdRenderer"), &wait, &ads);
+        yyjson_val *sequence = yyjson_obj_get(
+            yyjson_obj_get(layout, "playerBytesSequentialLayoutRenderer"), "sequentialLayouts");
+        for (std::size_t j = 0, m = yyjson_arr_size(sequence); j < m; ++j)
+        {
+            yyjson_val *content = yyjson_obj_get(
+                yyjson_obj_get(yyjson_arr_get(sequence, j), "playerBytesAdLayoutRenderer"),
+                "renderingContent");
+            add_ad(yyjson_obj_get(content, "instreamVideoAdRenderer"), &wait, &ads);
+        }
+    }
+    info->preroll_wait_s = wait;
+    info->preroll_ads = ads;
+}
+
 } // namespace
 
 // ---- the parsers (the unit-test seam) -------------------------------------------------------
@@ -1685,6 +1783,8 @@ bool parse_video_info(std::string_view json, VideoInfo *info)
         const std::size_t keep = json.size() < kMaxRawBody ? json.size() : kMaxRawBody;
         info->raw_body.assign(json.data(), keep);
     }
+
+    read_preroll(root, info);
 
     // The player JS a ciphered format needs. Answers name it directly
     // (assets.js); a few only publish the hash, from which the TV player's
@@ -2208,6 +2308,16 @@ bool InnerTube::player_variants(const std::string &video_id, std::vector<VideoIn
             if (parse_video_info(attempt.body, &candidate))
             {
                 candidate.client = client.name;
+                const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now().time_since_epoch())
+                                             .count();
+                // Rounded up, plus a second of slack for the clocks in between.
+                candidate.available_at_ms =
+                    candidate.preroll_wait_s > 0.0
+                        ? now_ms + static_cast<long long>(candidate.preroll_wait_s * 1000.0) + 1000
+                        : now_ms;
+                log::line("player: %s pre-roll ads=%d wait=%.1fs", client.name,
+                          candidate.preroll_ads, candidate.preroll_wait_s);
                 // The first answer names the player JS; its signature
                 // timestamp then rides every later request of the chain.
                 impl_->ensure_sts(candidate.player_js_url);

@@ -86,6 +86,14 @@ struct VideoInfo
     // The untouched answer body, kept only when nothing was usable, capped at
     // 1 MiB, so a SABR-only failure can be reproduced on the console.
     std::string raw_body;
+    // Seconds googlevideo refuses this answer's stream URLs (403) after the
+    // answer was handed out: the length of the pre-roll ads it scheduled, or
+    // their skip offset (yt-dlp `_get_available_at_timestamp`). 0 = none.
+    double preroll_wait_s = 0.0;
+    int preroll_ads = 0;
+    // std::chrono::steady_clock milliseconds when the URLs start to play:
+    // the answer's arrival plus preroll_wait_s. Filled by player_variants().
+    long long available_at_ms = 0;
     std::string error; // empty means the response was usable
 
     bool ok() const
