@@ -268,7 +268,7 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     form_.add_action(kNetTest, "Network test").description =
         "Try YouTube, Google sign-in and SponsorBlock and show what answers";
     form_.add_action(kCheckUpdates, "Check for updates").description =
-        "Not in the SponsorBlock build: install new builds by hand";
+        "Ask github.com/animatian112/ytps5-sponsorblock for a newer build";
 }
 
 void SettingsScreen::enter()
@@ -369,10 +369,10 @@ void SettingsScreen::activate(int id)
     }
     if (id == kCheckUpdates)
     {
-        // The upstream feed would offer a build without SponsorBlock, so the
-        // fork never asks it.
-        context_.toasts.push(ui::StatusKind::info, "Updates are manual",
-                             "Install new SponsorBlock builds by hand");
+        // The check runs in the background; update() reports how it settled.
+        yt::update::check();
+        update_watching_ = true;
+        update_watch_revision_ = yt::update::revision();
         return;
     }
     if (id != kSignOut)

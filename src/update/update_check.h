@@ -6,8 +6,9 @@
 // JSON reader, the content-version helpers and the libcurl transport are the originals,
 // the homebrew.page catalog is replaced by the repository's release feed.
 //
-// The newest release of https://github.com/haasele/ytps5 is the source of truth: its
-// tag is the content version, its body the release notes and its asset PPSA99350.zip
+// The newest release of https://github.com/animatian112/ytps5-sponsorblock (the SponsorBlock
+// build; upstream is https://github.com/haasele/ytps5) is the source of truth: its
+// tag is the content version, its body the release notes and its asset PPSA98260.zip
 // the payload. What comes back is the network's, so nothing here trusts it: every
 // length is checked, strings are copied only into buffers that hold them (the release
 // notes are the one trimmed value), and nesting is bounded.
@@ -40,14 +41,15 @@ extern "C"
 #endif
 
 /* The one release feed the app reads: the newest release of its own repository. */
-#define UPDATE_CHECK_API "https://api.github.com/repos/haasele/ytps5/releases/latest"
+#define UPDATE_CHECK_API \
+    "https://api.github.com/repos/animatian112/ytps5-sponsorblock/releases/latest"
 /* The feed answers JSON only for this type; GitHub asks every caller to name itself. */
 #define UPDATE_CHECK_ACCEPT "application/vnd.github+json"
-#define UPDATE_CHECK_USER_AGENT "ytps5"
+#define UPDATE_CHECK_USER_AGENT "ytps5-sponsorblock"
 /* GitHub's own limit for a release body; more is cut, never kept. */
 #define UPDATE_CHECK_NOTES_MAX 2000u
 /* The asset every release of this title must carry. */
-#define UPDATE_CHECK_ASSET_NAME "PPSA99350.zip"
+#define UPDATE_CHECK_ASSET_NAME "PPSA98260.zip"
 #define UPDATE_CHECK_MAX_RESPONSE 65536u
 
     /* What the whole check can say; 0 is success, everything else is why there is none. */
@@ -65,7 +67,7 @@ extern "C"
     {
         char tag[64];                           /* tag_name, as GitHub writes it */
         char notes[UPDATE_CHECK_NOTES_MAX + 1]; /* body, trimmed */
-        char asset_url[512];                    /* browser_download_url of PPSA99350.zip */
+        char asset_url[512];                    /* browser_download_url of PPSA98260.zip */
         char asset_sha256[65];                  /* the asset's digest, lowercase hex */
         uint64_t asset_size;                    /* its size in bytes */
         int has_asset;                          /* 1 when the release carries it */

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // The release lives in the project's own GitHub repository (haesele/ytps5): the newest
-// release is the source of truth, its asset PPSA99350.zip is the payload and the tag is
+// release is the source of truth, its asset PPSA98260.zip is the payload and the tag is
 // the content version the app compares against (see src/update/update_check.{h,c}).
 //
 // Downloading and staging run on their own thread (a release is megabytes and streams
