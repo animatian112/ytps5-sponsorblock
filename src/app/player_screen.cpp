@@ -553,29 +553,37 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
         return;
     }
 
-    // A scrim over the lower half: white text over bright video is unreadable.
-    canvas.list.gradient_rect({0.0f, 470.0f, gfx::kVirtualWidth, 610.0f}, 0.0f,
-                              gfx::Color::rgb(0x000000, 0.0f), gfx::Color::rgb(0x000000, 0.72f));
-
-    // Title and the codec/quality label, just above the controls.
-    const std::string full = view.info.title.empty() ? playing_id_ : view.info.title;
-    const std::string title = context.fonts.semibold.font != nullptr
-                                  ? context.fonts.semibold.font->fit(full, 28.0f, 700.0f)
-                                  : full;
-    ui::text(canvas.list, context.fonts.semibold, title, 480.0f, 826.0f, 28.0f,
-             gfx::Color::rgb(0xf1f1f1));
-    if (player_ != nullptr)
+    // Everything over the picture - scrim, title, "Up next" - follows the
+    // controls: it fades out with them and comes back on the next button
+    // press, so the video is unobstructed while it plays.
+    const float chrome = in_related_ ? 1.0f : controls_.visibility();
+    if (chrome > 0.01f)
     {
-        const std::string label = player_->quality_label();
-        if (!label.empty())
+        // A scrim over the lower half: white text over bright video is unreadable.
+        canvas.list.gradient_rect({0.0f, 470.0f, gfx::kVirtualWidth, 610.0f}, 0.0f,
+                                  gfx::Color::rgb(0x000000, 0.0f),
+                                  gfx::Color::rgb(0x000000, 0.72f * chrome));
+
+        // Title and the codec/quality label, just above the controls.
+        const std::string full = view.info.title.empty() ? playing_id_ : view.info.title;
+        const std::string title = context.fonts.semibold.font != nullptr
+                                      ? context.fonts.semibold.font->fit(full, 28.0f, 700.0f)
+                                      : full;
+        ui::text(canvas.list, context.fonts.semibold, title, 480.0f, 826.0f, 28.0f,
+                 gfx::Color::rgb(0xf1f1f1, chrome));
+        if (player_ != nullptr)
         {
-            ui::text(canvas.list, context.fonts.mono, label, 1440.0f, 826.0f, 24.0f,
-                     gfx::Color::rgb(0xd0d0d0), gfx::Align::right);
+            const std::string label = player_->quality_label();
+            if (!label.empty())
+            {
+                ui::text(canvas.list, context.fonts.mono, label, 1440.0f, 826.0f, 24.0f,
+                         gfx::Color::rgb(0xd0d0d0, chrome), gfx::Align::right);
+            }
         }
-        if (ended_)
-            ui::text(canvas.list, context.fonts.semibold, "Ended", gfx::kVirtualWidth * 0.5f,
-                     500.0f, 30.0f, gfx::Color::rgb(0xf5a524), gfx::Align::center);
     }
+    if (player_ != nullptr && ended_)
+        ui::text(canvas.list, context.fonts.semibold, "Ended", gfx::kVirtualWidth * 0.5f, 500.0f,
+                 30.0f, gfx::Color::rgb(0xf5a524), gfx::Align::center);
 
     if (!sponsor_here_.empty())
     {
@@ -593,10 +601,10 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
                  gfx::Color::rgb(0xf1f1f1));
     }
 
-    if (!related_items_.empty())
+    if (!related_items_.empty() && chrome > 0.5f)
     {
         ui::text(canvas.list, context.fonts.semibold, "Up next", 150.0f, 548.0f, 26.0f,
-                 in_related_ ? gfx::Color::rgb(0xf1f1f1) : gfx::Color::rgb(0x9a9a9a));
+                 in_related_ ? gfx::Color::rgb(0xf1f1f1) : gfx::Color::rgb(0x9a9a9a, chrome));
         related_.draw(canvas);
     }
     controls_.draw(canvas);

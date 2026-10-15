@@ -213,7 +213,7 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         kMaxHeight, "Maximum resolution", height_to_index(context_.settings.max_height), 0, 3, 1);
     // The codec ceilings (VP9 720p, AV1 480p) cap the stream below this value
     // while decoding runs on the CPU; the selector's log line names what it picked.
-    resolution.description = "Streams are capped per codec while decoding runs on the CPU";
+    resolution.description = "Software decoding caps VP9 at 720p and AVC at 1080p; Auto lifts it";
     resolution.stepper.format = [](int value) -> std::string
     {
         static const char *const kLabels[] = {"720p", "1080p", "1440p", "2160p"};

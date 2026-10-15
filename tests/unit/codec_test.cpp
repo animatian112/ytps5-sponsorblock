@@ -61,6 +61,7 @@ TEST(Codec, PrefersAvcThenVp9ThenAv1AtEqualHeight)
                                          video(Codec::vp9, 480, 2'000'000),
                                          video(Codec::avc, 480, 3'000'000)};
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     const Format *picked = yt::select_video_format(formats, choice);
     ASSERT_NE(picked, nullptr);
     EXPECT_EQ(picked->codec, Codec::avc) << "software decoding prefers AVC at equal height";
@@ -79,6 +80,7 @@ TEST(Codec, PrefersAvcThenVp9ThenAv1AtEqualHeight)
 TEST(Codec, ACodecCeilingSkipsItsOwnTallerFormat)
 {
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
 
     // VP9 tops out at 720p, so its 1080p entry loses to the 720p one.
     const std::vector<Format> vp9 = {video(Codec::vp9, 1080, 3'000'000),
@@ -102,6 +104,7 @@ TEST(Codec, TheUserCapLowersTheCeilingFurther)
     const std::vector<Format> formats = {video(Codec::avc, 1080, 4'000'000),
                                          video(Codec::avc, 720, 2'000'000)};
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     const Format *picked = yt::select_video_format(formats, choice);
     ASSERT_NE(picked, nullptr);
     EXPECT_EQ(picked->height, 1080) << "AVC may use 1080p on its own";
@@ -125,6 +128,7 @@ TEST(Codec, TheResolutionCapWinsOverCodecPreference)
 {
     const std::vector<Format> formats = mixed();
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     choice.max_height = 720;
     const Format *picked = yt::select_video_format(formats, choice);
     ASSERT_NE(picked, nullptr);
@@ -139,6 +143,7 @@ TEST(Codec, TheResolutionCapWinsOverCodecPreference)
 TEST(Codec, OnlyOverCeilingFormatsFallBackToTheLowestEnabledOne)
 {
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
 
     // Both entries sit above their ceiling; the more manageable one plays.
     std::vector<Format> formats = {video(Codec::vp9, 1080, 3'000'000),
@@ -163,6 +168,7 @@ TEST(Codec, OnlyOverCeilingFormatsFallBackToTheLowestEnabledOne)
 TEST(Codec, ADisabledCodecIsNeverReturned)
 {
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
 
     // In-ceiling but switched off: nothing.
     std::vector<Format> formats = {video(Codec::av1, 480, 1'000'000)};
@@ -171,12 +177,14 @@ TEST(Codec, ADisabledCodecIsNeverReturned)
 
     // The fallback respects the switches too.
     choice = CodecChoice();
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     choice.vp9 = false;
     formats = {video(Codec::vp9, 1080, 3'000'000)};
     EXPECT_EQ(yt::select_video_format(formats, choice), nullptr);
 
     // All codecs off still yields nothing.
     choice = CodecChoice();
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     choice.avc = false;
     choice.vp9 = false;
     choice.av1 = false;
@@ -190,6 +198,7 @@ TEST(Codec, AFormatWithoutUrlIsNeverPicked)
                                    video(Codec::avc, 720, 2'000'000)};
     formats[0].url.clear(); // the 1080p AVC entry would otherwise win
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     const Format *picked = yt::select_video_format(formats, choice);
     ASSERT_NE(picked, nullptr);
     EXPECT_EQ(picked->height, 720);
@@ -204,6 +213,7 @@ TEST(Codec, APlainUrlBeatsACipheredOne)
     std::vector<Format> formats = {video(Codec::vp9, 720, 2'000'000),
                                    ciphered_video(Codec::vp9, 1080, 3'000'000)};
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     const Format *picked = yt::select_video_format(formats, choice);
     ASSERT_NE(picked, nullptr);
     EXPECT_FALSE(picked->ciphered);
@@ -232,6 +242,7 @@ TEST(Codec, ACipheredFormatIsPickedWhenNoPlainOneCanPlay)
     // beats no stream.
     std::vector<Format> formats = {ciphered_video(Codec::avc, 720, 2'000'000)};
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     const Format *picked = yt::select_video_format(formats, choice);
     ASSERT_NE(picked, nullptr);
     EXPECT_TRUE(picked->ciphered);
@@ -253,6 +264,7 @@ TEST(Codec, ACipheredFormatIsPickedWhenNoPlainOneCanPlay)
                                   ciphered_video(Codec::avc, 1080, 4'000'000)};
     broken[0].url.clear();
     choice = CodecChoice();
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     picked = yt::select_video_format(broken, choice);
     ASSERT_NE(picked, nullptr);
     EXPECT_TRUE(picked->ciphered);
@@ -277,6 +289,7 @@ TEST(Codec, ACipheredFormatPlaysWhenNoPlainOneFitsTheCapsAndCeilings)
     std::vector<Format> formats = {video(Codec::avc, 2160, 12'000'000),
                                    ciphered_video(Codec::avc, 720, 2'000'000)};
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     choice.max_height = 1080;
     const Format *picked = yt::select_video_format(formats, choice);
     ASSERT_NE(picked, nullptr);
@@ -289,6 +302,7 @@ TEST(Codec, ACipheredFormatPlaysWhenNoPlainOneFitsTheCapsAndCeilings)
     std::vector<Format> over = {video(Codec::vp9, 1080, 3'000'000),
                                 ciphered_video(Codec::vp9, 720, 2'000'000)};
     choice = CodecChoice();
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     picked = yt::select_video_format(over, choice);
     ASSERT_NE(picked, nullptr);
     EXPECT_TRUE(picked->ciphered);
@@ -312,6 +326,7 @@ TEST(Codec, DescribeFormatNamesTheFormatAndItsUrlKind)
 TEST(Codec, DescribeSelectionNamesTheFormatAndTheAppliedCeiling)
 {
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     Format format = video(Codec::avc, 1080, 4'000'000);
     format.itag = 137;
     const std::string line = yt::describe_selection(&format, choice);
@@ -340,6 +355,7 @@ TEST(Codec, DescribeSelectionNamesTheFormatAndTheAppliedCeiling)
 TEST(Codec, SoftwareCeilingsArePerCodecAndTheCapWins)
 {
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     EXPECT_EQ(yt::codec_height_ceiling(Codec::avc, choice), 1080);
     EXPECT_EQ(yt::codec_height_ceiling(Codec::vp9, choice), 720);
     EXPECT_EQ(yt::codec_height_ceiling(Codec::av1, choice), 480);
@@ -375,6 +391,7 @@ TEST(Codec, OpusBeatsAacAndTheHigherBitrateWinsInsideOneCodec)
 TEST(Codec, CodecEnabledFollowsTheSwitches)
 {
     CodecChoice choice;
+    choice.decode = DecodeMode::software; // the CPU ceilings under test
     EXPECT_TRUE(yt::codec_enabled(choice, Codec::av1));
     choice.av1 = false;
     EXPECT_FALSE(yt::codec_enabled(choice, Codec::av1));
@@ -422,7 +439,10 @@ TEST(Codec, SoftwareModeKeepsTheOldSelection)
     const std::vector<Format> formats = mixed();
     CodecChoice software;
     software.decode = DecodeMode::software;
+    // Before Auto/Hardware lifted the AVC/VP9 ceilings every mode selected
+    // like software does; software itself must keep doing so.
     CodecChoice default_mode;
+    default_mode.decode = DecodeMode::software;
     const Format *expected = yt::select_video_format(formats, default_mode);
     const Format *picked = yt::select_video_format(formats, software);
     ASSERT_NE(picked, nullptr);
@@ -439,6 +459,30 @@ TEST(Codec, SoftwareModeKeepsTheOldSelection)
     picked = yt::select_video_format(av1_formats, av1_only);
     ASSERT_NE(picked, nullptr);
     EXPECT_EQ(picked->codec, Codec::av1);
+}
+
+TEST(Codec, TheConsoleDecoderLiftsTheAvcAndVp9Ceilings)
+{
+    const std::vector<Format> formats = {video(Codec::vp9, 2160, 9'000'000),
+                                         video(Codec::vp9, 720, 2'000'000),
+                                         video(Codec::avc, 1080, 4'000'000)};
+    CodecChoice software;
+    software.decode = DecodeMode::software;
+    software.max_height = 2160;
+    const Format *picked = yt::select_video_format(formats, software);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->height, 1080); // VP9 capped at 720p, AVC at 1080p
+
+    CodecChoice console = software;
+    console.decode = DecodeMode::auto_detect;
+    picked = yt::select_video_format(formats, console);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->height, 2160);
+
+    console.max_height = 1440; // the user's cap still binds
+    picked = yt::select_video_format(formats, console);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_LE(picked->height, 1440);
 }
 
 } // namespace
