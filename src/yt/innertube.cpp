@@ -17,6 +17,8 @@
 #include "yt/http.hpp"
 #include "yt/log.hpp"
 
+#include <algorithm>
+
 #include "third_party/yyjson/yyjson.h"
 
 #include <cctype>
@@ -653,6 +655,65 @@ void collect_lockup(yyjson_val *obj, FeedPage *page)
     page->items.push_back(std::move(item));
 }
 
+// The TV client (TVHTML5, the signed-in client) wraps each video in a
+// tileRenderer (layout as in SmartTube's TileItem): the id under
+// onSelectCommand.watchEndpoint (reelWatchEndpoint for Shorts), the title in
+// metadata.tileMetadataRenderer, thumbnail and duration in
+// header.tileHeaderRenderer. Channel and playlist tiles carry no video id and
+// are skipped.
+void collect_tile(yyjson_val *tile, FeedPage *page)
+{
+    if (!yyjson_is_obj(tile) || page->items.size() >= kMaxItems)
+        return;
+    yyjson_val *command = yyjson_obj_get(tile, "onSelectCommand");
+    std::string video_id = string_field(yyjson_obj_get(command, "watchEndpoint"), "videoId");
+    if (video_id.empty())
+        video_id = string_field(yyjson_obj_get(command, "reelWatchEndpoint"), "videoId");
+    if (video_id.empty())
+        return;
+    for (const FeedItem &existing : page->items)
+    {
+        if (existing.video_id == video_id)
+            return;
+    }
+
+    yyjson_val *header = yyjson_obj_get(yyjson_obj_get(tile, "header"), "tileHeaderRenderer");
+    yyjson_val *metadata =
+        yyjson_obj_get(yyjson_obj_get(tile, "metadata"), "tileMetadataRenderer");
+    std::string title = renderer_text(yyjson_obj_get(metadata, "title"));
+    if (title.empty())
+        title = renderer_text(yyjson_obj_get(header, "title"));
+    if (title.empty())
+        return;
+
+    FeedItem item;
+    item.video_id = std::move(video_id);
+    item.title = std::move(title);
+    // The first line's first item is the channel on video tiles.
+    yyjson_val *lines = yyjson_obj_get(metadata, "lines");
+    yyjson_val *first_line = yyjson_obj_get(yyjson_arr_get_first(lines), "lineRenderer");
+    yyjson_val *first_item =
+        yyjson_obj_get(yyjson_arr_get_first(yyjson_obj_get(first_line, "items")), "lineItemRenderer");
+    item.author = renderer_text(yyjson_obj_get(first_item, "text"));
+    item.thumbnail_url = thumbnail_text(header);
+    yyjson_val *overlays = yyjson_obj_get(header, "thumbnailOverlays");
+    const std::size_t overlay_count = yyjson_arr_size(overlays);
+    for (std::size_t index = 0; index < overlay_count; ++index)
+    {
+        yyjson_val *status =
+            yyjson_obj_get(yyjson_arr_get(overlays, index), "thumbnailOverlayTimeStatusRenderer");
+        if (!yyjson_is_obj(status))
+            continue;
+        const std::string style = string_field(status, "style");
+        if (style == "LIVE")
+            item.live = true;
+        const std::string length = renderer_text(yyjson_obj_get(status, "text"));
+        if (!length.empty() && item.length_s <= 0.0)
+            item.length_s = parse_clock(length.c_str());
+    }
+    page->items.push_back(std::move(item));
+}
+
 void collect_item(yyjson_val *obj, FeedPage *page)
 {
     if (page->items.size() >= kMaxItems)
@@ -769,6 +830,8 @@ void walk_feed(yyjson_val *value, FeedPage *page, std::string *continuation)
                 collect_channel(child, page);
             if (std::strcmp(name, "lockupViewModel") == 0)
                 collect_channel_lockup(child, page);
+            if (std::strcmp(name, "tileRenderer") == 0)
+                collect_tile(child, page);
             if (std::strcmp(name, "continuationCommand") == 0)
             {
                 yyjson_val *token = yyjson_obj_get(child, "token");
@@ -1846,6 +1909,52 @@ struct InnerTube::Impl
     {
         log::line("innertube: %s %s client=%s status=%ld items=%zu", endpoint, target.c_str(),
                   attempt.client->name, attempt.status, items);
+        // A 200 with nothing read: name the containers the answer was built
+        // from, so a format YouTube switched to is visible in the log.
+        if (items == 0 && attempt.http_ok)
+            log::line("innertube: %s answer holds %s", endpoint, renderer_census(attempt.body).c_str());
+    }
+
+    // "tvBrowseRenderer x1, tileRenderer x24, ..." - the most frequent
+    // *Renderer / *ViewModel keys of a JSON answer, scanned as text.
+    static std::string renderer_census(const std::string &body)
+    {
+        std::vector<std::pair<std::string, int>> counts;
+        std::size_t at = 0;
+        while ((at = body.find('"', at)) != std::string::npos)
+        {
+            const std::size_t end = body.find('"', at + 1);
+            if (end == std::string::npos)
+                break;
+            const std::string_view key(body.data() + at + 1, end - at - 1);
+            at = end + 1;
+            if (at >= body.size() || body[at] != ':' || key.size() > 48)
+                continue;
+            if (!key.ends_with("Renderer") && !key.ends_with("ViewModel"))
+                continue;
+            bool found = false;
+            for (auto &entry : counts)
+            {
+                if (entry.first == key)
+                {
+                    ++entry.second;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found && counts.size() < 64)
+                counts.emplace_back(std::string(key), 1);
+        }
+        std::sort(counts.begin(), counts.end(),
+                  [](const auto &a, const auto &b) { return a.second > b.second; });
+        std::string out;
+        for (std::size_t i = 0; i < counts.size() && i < 6; ++i)
+        {
+            if (!out.empty())
+                out += ", ";
+            out += counts[i].first + " x" + std::to_string(counts[i].second);
+        }
+        return out.empty() ? "no renderers (" + std::to_string(body.size()) + " bytes)" : out;
     }
 
     // The text one attempt contributes to the accumulated error: the client

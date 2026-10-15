@@ -323,3 +323,42 @@ TEST(InnerTubeChannel, HeaderAvatarFallsBackThroughThreeShapes)
 }
 
 } // namespace
+
+// The signed-in TV client (TVHTML5) answers browse with tileRenderers inside
+// shelves (layout as in SmartTube's TileItem); channel tiles carry no video.
+TEST(InnerTube, ReadsTheTvClientsTiles)
+{
+    const char *json = R"({"contents":{"tvBrowseRenderer":{"content":{"tvSurfaceContentRenderer":
+      {"content":{"sectionListRenderer":{"contents":[{"shelfRenderer":{"content":
+      {"horizontalListRenderer":{"items":[
+        {"tileRenderer":{"style":"TILE_STYLE_YTLR_DEFAULT","contentType":"TILE_CONTENT_TYPE_VIDEO",
+          "header":{"tileHeaderRenderer":{"thumbnail":{"thumbnails":[
+              {"url":"https://i.ytimg.com/vi/aaaaaaaaaaa/default.jpg","width":120,"height":90},
+              {"url":"https://i.ytimg.com/vi/aaaaaaaaaaa/hq720.jpg","width":1280,"height":720}]},
+            "thumbnailOverlays":[{"thumbnailOverlayTimeStatusRenderer":
+              {"text":{"simpleText":"12:34"},"style":"DEFAULT"}}]}},
+          "metadata":{"tileMetadataRenderer":{"title":{"simpleText":"A tile video"},
+            "lines":[{"lineRenderer":{"items":[{"lineItemRenderer":{"text":{"runs":[{"text":"Some Channel"}]}}},
+                                               {"lineItemRenderer":{"text":{"simpleText":"1M views"}}}]}}]}},
+          "onSelectCommand":{"watchEndpoint":{"videoId":"aaaaaaaaaaa"}}}},
+        {"tileRenderer":{"contentType":"TILE_CONTENT_TYPE_VIDEO",
+          "header":{"tileHeaderRenderer":{"thumbnailOverlays":[{"thumbnailOverlayTimeStatusRenderer":
+              {"text":{"simpleText":"LIVE"},"style":"LIVE"}}]}},
+          "metadata":{"tileMetadataRenderer":{"title":{"runs":[{"text":"Live now"}]}}},
+          "onSelectCommand":{"watchEndpoint":{"videoId":"bbbbbbbbbbb"}}}},
+        {"tileRenderer":{"contentType":"TILE_CONTENT_TYPE_CHANNEL",
+          "metadata":{"tileMetadataRenderer":{"title":{"simpleText":"A channel"}}},
+          "onSelectCommand":{"browseEndpoint":{"browseId":"UCxxxx"}}}}
+      ]}}}}]}}}}}}})";
+    yt::FeedPage page;
+    ASSERT_TRUE(yt::parse_feed_page(json, &page));
+    ASSERT_EQ(page.items.size(), 2u);
+    EXPECT_EQ(page.items[0].video_id, "aaaaaaaaaaa");
+    EXPECT_EQ(page.items[0].title, "A tile video");
+    EXPECT_EQ(page.items[0].author, "Some Channel");
+    EXPECT_EQ(page.items[0].thumbnail_url, "https://i.ytimg.com/vi/aaaaaaaaaaa/hq720.jpg");
+    EXPECT_DOUBLE_EQ(page.items[0].length_s, 754.0);
+    EXPECT_FALSE(page.items[0].live);
+    EXPECT_EQ(page.items[1].video_id, "bbbbbbbbbbb");
+    EXPECT_TRUE(page.items[1].live);
+}
