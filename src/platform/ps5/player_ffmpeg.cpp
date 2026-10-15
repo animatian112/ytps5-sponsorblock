@@ -21,6 +21,7 @@
 
 // Console-only: the Videodec2 hardware path and its reachability probe live
 // under src/platform/ps5/, which the host builds do not compile.
+#include "platform/ps5/range_stream.hpp"
 #include "platform/ps5/videodec.hpp"
 
 extern "C"
@@ -176,6 +177,10 @@ Codec codec_from_av_id(AVCodecID id)
 // One demuxer/decoder pair. Video and audio each own one of these.
 struct Demuxer
 {
+    // An http(s) URL is read through `range` (bounded range requests) behind
+    // the custom `io`; both outlive `format`, which reads from them.
+    std::unique_ptr<hui::ps5::RangeStream> range;
+    AVIOContext *io = nullptr;
     AVFormatContext *format = nullptr;
     AVCodecContext *codec = nullptr;
     AVStream *stream = nullptr;
@@ -282,6 +287,7 @@ class FfmpegPlayer final : public Player
 
   private:
     static int interrupt_cb(void *opaque);
+    static void release_io(Demuxer &demuxer);
 
     bool open_demuxer(Demuxer &demuxer, const std::string &url, bool video);
     bool init_audio_resampler();
@@ -647,17 +653,56 @@ bool FfmpegPlayer::open_demuxer(Demuxer &demuxer, const std::string &url, bool v
     format->interrupt_callback.callback = &FfmpegPlayer::interrupt_cb;
     format->interrupt_callback.opaque = this;
 
-    AVDictionary *options = nullptr;
-    av_dict_set(&options, "timeout", kNetworkTimeout, 0);
-    av_dict_set(&options, "rw_timeout", kNetworkTimeout, 0);
-    av_dict_set(&options, "reconnect", "1", 0);
     log::line("ffmpeg: open %s url=%s", video ? "video" : "audio", url.substr(0, 64).c_str());
+    // googlevideo cuts ffmpeg's single open-ended request after a few MiB and
+    // refuses the reconnect (403): read https streams in bounded ranges.
+    if (url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0)
+    {
+        demuxer.range = std::make_unique<hui::ps5::RangeStream>(url, video ? "video" : "audio",
+                                                                &FfmpegPlayer::interrupt_cb, this);
+        std::string range_error;
+        const int started = demuxer.range->start(&range_error);
+        if (started < 0)
+        {
+            error_ =
+                "avformat_open_input: " + (range_error.empty() ? av_error(started) : range_error);
+            avformat_free_context(format);
+            release_io(demuxer);
+            return false;
+        }
+        constexpr int kIoBuffer = 64 << 10;
+        auto *buffer = static_cast<unsigned char *>(av_malloc(kIoBuffer));
+        demuxer.io = buffer != nullptr
+                         ? avio_alloc_context(buffer, kIoBuffer, 0, demuxer.range.get(),
+                                              &hui::ps5::RangeStream::read_cb, nullptr,
+                                              &hui::ps5::RangeStream::seek_cb)
+                         : nullptr;
+        if (demuxer.io == nullptr)
+        {
+            av_free(buffer);
+            error_ = "avio_alloc_context failed";
+            avformat_free_context(format);
+            release_io(demuxer);
+            return false;
+        }
+        format->pb = demuxer.io;
+        format->flags |= AVFMT_FLAG_CUSTOM_IO;
+    }
+
+    AVDictionary *options = nullptr;
+    if (demuxer.io == nullptr)
+    {
+        av_dict_set(&options, "timeout", kNetworkTimeout, 0);
+        av_dict_set(&options, "rw_timeout", kNetworkTimeout, 0);
+        av_dict_set(&options, "reconnect", "1", 0);
+    }
     int result = avformat_open_input(&format, url.c_str(), nullptr, &options);
     av_dict_free(&options);
     if (result < 0)
     {
         error_ = "avformat_open_input: " + av_error(result);
-        avformat_close_input(&format);
+        avformat_close_input(&format); // frees nothing of the custom io
+        release_io(demuxer);
         return false;
     }
     demuxer.format = format;
@@ -1948,6 +1993,16 @@ double FfmpegPlayer::buffered_s() const
     return ahead > 0.0 ? ahead : 0.0;
 }
 
+void FfmpegPlayer::release_io(Demuxer &demuxer)
+{
+    if (demuxer.io != nullptr)
+    {
+        av_freep(&demuxer.io->buffer);
+        avio_context_free(&demuxer.io);
+    }
+    demuxer.range.reset();
+}
+
 void FfmpegPlayer::release_demuxer(Demuxer &demuxer)
 {
     if (demuxer.packet != nullptr)
@@ -1966,6 +2021,7 @@ void FfmpegPlayer::release_demuxer(Demuxer &demuxer)
     {
         avformat_close_input(&demuxer.format);
     }
+    release_io(demuxer);
     demuxer.stream = nullptr;
     demuxer.stream_index = -1;
     demuxer.eof = false;
