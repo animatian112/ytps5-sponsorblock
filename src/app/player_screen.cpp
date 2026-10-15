@@ -38,20 +38,20 @@ constexpr const char *kNoStream = "No stream for the enabled codecs";
 // without FTP. Newest last, each line clipped to 96 characters.
 void draw_log_tail(ui::Canvas &canvas, const Context &context)
 {
-    std::string lines[6];
-    const std::size_t count = yt::log::recent(lines, 6);
+    std::string lines[12];
+    const std::size_t count = yt::log::recent(lines, 12);
     if (count == 0)
         return;
     constexpr float kLineHeight = 22.0f;
-    constexpr std::size_t kMaxChars = 96;
+    constexpr std::size_t kMaxChars = 140;
     float y = 1010.0f - static_cast<float>(count - 1) * kLineHeight;
     for (std::size_t i = 0; i < count; ++i)
     {
         std::string shown = lines[i];
         if (shown.size() > kMaxChars)
             shown.resize(kMaxChars);
-        ui::text(canvas.list, context.fonts.mono, shown, 150.0f, y, 18.0f,
-                 gfx::Color::rgb(0x8a8a8a));
+        ui::text(canvas.list, context.fonts.mono, shown, 60.0f, y, 17.0f,
+                 gfx::Color::rgb(0x9a9a9a));
         y += kLineHeight;
     }
 }
@@ -532,8 +532,9 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
         if (!view.stage.empty())
             ui::text(canvas.list, context.fonts.regular, view.stage, gfx::kVirtualWidth * 0.5f,
                      556.0f, 22.0f, gfx::Color::rgb(0x777777), gfx::Align::center);
-        if (view.waiting_s >= 3.0f)
-            draw_log_tail(canvas, context);
+        // Always: the log names which client and which URL failed, readable
+        // on the television without FTP.
+        draw_log_tail(canvas, context);
         const char *hint = needs_login ? "X: sign in      Circle: back" : "Circle: back";
         ui::text(canvas.list, context.fonts.regular, hint, gfx::kVirtualWidth * 0.5f, 600.0f, 24.0f,
                  gfx::Color::rgb(0x777777), gfx::Align::center);
