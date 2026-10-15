@@ -29,7 +29,8 @@ for file in "${repository_files[@]}"; do
             header=$(head -n 20 "$file")
             # youtube-tv files carry the app's own name in the first line.
             grep -Eq 'youtube-tv|ps5-homebrew-ui|ps5-native-app-boilerplate' <<<"$header"
-            grep -Fq 'Copyright (C) 2026 BlackBearReloaded' <<<"$header"
+            # The SponsorBlock build's own files carry its contributors' line.
+            grep -Eq 'Copyright \(C\) 2026 (BlackBearReloaded|SponsorBlock for PS5 contributors)' <<<"$header"
             grep -Fq 'SPDX-License-Identifier: GPL-3.0-or-later' <<<"$header"
             ((checked += 1))
             ;;

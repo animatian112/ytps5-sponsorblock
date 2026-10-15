@@ -152,3 +152,16 @@ cover art inside the app is rendered at start-up from invented titles; no real
 product's name, artwork or trademark is used.
 
 No proprietary runtime module, encryption key, or game file is included.
+
+## SponsorBlock client library (src/third_party/sponsorblock)
+
+MIT License. Copyright (c) 2026 SponsorBlock for PS5 contributors. The segment
+and skip rules are ported from SmartTube, Copyright (c) 2020-present yuliskov
+(MIT). Segment data comes from the SponsorBlock database
+(https://sponsor.ajay.app), licensed CC BY-NC-SA 4.0.
+
+## Mozilla CA certificate store (src/third_party/mozilla/ca_bundle.c)
+
+The root certificates of the Mozilla CA program (as packaged by Debian's
+ca-certificates), embedded as C by the SponsorBlock build. Mozilla Public
+License 2.0.

@@ -221,8 +221,8 @@ extern int sceNetSocket(const char *name, int family, int type, int protocol);
 extern int sceNetSocketClose(int socket);
 extern int sceNetSetsockopt(int socket, int level, int option, const void *value,
                             unsigned int size);
-extern int sceNetSendto(int socket, const void *data, size_t length, int flags,
-                        const void *address, unsigned int address_length);
+extern int sceNetSendto(int socket, const void *data, size_t length, int flags, const void *address,
+                        unsigned int address_length);
 extern int sceNetRecv(int socket, void *data, size_t length, int flags);
 
 static uint16_t console_dns_id(void)
@@ -366,8 +366,7 @@ void console_curl_describe_lookup(const char *name, char *out, size_t size)
         console_dns_format(system_address.s_addr, system_text, sizeof(system_text));
     pthread_mutex_lock(&console_dns_lock);
     snprintf(out, size, "DNS own %s%s%s%s, PS5 %s", own_text, own_count > 0 ? " (" : "",
-             own_count > 0 ? console_dns_last_server : "", own_count > 0 ? ")" : "",
-             system_text);
+             own_count > 0 ? console_dns_last_server : "", own_count > 0 ? ")" : "", system_text);
     pthread_mutex_unlock(&console_dns_lock);
 }
 

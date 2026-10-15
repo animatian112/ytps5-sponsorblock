@@ -14,20 +14,22 @@
 #include <stdint.h>
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 #define DNS_MAX_PACKET 1500
 
-/* Writes an A/IN query with recursion desired. Returns its length, or -1 for a
- * name that doesn't fit or isn't a hostname. */
-int dns_build_query(uint8_t *buffer, size_t capacity, uint16_t id, const char *name);
+    /* Writes an A/IN query with recursion desired. Returns its length, or -1 for a
+     * name that doesn't fit or isn't a hostname. */
+    int dns_build_query(uint8_t *buffer, size_t capacity, uint16_t id, const char *name);
 
-/* Reads the answer to a query sent with `id`. Fills up to `max` IPv4 addresses
- * (network byte order) and returns how many, 0 when the name has none,
- * -1 for a malformed packet or another id, -2 - rcode when the server refused
- * (-5 = NXDOMAIN). */
-int dns_parse_a(const uint8_t *packet, size_t length, uint16_t id, uint32_t *addresses, int max);
+    /* Reads the answer to a query sent with `id`. Fills up to `max` IPv4 addresses
+     * (network byte order) and returns how many, 0 when the name has none,
+     * -1 for a malformed packet or another id, -2 - rcode when the server refused
+     * (-5 = NXDOMAIN). */
+    int dns_parse_a(const uint8_t *packet, size_t length, uint16_t id, uint32_t *addresses,
+                    int max);
 
 #ifdef __cplusplus
 }

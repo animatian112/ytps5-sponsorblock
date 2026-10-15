@@ -45,6 +45,6 @@ src/yt/log.cpp
 src/yt/service.cpp
 src/yt/sponsorblock.cpp
 src/yt/dns.c
-src/sponsorblock/sponsorblock.c
+src/third_party/sponsorblock/sponsorblock.c
 src/yt/types.cpp
 src/yt/update.cpp

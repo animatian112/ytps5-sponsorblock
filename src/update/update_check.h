@@ -41,7 +41,7 @@ extern "C"
 #endif
 
 /* The one release feed the app reads: the newest release of its own repository. */
-#define UPDATE_CHECK_API \
+#define UPDATE_CHECK_API                                                                           \
     "https://api.github.com/repos/animatian112/ytps5-sponsorblock/releases/latest"
 /* The feed answers JSON only for this type; GitHub asks every caller to name itself. */
 #define UPDATE_CHECK_ACCEPT "application/vnd.github+json"

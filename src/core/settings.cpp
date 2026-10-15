@@ -15,7 +15,7 @@ namespace
 {
 constexpr std::uint8_t kVersion = 4;
 constexpr std::uint8_t kVersionWithoutSponsorBlock = 3;
-}
+} // namespace
 
 std::string encode_settings(const Settings &settings)
 {

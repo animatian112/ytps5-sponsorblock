@@ -7,7 +7,7 @@
 #include "yt/http.hpp"
 #include "yt/log.hpp"
 
-#include "sponsorblock/sponsorblock.h"
+#include "third_party/sponsorblock/sponsorblock.h"
 
 #include <pthread.h>
 
@@ -301,9 +301,9 @@ Decision Skipper::poll(double position_s, double duration_s, bool playing, Mode 
     if (tracker_ == nullptr || !playing || mode == Mode::mark)
         return decision;
     sb_decision raw{};
-    const int kind = sb_tracker_poll(static_cast<sb_tracker *>(tracker_),
-                                     static_cast<long>(position_s * 1000.0),
-                                     static_cast<long>(duration_s * 1000.0), 1.0, &raw);
+    const int kind =
+        sb_tracker_poll(static_cast<sb_tracker *>(tracker_), static_cast<long>(position_s * 1000.0),
+                        static_cast<long>(duration_s * 1000.0), 1.0, &raw);
     if (kind == SB_DECIDE_NONE || raw.segment == nullptr)
         return decision;
     decision.kind = kind == SB_DECIDE_ASK ? Kind::ask : Kind::skip;

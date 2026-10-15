@@ -678,8 +678,7 @@ void collect_tile(yyjson_val *tile, FeedPage *page)
     }
 
     yyjson_val *header = yyjson_obj_get(yyjson_obj_get(tile, "header"), "tileHeaderRenderer");
-    yyjson_val *metadata =
-        yyjson_obj_get(yyjson_obj_get(tile, "metadata"), "tileMetadataRenderer");
+    yyjson_val *metadata = yyjson_obj_get(yyjson_obj_get(tile, "metadata"), "tileMetadataRenderer");
     std::string title = renderer_text(yyjson_obj_get(metadata, "title"));
     if (title.empty())
         title = renderer_text(yyjson_obj_get(header, "title"));
@@ -692,8 +691,8 @@ void collect_tile(yyjson_val *tile, FeedPage *page)
     // The first line's first item is the channel on video tiles.
     yyjson_val *lines = yyjson_obj_get(metadata, "lines");
     yyjson_val *first_line = yyjson_obj_get(yyjson_arr_get_first(lines), "lineRenderer");
-    yyjson_val *first_item =
-        yyjson_obj_get(yyjson_arr_get_first(yyjson_obj_get(first_line, "items")), "lineItemRenderer");
+    yyjson_val *first_item = yyjson_obj_get(
+        yyjson_arr_get_first(yyjson_obj_get(first_line, "items")), "lineItemRenderer");
     item.author = renderer_text(yyjson_obj_get(first_item, "text"));
     item.thumbnail_url = thumbnail_text(header);
     yyjson_val *overlays = yyjson_obj_get(header, "thumbnailOverlays");
@@ -1912,7 +1911,8 @@ struct InnerTube::Impl
         // A 200 with nothing read: name the containers the answer was built
         // from, so a format YouTube switched to is visible in the log.
         if (items == 0 && attempt.http_ok)
-            log::line("innertube: %s answer holds %s", endpoint, renderer_census(attempt.body).c_str());
+            log::line("innertube: %s answer holds %s", endpoint,
+                      renderer_census(attempt.body).c_str());
     }
 
     // "tvBrowseRenderer x1, tileRenderer x24, ..." - the most frequent

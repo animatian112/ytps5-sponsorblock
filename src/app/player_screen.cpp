@@ -240,8 +240,8 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
         if (manual.kind == sb::Kind::skip)
         {
             player_->seek(manual.target_s);
-            context_.toasts.push(ui::StatusKind::info, "Skipped " + manual.label,
-                                 "SponsorBlock", 2.5f);
+            context_.toasts.push(ui::StatusKind::info, "Skipped " + manual.label, "SponsorBlock",
+                                 2.5f);
             feedback.rumble(0.2f, 0.02f);
             sponsor_here_.clear();
         }
