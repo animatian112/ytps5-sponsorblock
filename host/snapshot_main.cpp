@@ -343,6 +343,32 @@ int main(int argc, char **argv)
         "Chapters:\n0:00 Intro\n1:30 The player answer\n6:10 Streams and ranges\n"
         "14:45 SponsorBlock\n\nThanks for watching!";
     video.info.length_s = 1548.0;
+    // A realistic ladder for the quality menu: AVC to 1080p, VP9 to 2160p.
+    {
+        const struct
+        {
+            yt::Codec codec;
+            int height;
+            double fps;
+            long long bitrate;
+        } kLadder[] = {
+            {yt::Codec::vp9, 2160, 30.0, 17800000}, {yt::Codec::vp9, 1440, 30.0, 9100000},
+            {yt::Codec::avc, 1080, 30.0, 5020000},  {yt::Codec::avc, 720, 30.0, 2680000},
+            {yt::Codec::avc, 480, 30.0, 1350000},   {yt::Codec::avc, 360, 30.0, 1010000},
+            {yt::Codec::avc, 240, 30.0, 460000},    {yt::Codec::avc, 144, 15.0, 210000},
+        };
+        for (const auto &rung : kLadder)
+        {
+            yt::Format format;
+            format.url = "https://example.invalid/stream";
+            format.codec = rung.codec;
+            format.height = rung.height;
+            format.width = rung.height * 16 / 9;
+            format.fps = rung.fps;
+            format.bitrate = rung.bitrate;
+            video.info.formats.push_back(format);
+        }
+    }
     if (std::getenv("YT_SNAPSHOT_FAIL") != nullptr)
     {
         yt::log::line("video: request id=aqz-KE-bpKQ cap=1080 codecs avc=1 vp9=1 av1=1");

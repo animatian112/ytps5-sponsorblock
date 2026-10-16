@@ -1060,14 +1060,34 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
 
     if (view.state == yt::Load::loading || (!consumed_player_ && player_ == nullptr))
     {
-        std::string text = "Loading video";
-        if (!view.stage.empty())
-            text += " - " + view.stage;
-        text += "  " + std::to_string(static_cast<int>(view.waiting_s)) + " s";
-        ui::text(canvas.list, context.fonts.semibold, text, gfx::kVirtualWidth * 0.5f, 500.0f,
-                 34.0f, gfx::Color::rgb(0xf1f1f1), gfx::Align::center);
-        if (view.waiting_s >= 3.0f)
+        // YouTube's spinner: a red arc that turns while it grows and
+        // shrinks (Material's indeterminate progress circle).
+        constexpr float kPi = 3.14159265f;
+        constexpr float kCycle = 1.4f;
+        const float cycles = clock_ / kCycle;
+        const float phase = cycles - std::floor(cycles);
+        const auto ease = [](float x) { return x * x * (3.0f - 2.0f * x); };
+        const float grown = 1.35f * kPi;
+        float start = clock_ * 4.0f + std::floor(cycles) * grown;
+        float sweep = 0.0f;
+        if (phase < 0.5f)
+            sweep = 0.15f * kPi + grown * ease(phase / 0.5f);
+        else
+        {
+            const float shrink = ease((phase - 0.5f) / 0.5f);
+            sweep = 0.15f * kPi + grown * (1.0f - shrink);
+            start += grown * shrink;
+        }
+        canvas.list.arc(gfx::kVirtualWidth * 0.5f, gfx::kVirtualHeight * 0.5f, 52.0f, 7.0f, start,
+                        sweep, gfx::Color::rgb(0xff0033));
+        // Only a long wait says more: what the app is waiting on.
+        if (view.waiting_s >= 8.0f)
+        {
+            if (!view.stage.empty())
+                ui::text(canvas.list, context.fonts.regular, view.stage, gfx::kVirtualWidth * 0.5f,
+                         640.0f, 24.0f, gfx::Color::rgb(0x9e9e9e), gfx::Align::center);
             draw_log_tail(canvas, context);
+        }
         return;
     }
 

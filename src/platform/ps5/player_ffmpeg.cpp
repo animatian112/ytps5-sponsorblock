@@ -2245,7 +2245,12 @@ void FfmpegPlayer::release()
     carry_frames_ = 0;
 
     if (sink_ != nullptr)
+    {
+        // The sound already decoded must not play on after the video was
+        // left (up to half a second sat in the ring).
+        sink_->drain();
         sink_->set_paused(false); // the next video must not start silent
+    }
     sink_ = nullptr;
     running_ = false;
     paused_ = false;

@@ -1219,6 +1219,9 @@ struct Service::Impl
         // The ping goes to the stats host the answer names and to www (where
         // a web session's history is kept); the shared cpn makes them one view.
         const std::string ping = watch::playback_ping(playback, cpn, tv_watch_client());
+        // The address in full (the token travels in a header, not in it): what
+        // YouTube was told is the first thing to compare when history stays empty.
+        log::line("history: playback url %s", ping.c_str());
         if (watch::account_host(ping) != ping)
         {
             const http::Response stats = http::get(ping, watch_headers(token), 8);
@@ -1807,6 +1810,7 @@ void *run_detached_get(void *argument)
     std::unique_ptr<DetachedGet> job(static_cast<DetachedGet *>(argument));
     for (const std::string &url : job->urls)
     {
+        log::line("history: watchtime url %s", url.c_str());
         const http::Response response = http::get(url, job->headers, 8);
         log::line("history: watchtime ping -> %ld %s", response.status, response.error.c_str());
     }
@@ -2075,7 +2079,16 @@ VideoView Service::video() const
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     VideoView view = impl_->video;
-    view.info.formats.clear(); // the frame thread only needs the tags
+    // The frame thread reads the formats for the quality and audio-track
+    // menus only: the long stream URLs and cipher strings are dropped from its
+    // copy (a one-character url keeps them "playable" for the selector).
+    for (Format &format : view.info.formats)
+    {
+        format.url = format.url.empty() ? std::string() : std::string("-");
+        format.cipher_url.clear();
+        format.cipher_s.clear();
+        format.cipher_sp.clear();
+    }
     return view;
 }
 

@@ -5,7 +5,7 @@
 // On the console the standard streams are hard to reach, so the app keeps its
 // own line log in the title's storage (/download0/hui/dev/yt.log), which a PC
 // can read over FTP as
-// /mnt/sandbox/PPSA99350_000/download0/hui/dev/yt.log while the app runs.
+// /mnt/sandbox/PPSA98260_000/download0/hui/dev/yt.log while the app runs.
 // Every stage of a video request writes one line, and the last lines stay in
 // memory so the player screen can show them: a failure has to be visible on
 // the television, not only in a file.
@@ -88,7 +88,7 @@ const char *build_stamp()
 
 void line(const char *format, ...)
 {
-    char text[512];
+    char text[2048]; // room for a full stats URL
     va_list arguments;
     va_start(arguments, format);
     std::vsnprintf(text, sizeof(text), format, arguments);

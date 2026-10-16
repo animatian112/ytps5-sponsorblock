@@ -167,6 +167,8 @@ class App
     CardMenu card_menu_;
     yt::FeedItem menu_item_;
     bool hold_active_ = false;
+    bool avatar_focus_ = false; // the sidebar's account picture has the focus
+    void open_account_menu();
     float hold_time_ = 0.0f;
     bool waiting_playlists_ = false; // "Save to playlist" asked before the list loaded
     std::vector<yt::FeedItem> menu_playlists_;

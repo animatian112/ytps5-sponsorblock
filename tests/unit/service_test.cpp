@@ -206,7 +206,7 @@ TEST(Service, CancelSignInWithNothingInFlightAnswersImmediately)
     std::remove(path.c_str());
 }
 
-TEST(Service, TheFrameViewDropsFormatsButKeepsTheTitle)
+TEST(Service, TheFrameViewKeepsFormatsWithoutTheirUrls)
 {
     const std::string path = token_path();
     Service service(path, "", nullptr);
@@ -229,7 +229,10 @@ TEST(Service, TheFrameViewDropsFormatsButKeepsTheTitle)
     const VideoView frame = service.video();
     EXPECT_EQ(frame.state, Load::ready);
     EXPECT_EQ(frame.info.title, "Big Buck Bunny");
-    EXPECT_TRUE(frame.info.formats.empty());
+    // The quality menu needs the ladder, not the long stream URLs.
+    ASSERT_EQ(frame.info.formats.size(), 1u);
+    EXPECT_EQ(frame.info.formats[0].height, 1080);
+    EXPECT_EQ(frame.info.formats[0].url, "-");
 
     std::remove(path.c_str());
 }

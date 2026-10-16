@@ -525,7 +525,10 @@ enum CardPick
     kPickDontRecommend,
     kPickRefresh,
     kPickOpen,
+    kPickAddAccount,
+    kPickSignOut,
     kPickPlaylistBase = 1000, // + the index into menu_playlists_
+    kPickAccountBase = 2000,  // + the index into the saved accounts
 };
 // How long Cross is held before the card menu opens instead of the video.
 constexpr float kHoldSeconds = 0.45f;
@@ -623,6 +626,25 @@ void App::open_playlist_menu()
     card_menu_.open("Add to playlist", std::move(entries));
 }
 
+void App::open_account_menu()
+{
+    // SmartTube's account orb: the remembered accounts to switch between.
+    const std::vector<yt::Service::AccountInfo> accounts = service_.saved_accounts();
+    std::vector<CardMenu::Entry> entries;
+    for (std::size_t i = 0; i < accounts.size(); ++i)
+    {
+        const std::string name =
+            accounts[i].name.empty() ? "Account " + std::to_string(i + 1) : accounts[i].name;
+        entries.push_back({accounts[i].active ? name + "  (current)" : name,
+                           kPickAccountBase + static_cast<int>(i)});
+    }
+    if (accounts.size() < 3)
+        entries.push_back({service_.signed_in() ? "Add account" : "Sign in", kPickAddAccount});
+    if (service_.signed_in())
+        entries.push_back({"Sign out", kPickSignOut});
+    card_menu_.open("Accounts", std::move(entries));
+}
+
 void App::refresh_home()
 {
     service_.request_home(true);
@@ -636,6 +658,36 @@ void App::refresh_home()
 
 void App::apply_card_pick(int pick)
 {
+    if (pick >= kPickAccountBase)
+    {
+        const int index = pick - kPickAccountBase;
+        const auto accounts = service_.saved_accounts();
+        if (index >= 0 && index < static_cast<int>(accounts.size()) &&
+            !accounts[static_cast<std::size_t>(index)].active)
+        {
+            service_.switch_account(index);
+            toasts_.push(ui::StatusKind::info, "Switching account", {}, 2.0f);
+        }
+        return;
+    }
+    if (pick == kPickAddAccount)
+    {
+        if (service_.signed_in())
+            service_.add_account();
+        else
+            service_.request_sign_in();
+        login_return_ = current_ == kLoginScreen ? previous_tab() : current_;
+        rail_focused_ = false;
+        avatar_focus_ = false;
+        show(kLoginScreen);
+        return;
+    }
+    if (pick == kPickSignOut)
+    {
+        service_.sign_out();
+        toasts_.push(ui::StatusKind::info, "Signed out");
+        return;
+    }
     const yt::FeedItem &item = menu_item_;
     if (pick >= kPickPlaylistBase)
     {
@@ -733,13 +785,37 @@ void App::update(const InputFrame &input, float dt)
     // section, keeping the rail, so the player can go Home -> Subscriptions ->
     // Settings without L1/R1.
     bool rail_keep_expanded = false;
+    // A menu opened in this frame does not read the press that opened it.
+    const bool menu_was_active = card_menu_.active();
     if (current_ >= kTabCount)
         rail_focused_ = false;
-    else if (!update_held)
+    else if (!update_held && !menu_was_active)
     {
         if (input.is_pressed(Action::touch))
             rail_focused_ = !rail_focused_;
-        if (rail_focused_)
+        if (!rail_focused_)
+            avatar_focus_ = false;
+        if (rail_focused_ && avatar_focus_)
+        {
+            // The account picture beside the search orb.
+            if (input.is_pressed(Action::confirm))
+            {
+                feedback_.play(audio::Cue::select);
+                open_account_menu();
+            }
+            else if (input.nav == Direction::left || input.nav == Direction::down ||
+                     input.is_pressed(Action::back))
+            {
+                avatar_focus_ = false;
+                feedback_.play(audio::Cue::focus);
+            }
+        }
+        else if (rail_focused_ && rail_.focus() == 0 && input.nav == Direction::right)
+        {
+            avatar_focus_ = true;
+            feedback_.play(audio::Cue::focus);
+        }
+        else if (rail_focused_)
         {
             if (input.is_pressed(Action::west))
             {
@@ -762,7 +838,7 @@ void App::update(const InputFrame &input, float dt)
     InputFrame screen_input = input;
     if (rail_focused_ || update_held || card_menu_.active())
     {
-        if (card_menu_.active() && !update_held)
+        if (menu_was_active && !update_held)
         {
             const int pick = card_menu_.handle(input, feedback_);
             if (pick >= 0)
@@ -948,7 +1024,7 @@ void App::draw_sidebar(ui::Canvas &canvas)
     const float orb_r = mix(30.0f, 50.0f);
     const float search_x = mix(52.0f, 160.0f);
     list.circle(search_x, orb_y, orb_r, gfx::Color::rgb(0xe53935));
-    if (focus == 0)
+    if (focus == 0 && !avatar_focus_)
         list.ring(search_x, orb_y, orb_r + 7.0f, 4.0f, white);
     if (rail_.icon)
     {
@@ -958,6 +1034,16 @@ void App::draw_sidebar(ui::Canvas &canvas)
     }
     const std::pair<std::string, std::string> account = service_.account();
     const float avatar_x = search_x + orb_r * 2.0f + mix(14.0f, 26.0f);
+    if (avatar_focus_)
+        list.ring(avatar_x, orb_y, orb_r + 7.0f, 4.0f, white);
+    if (account.second.empty() && (avatar_focus_ || open > 0.5f))
+    {
+        // No picture yet (or signed out): a grey orb with a person.
+        list.circle(avatar_x, orb_y, orb_r, gfx::Color::rgb(0x3a3a3a));
+        list.circle(avatar_x, orb_y - orb_r * 0.25f, orb_r * 0.3f, white);
+        list.rounded_rect({avatar_x - orb_r * 0.5f, orb_y + orb_r * 0.12f, orb_r, orb_r * 0.45f},
+                          orb_r * 0.22f, white);
+    }
     if (!account.second.empty())
     {
         const std::uint32_t avatar = thumbs_->texture(account.second);
