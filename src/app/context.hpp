@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "app/resume_store.hpp"
 #include "app/telemetry.hpp"
 #include "core/settings.hpp"
 #include "ui/fonts.hpp"
@@ -67,6 +68,8 @@ struct Context
     // The video the player screen should be playing (empty: none). The app
     // keeps it across frames; the player screen reads it every frame.
     std::string &active_video;
+    // Where each video was left (the player continues there).
+    ResumeStore &resume;
 };
 
 } // namespace hui::app

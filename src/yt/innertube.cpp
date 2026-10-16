@@ -2381,6 +2381,26 @@ bool InnerTube::action(const char *endpoint, const std::string &extra)
     return attempt.http_ok;
 }
 
+bool InnerTube::tracking(const std::string &video_id, std::string *playback, std::string *watchtime)
+{
+    // The TV client with the account's token: its tracking URLs are the ones
+    // YouTube credits to the account (a token-less client's are anonymous).
+    Impl::Attempt attempt = impl_->post_once("player", impl_->player_extra(video_id), kTvClient);
+    if (!attempt.transport_ok || !attempt.http_ok)
+    {
+        log::line("history: TV player answer %ld %s", attempt.status, attempt.error.c_str());
+        return false;
+    }
+    yyjson_doc *doc = yyjson_read(attempt.body.data(), attempt.body.size(), 0);
+    if (doc == nullptr)
+        return false;
+    yyjson_val *tracking = yyjson_obj_get(yyjson_doc_get_root(doc), "playbackTracking");
+    *playback = string_field(yyjson_obj_get(tracking, "videostatsPlaybackUrl"), "baseUrl");
+    *watchtime = string_field(yyjson_obj_get(tracking, "videostatsWatchtimeUrl"), "baseUrl");
+    yyjson_doc_free(doc);
+    return !playback->empty();
+}
+
 bool InnerTube::rate(const std::string &video_id, const std::string &rating)
 {
     // like/like, like/dislike, like/removelike with the video as the target.
@@ -2394,6 +2414,21 @@ bool InnerTube::subscribe(const std::string &channel_id, bool on)
     append_json_string(ids, channel_id);
     ids += ']';
     return action(on ? "subscription/subscribe" : "subscription/unsubscribe", ids);
+}
+
+bool InnerTube::browse(const std::string &browse_id, FeedPage *page,
+                       const std::string &continuation)
+{
+    if (page == nullptr)
+        return false;
+    *page = FeedPage{};
+    const bool fresh = continuation.empty();
+    const std::string extra =
+        fresh ? field_string("browseId", browse_id) : field_string("continuation", continuation);
+    const bool parsed = impl_->feed_call("browse", extra, fresh ? browse_id : "continuation", page);
+    if (!parsed)
+        page->error = impl_->error;
+    return parsed;
 }
 
 bool InnerTube::history(FeedPage *page, const std::string &continuation)

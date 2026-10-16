@@ -105,6 +105,8 @@ struct Service::Impl
         bool home_force = false;
         bool subscriptions = false;
         bool history = false;
+        bool topic = false;
+        std::string topic_id;
         bool more = false;
         FeedKind more_kind = FeedKind::home;
         bool channel = false;
@@ -135,6 +137,8 @@ struct Service::Impl
     FeedView home;
     FeedView subscriptions;
     FeedView history;
+    FeedView topic;
+    std::string topic_id;
     FeedView search;
     FeedView related;
     FeedView channel_feed; // one channel's videos, opened from search
@@ -266,6 +270,8 @@ struct Service::Impl
             return &channel_feed;
         case FeedKind::history:
             return &history;
+        case FeedKind::topic:
+            return &topic;
         default:
             return &search;
         }
@@ -441,6 +447,9 @@ struct Service::Impl
         case FeedKind::history:
             ok = tube.history(&page, continuation);
             break;
+        case FeedKind::topic:
+            ok = tube.browse(query, &page, continuation);
+            break;
         default:
             ok = tube.search(query, &page, continuation);
             break;
@@ -463,6 +472,9 @@ struct Service::Impl
                     break;
                 case FeedKind::history:
                     ok = tube.history(&page, continuation);
+                    break;
+                case FeedKind::topic:
+                    ok = tube.browse(query, &page, continuation);
                     break;
                 default:
                     ok = tube.search(query, &page, continuation);
@@ -1011,32 +1023,54 @@ struct Service::Impl
         }
         if (!auth.signed_in())
             return;
-        const VideoInfo *source = &playing;
+        // A signed-in TV answer's tracking URLs; asked for on their own when
+        // the stream came from another client.
+        std::string playback;
+        std::string watchtime;
+        std::string source = "TVHTML5";
         for (const VideoInfo &variant : variants)
         {
             if (variant.client == "TVHTML5" && !variant.playback_url.empty())
             {
-                source = &variant;
+                playback = variant.playback_url;
+                watchtime = variant.watchtime_url;
                 break;
             }
         }
-        if (source->playback_url.empty())
+        if (playback.empty() && !tube.tracking(playing.video_id, &playback, &watchtime))
         {
-            log::line("history: no playbackTracking in the %s answer", source->client.c_str());
+            playback = playing.playback_url;
+            watchtime = playing.watchtime_url;
+            source = playing.client;
+        }
+        if (playback.empty())
+        {
+            set_history_status("no tracking URL");
             return;
         }
         const std::string cpn = watch::make_cpn(static_cast<std::uint64_t>(
             std::chrono::steady_clock::now().time_since_epoch().count()));
         const std::string token = auth.access_token();
         const http::Response response =
-            http::get(watch::playback_ping(source->playback_url, cpn), watch_headers(token), 8);
-        log::line("history: playback ping (%s) -> %ld %s", source->client.c_str(), response.status,
+            http::get(watch::playback_ping(playback, cpn), watch_headers(token), 8);
+        log::line("history: playback ping (%s) -> %ld %s", source.c_str(), response.status,
                   response.error.c_str());
+        set_history_status(response.ok() && response.status >= 200 && response.status < 300
+                               ? std::string("ok")
+                               : (response.error.empty() ? "HTTP " + std::to_string(response.status)
+                                                         : response.error));
         std::lock_guard<std::mutex> lock(mutex);
-        watch.watchtime_url = source->watchtime_url;
+        watch.watchtime_url = watchtime;
         watch.cpn = cpn;
         watch.token = token;
         watch.length_s = playing.length_s;
+    }
+
+    void set_history_status(const std::string &status)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        video.history_status = status;
+        video.revision++;
     }
 
     static std::vector<http::Header> watch_headers(const std::string &token)
@@ -1170,6 +1204,8 @@ struct Service::Impl
                 do_feed(FeedKind::subscriptions, {}, false);
             if (taken.history)
                 do_feed(FeedKind::history, {}, false);
+            if (taken.topic)
+                do_feed(FeedKind::topic, taken.topic_id, false);
             if (taken.channel)
                 do_channel_page(taken.channel_id);
             if (taken.channel_tab)
@@ -1215,10 +1251,10 @@ struct Service::Impl
 
     bool any_request()
     {
-        return job.home || job.subscriptions || job.history || job.more || job.search ||
-               job.channel || job.channel_tab || job.video || job.close_video || job.sign_in ||
-               job.cancel_sign_in || job.sign_out || job.refresh || job.import_token || job.rate ||
-               job.subscribe;
+        return job.home || job.subscriptions || job.history || job.topic || job.more ||
+               job.search || job.channel || job.channel_tab || job.video || job.close_video ||
+               job.sign_in || job.cancel_sign_in || job.sign_out || job.refresh ||
+               job.import_token || job.rate || job.subscribe;
     }
 };
 
@@ -1297,6 +1333,28 @@ void Service::set_subscribed(std::string channel_id, bool on)
     impl_->wake.notify_all();
 }
 
+void Service::request_topic(std::string browse_id)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->topic_id != browse_id)
+    {
+        // Another topic's rows must not show under this one's title.
+        impl_->topic = FeedView{};
+        impl_->topic.state = Load::loading;
+        impl_->topic.revision++;
+        impl_->topic_id = browse_id;
+    }
+    impl_->job.topic = true;
+    impl_->job.topic_id = std::move(browse_id);
+    impl_->wake.notify_all();
+}
+
+std::string Service::topic_id() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->topic_id;
+}
+
 void Service::request_history()
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -1362,6 +1420,7 @@ void Service::request_video(std::string video_id, CodecChoice choice)
     impl_->video.error.clear();
     impl_->video.info = VideoInfo{};
     impl_->video.like_status.clear();
+    impl_->video.history_status.clear();
     impl_->video.subscribed = false;
     impl_->video.source_client.clear();
     impl_->video.attempts.clear();
@@ -1575,6 +1634,8 @@ std::uint64_t Service::revision(FeedKind kind) const
         return impl_->channel_feed.revision;
     case FeedKind::history:
         return impl_->history.revision;
+    case FeedKind::topic:
+        return impl_->topic.revision;
     default:
         return impl_->search.revision;
     }
@@ -1595,6 +1656,8 @@ FeedView Service::feed(FeedKind kind) const
         return impl_->channel_feed;
     case FeedKind::history:
         return impl_->history;
+    case FeedKind::topic:
+        return impl_->topic;
     default:
         return impl_->search;
     }

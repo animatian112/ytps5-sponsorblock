@@ -82,6 +82,8 @@ class PlayerScreen final : public Screen
     bool login_retry_sent_ = false; // one retry per gate, not one per frame
     float clock_ = 0.0f;
     double history_reported_s_ = 0.0; // the position last sent to watch history
+    std::string history_toast_for_;   // the video whose history result was shown
+    bool history_ok_shown_ = false;   // "added to history" shows once per session
 
     // Choices made in the player's menus; they last until the app closes.
     int quality_override_ = 0; // a height cap; 0 follows Settings

@@ -149,7 +149,12 @@ void PlayerScreen::enter()
 void PlayerScreen::leave()
 {
     if (player_ != nullptr)
+    {
         context_.service.report_watch_progress(player_->clock_s());
+        const std::string id = playing_id_.empty() ? requested_id_ : playing_id_;
+        if (!id.empty())
+            context_.resume.remember(id, player_->clock_s(), player_->duration_s());
+    }
     reset_sponsorblock();
     player_.reset();
     drop_texture();
@@ -178,9 +183,13 @@ void PlayerScreen::request_video(const std::string &video_id)
         context_.service.report_watch_progress(player_->clock_s());
     history_reported_s_ = 0.0;
     const std::string current = playing_id_.empty() ? requested_id_ : playing_id_;
+    if (player_ != nullptr && !current.empty())
+        context_.resume.remember(current, player_->clock_s(), player_->duration_s());
     if (video_id != current)
     {
-        resume_s_ = -1.0;
+        // Continue where this video was left last time (0: from the start).
+        const double saved = context_.resume.position(video_id);
+        resume_s_ = saved > 0.0 ? saved : -1.0;
         audio_track_.clear(); // a track id belongs to one video
     }
     requested_id_ = video_id;
@@ -447,6 +456,19 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     }
     chrome_.set_account(context_.service.signed_in() && view.state == yt::Load::ready,
                         view.like_status == "LIKE", view.like_status == "DISLIKE", view.subscribed);
+    // Say once whether YouTube took the video into the account's history.
+    if (!view.history_status.empty() && history_toast_for_ != view.info.video_id)
+    {
+        history_toast_for_ = view.info.video_id;
+        if (view.history_status != "ok")
+            context_.toasts.push(ui::StatusKind::warning, "Not added to YouTube history",
+                                 view.history_status, 4.0f);
+        else if (!history_ok_shown_)
+        {
+            history_ok_shown_ = true;
+            context_.toasts.push(ui::StatusKind::info, "Added to your YouTube history", {}, 2.5f);
+        }
+    }
     update_captions();
 
     bool back_used = false;

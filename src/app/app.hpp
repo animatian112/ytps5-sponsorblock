@@ -137,6 +137,7 @@ class App
     yt::Service &service_;
     std::unique_ptr<ThumbCache> thumbs_;
     std::string active_video_;
+    ResumeStore resume_;
     Context context_;
     std::vector<std::unique_ptr<Screen>> screens_;
     std::vector<std::unique_ptr<Screen>>::size_type current_ = kHomeScreen;

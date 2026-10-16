@@ -26,6 +26,9 @@ enum class FeedKind : unsigned char
     // One channel's uploads, opened from a search result.
     channel,
     history,
+    // A topic page (Music, Gaming, News, Live, Sports): one slot, the screen
+    // that asked last owns it (topic_id()).
+    topic,
 };
 
 struct FeedView
@@ -46,6 +49,9 @@ struct VideoView
     // like_status "LIKE" / "DISLIKE" / "INDIFFERENT" (empty: unknown).
     std::string like_status;
     bool subscribed = false;
+    // The watch-history report for this video: "" (none yet), "ok", or why
+    // it failed.
+    std::string history_status;
     std::string error;
     // What the pipeline is doing right now ("Player info", "Streams",
     // "Decoder"): the player screen shows it instead of guessing.
@@ -99,6 +105,9 @@ class Service
     void request_home(bool force = false);
     void request_subscriptions(bool force = false);
     void request_history();
+    void request_topic(std::string browse_id);
+    // The browse id the topic feed holds (or is loading).
+    std::string topic_id() const;
     void request_more(FeedKind kind);
     void request_search(std::string query);
     // Opens a channel page (channel_id "UC..."): header, tabs and the videos

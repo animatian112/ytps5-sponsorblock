@@ -82,8 +82,9 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
          yt::Service &service)
     : fonts_(fonts), data_root_(std::move(data_root)), settings_(settings), service_(service),
       thumbs_(std::make_unique<ThumbCache>(batch, &delete_texture, 192)),
-      context_{fonts_, telemetry_, settings_, false, *thumbs_,
-               batch,  service_,   toasts_,   nav_,  active_video_}
+      resume_(data_root_.empty() ? std::string() : data_root_ + "/resume.txt"),
+      context_{fonts_,   telemetry_, settings_, false,         *thumbs_, batch,
+               service_, toasts_,    nav_,      active_video_, resume_}
 {
     toasts_.style.theme = youtube_theme();
     toasts_.style.anchor = ui::ToastAnchor::top_right;
@@ -103,7 +104,7 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     rail_.style.theme = youtube_theme();
     rail_.style.collapsed_width = 104.0f;
     rail_.style.expanded_width = 320.0f;
-    rail_.style.row_height = 72.0f;
+    rail_.style.row_height = 66.0f;
     rail_.style.panel = false; // set each frame: only the open rail has its panel
     rail_.style.current_plate = true;
     rail_.style.icon_size = 34.0f;
@@ -111,7 +112,12 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
                        {"Home", {}, {}, false, false, false, 1},
                        {"Subscriptions", {}, {}, false, false, false, 2},
                        {"History", {}, {}, false, false, false, 3},
-                       {"Settings", {}, {}, false, false, false, 4}});
+                       {"Music", {}, {}, false, false, false, 4},
+                       {"Gaming", {}, {}, false, false, false, 5},
+                       {"News", {}, {}, false, false, false, 6},
+                       {"Live", {}, {}, false, false, false, 7},
+                       {"Sports", {}, {}, false, false, false, 8},
+                       {"Settings", {}, {}, false, false, false, 9}});
     rail_.icon = [](ui::Canvas &canvas, const gfx::Rect &box, const ui::NavEntry &, int index,
                     float, gfx::Color ink)
     {
@@ -149,6 +155,40 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
             canvas.list.line(centre_x, centre_y, centre_x + s * 0.38f, centre_y + s * 0.1f,
                              s * 0.14f, ink);
             break;
+        case 4: // music: a note
+            canvas.list.circle(centre_x - s * 0.35f, centre_y + s * 0.5f, s * 0.3f, ink);
+            canvas.list.line(centre_x - s * 0.08f, centre_y + s * 0.5f, centre_x - s * 0.08f,
+                             centre_y - s * 0.75f, s * 0.14f, ink);
+            canvas.list.line(centre_x - s * 0.08f, centre_y - s * 0.75f, centre_x + s * 0.55f,
+                             centre_y - s * 0.45f, s * 0.14f, ink);
+            break;
+        case 5: // gaming: a pad
+            canvas.list.rounded_rect(
+                {centre_x - s * 0.9f, centre_y - s * 0.45f, s * 1.8f, s * 0.9f}, s * 0.4f, ink);
+            canvas.list.circle(centre_x - s * 0.42f, centre_y, s * 0.16f, page);
+            canvas.list.circle(centre_x + s * 0.42f, centre_y, s * 0.16f, page);
+            break;
+        case 6: // news: a page with lines
+            canvas.list.rounded_rect(
+                {centre_x - s * 0.75f, centre_y - s * 0.8f, s * 1.5f, s * 1.6f}, 3.0f, ink);
+            for (int row = 0; row < 3; ++row)
+                canvas.list.rounded_rect({centre_x - s * 0.5f,
+                                          centre_y - s * 0.45f + static_cast<float>(row) * s * 0.4f,
+                                          s * 1.0f, s * 0.14f},
+                                         1.0f, page);
+            break;
+        case 7: // live: a dot in two rings
+            canvas.list.circle(centre_x, centre_y, s * 0.25f, ink);
+            canvas.list.ring(centre_x, centre_y, s * 0.55f, s * 0.12f, ink);
+            canvas.list.ring(centre_x, centre_y, s * 0.88f, s * 0.12f, ink);
+            break;
+        case 8: // sports: a ball
+            canvas.list.ring(centre_x, centre_y, s * 0.8f, s * 0.15f, ink);
+            canvas.list.line(centre_x - s * 0.8f, centre_y, centre_x + s * 0.8f, centre_y,
+                             s * 0.12f, ink);
+            canvas.list.line(centre_x, centre_y - s * 0.8f, centre_x, centre_y + s * 0.8f,
+                             s * 0.12f, ink);
+            break;
         default: // settings: sliders
             for (int row = 0; row < 3; ++row)
             {
@@ -159,13 +199,18 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
             break;
         }
     };
-    rail_.set_bounds({0.0f, 108.0f, 320.0f, 820.0f});
+    rail_.set_bounds({0.0f, 128.0f, 320.0f, 880.0f});
 
     // In the order of the kXxxScreen indices (screens.hpp).
     screens_.push_back(make_search_screen(context_));
     screens_.push_back(make_home_screen(context_));
     screens_.push_back(make_subscriptions_screen(context_));
     screens_.push_back(make_history_screen(context_));
+    screens_.push_back(make_topic_screen(context_, "music", "Music", "UC-9-kyTW8ZkZNDHQJ6FgpwQ"));
+    screens_.push_back(make_topic_screen(context_, "gaming", "Gaming", "UCOpNcN46UbXVtpKMrmU4Abg"));
+    screens_.push_back(make_topic_screen(context_, "news", "News", "UCYfdidRxbB8Qhf0Nx7ioOYw"));
+    screens_.push_back(make_topic_screen(context_, "live", "Live", "UC4R8DWoMoI7CAwX8_LjQHig"));
+    screens_.push_back(make_topic_screen(context_, "sports", "Sports", "UCEgdi0XIXXZ-qJOFPf4JSKw"));
     screens_.push_back(make_settings_screen(context_));
     screens_.push_back(make_login_screen(context_));
     screens_.push_back(make_player_screen(context_));

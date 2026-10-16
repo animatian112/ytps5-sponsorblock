@@ -32,11 +32,15 @@ class InnerTube
 
     bool home(FeedPage *page, const std::string &continuation = {});
     bool subscriptions(FeedPage *page, const std::string &continuation = {});
+    // Any browse page by id (a topic channel such as Music or Gaming).
+    bool browse(const std::string &browse_id, FeedPage *page, const std::string &continuation = {});
     // The account's watch history (browseId FEhistory), newest first.
     bool history(FeedPage *page, const std::string &continuation = {});
     // One signed-in action ("like/like", "subscription/subscribe", ...) with
     // `extra` the request fields after the context. True on a 2xx answer.
     bool action(const char *endpoint, const std::string &extra);
+    // The playbackTracking URLs of a signed-in TV player answer.
+    bool tracking(const std::string &video_id, std::string *playback, std::string *watchtime);
     // rating: "like", "dislike" or "removelike".
     bool rate(const std::string &video_id, const std::string &rating);
     bool subscribe(const std::string &channel_id, bool on);

@@ -50,3 +50,4 @@ src/yt/types.cpp
 src/yt/update.cpp
 src/yt/watch.cpp
 src/yt/captions.cpp
+src/app/resume_store.cpp
