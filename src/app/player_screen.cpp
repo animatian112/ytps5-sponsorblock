@@ -9,6 +9,8 @@
 
 #include "app/player_screen.hpp"
 
+#include "platform/ps5/system.hpp"
+
 #include "app/feed_view.hpp"
 #include "app/thumbs.hpp"
 #include "yt/log.hpp"
@@ -28,24 +30,63 @@ namespace hui::app
 namespace
 {
 
+// "1234567" -> "1,234,567".
+std::string grouped_digits(const std::string &digits)
+{
+    std::string grouped;
+    for (std::size_t i = 0; i < digits.size(); ++i)
+    {
+        if (i > 0 && (digits.size() - i) % 3 == 0)
+            grouped += ',';
+        grouped += digits[i];
+    }
+    return grouped;
+}
+
+// "Fri Oct 16  10:34 AM", as SmartTube shows it in the player.
+std::string clock_line()
+{
+    static const char *const kDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static const char *const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    std::string line;
+    int weekday = 0;
+    int month = 0;
+    int day = 0;
+    if (sys::local_date(&weekday, &month, &day) && month >= 1 && month <= 12)
+        line = std::string(kDays[weekday % 7]) + " " + kMonths[month - 1] + " " +
+               std::to_string(day) + "  ";
+    int hour = 0;
+    int minute = 0;
+    bool twelve = true;
+    if (sys::local_clock(&hour, &minute, &twelve))
+    {
+        char text[16];
+        if (twelve)
+            std::snprintf(text, sizeof(text), "%d:%02d %s", hour % 12 == 0 ? 12 : hour % 12, minute,
+                          hour < 12 ? "AM" : "PM");
+        else
+            std::snprintf(text, sizeof(text), "%02d:%02d", hour, minute);
+        line += text;
+    }
+    return line;
+}
+
 const TourStep kTour[] = {
     // Playing: the controls hide on their own, the picture is clear.
     {5.0f, 0, Direction::none, "video", 0, 0, 0, 0, 0},
-    // Any button brings them back with the focus on play/pause.
+    // Any button brings them back with the focus on play/pause (top row).
     {0.9f, 0, Direction::up, nullptr, 0, 0, 0, 0, 0},
     {0.9f, 0, Direction::none, "controls", 0, 0, 0, 0, 0},
-    {0.9f, 0, Direction::up, nullptr, 0, 0, 0, 0, 0},
+    // Down to the seek bar, down again to the bottom row (quality first).
+    {0.6f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
     {0.9f, 0, Direction::none, "seek", 0, 0, 0, 0, 0},
     {0.6f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
-    // Right to the Info pill, and the description.
-    {0.4f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
-    {0.4f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
-    {0.4f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
+    {0.9f, 0, Direction::none, "buttons", 0, 0, 0, 0, 0},
     {0.9f, hui::action_bit(Action::confirm), Direction::none, nullptr, 0, 0, 0, 0, 0},
-    {0.9f, 0, Direction::none, "info", 0, 0, 0, 0, 0},
+    {0.9f, 0, Direction::none, "quality-menu", 0, 0, 0, 0, 0},
     {0.9f, hui::action_bit(Action::back), Direction::none, nullptr, 0, 0, 0, 0, 0},
-    {0.6f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
-    {0.6f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
+    // Down from the bottom row: the suggestions.
     {0.9f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
     {0.9f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
     {1.0f, 0, Direction::none, "related", 0, 0, 0, 0, 0},
@@ -106,11 +147,13 @@ PlayerScreen::PlayerScreen(Context &context) : context_(context)
     related_.style.card.title_size = 21.0f;
     related_.style.card.subtitle_size = 18.0f;
     related_.style.card.badge_corner = ui::CardCorner::bottom_right;
-    related_.style.card.radius = 8.0f;
+    related_.style.card.radius = 0.0f;
+    related_.style.card.info_box = true;
+    related_.style.card.ring = false;
     related_.style.item_width = 330.0f;
     related_.style.counter = false;
     related_.title = "Suggestions";
-    related_.set_bounds({96.0f, 1080.0f, 1728.0f, 290.0f});
+    related_.set_bounds({96.0f, 1080.0f, 1728.0f, 370.0f});
     related_.set_active(false);
 }
 
@@ -432,8 +475,16 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         chrome_.set_playing(!player_->paused() && !ended_);
     }
     chrome_.set_has_next(!related_items_.empty());
-    chrome_.set_info(view.info.title.empty() ? playing_id_ : view.info.title, view.info.author,
-                     player_ != nullptr ? player_->quality_label() : std::string());
+    {
+        // SmartTube's line under the title: channel, then the view count.
+        std::string meta = view.info.author;
+        if (!view.info.view_count.empty())
+            meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") +
+                    grouped_digits(view.info.view_count) + " views";
+        chrome_.set_info(view.info.title.empty() ? playing_id_ : view.info.title, meta,
+                         player_ != nullptr ? player_->quality_label() : std::string());
+        chrome_.set_clock(clock_line());
+    }
 
     update_sponsorblock(input, feedback);
     chrome_.set_segment(sponsor_here_);
@@ -596,7 +647,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
 
     // The row sits under the block and slides up with it.
     const float lift = chrome_.lift();
-    related_.set_bounds({96.0f, 1080.0f - 330.0f * lift + 10.0f, 1728.0f, 290.0f});
+    related_.set_bounds({96.0f, 1080.0f - 400.0f * lift + 10.0f, 1728.0f, 370.0f});
     chrome_.update(dt);
     related_.update(dt);
 }
@@ -879,7 +930,7 @@ void PlayerScreen::draw_captions(ui::Canvas &canvas, const Context &context) con
     if (lines.size() > 4)
         lines.erase(lines.begin(), lines.end() - 4);
     // Above the controls while they are up, near the bottom edge otherwise.
-    const float bottom = 1030.0f - (330.0f * chrome_.lift() + 290.0f) * chrome_.visibility();
+    const float bottom = 1030.0f - (400.0f * chrome_.lift() + 290.0f) * chrome_.visibility();
     float y = bottom - static_cast<float>(lines.size()) * 52.0f;
     for (const std::string &line : lines)
     {
@@ -994,7 +1045,7 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
 
     // The controls, and the suggestions row under them when it is open.
     const float lift = chrome_.lift();
-    chrome_.draw(canvas, context.fonts, 330.0f * lift);
+    chrome_.draw(canvas, context.fonts, 400.0f * lift);
     if (lift > 0.01f && !related_items_.empty())
     {
         canvas.list.push_opacity(std::min(1.0f, lift * 1.5f));

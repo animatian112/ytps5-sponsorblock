@@ -60,6 +60,34 @@ bool local_clock(int *hour, int *minute, bool *twelve_hour)
     return true;
 }
 
+bool local_date(int *weekday, int *month, int *day)
+{
+    constexpr int kTimeZone = 4;
+    constexpr int kSummerTime = 5;
+    const long long now = static_cast<long long>(std::time(nullptr));
+    if (now < 1600000000LL)
+        return false;
+    int zone = 0;
+    int summer = 0;
+    if (sceSystemServiceParamGetInt(kTimeZone, &zone) != 0)
+        zone = 0;
+    if (sceSystemServiceParamGetInt(kSummerTime, &summer) != 0)
+        summer = 0;
+    const long long local = now + static_cast<long long>(zone) * 60 + (summer != 0 ? 3600 : 0);
+    const long long days = local / 86400;        // after 2020: never negative
+    *weekday = static_cast<int>((days + 4) % 7); // 1970-01-01 was a Thursday
+    // Howard Hinnant's civil_from_days.
+    const long long z = days + 719468;
+    const long long era = z / 146097;
+    const long long doe = z - era * 146097;
+    const long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    const long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const long long mp = (5 * doy + 2) / 153;
+    *day = static_cast<int>(doy - (153 * mp + 2) / 5 + 1);
+    *month = static_cast<int>(mp < 10 ? mp + 3 : mp - 9);
+    return true;
+}
+
 void log(const char *format, ...)
 {
     // klog lines are short; longer messages are truncated rather than split.

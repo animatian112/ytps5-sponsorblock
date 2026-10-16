@@ -16,7 +16,7 @@ namespace hui::app
 namespace
 {
 
-constexpr float kItemWidth = 316.0f;
+constexpr float kItemWidth = 400.0f;
 constexpr float kRowGap = 18.0f;
 
 void style_shelf(ui::Carousel &shelf)
@@ -24,10 +24,11 @@ void style_shelf(ui::Carousel &shelf)
     shelf.style.theme = card_theme();
     shelf.style.mode = ui::CarouselMode::leading;
     shelf.style.item_width = kItemWidth;
-    shelf.style.gap = 24.0f;
+    shelf.style.gap = 30.0f;
     shelf.style.peek = 0.0f;
     shelf.style.counter = false;
-    shelf.style.title_size = 28.0f;
+    shelf.style.title_size = 36.0f;
+    shelf.style.title_muted = true;
     shelf.style.title_gap = 14.0f;
     shelf.style.edge_fade = 0.0f;
     shelf.style.exits.left = true;
@@ -38,7 +39,13 @@ void style_shelf(ui::Carousel &shelf)
     shelf.style.card.text_gap = 10.0f;
     shelf.style.card.badge_corner = ui::CardCorner::bottom_right;
     shelf.style.card.badge_size = 15.0f;
-    shelf.style.card.focus_scale = 1.12f; // Leanback's zoom on the focused card
+    shelf.style.card.focus_scale = 1.1f; // Leanback's zoom on the focused card
+    shelf.style.card.info_box = true;    // SmartTube's cards: square art, the text in a grey box
+    shelf.style.card.title_lines = 2;
+    shelf.style.card.radius = 0.0f;
+    shelf.style.card.ring = false;
+    shelf.style.card.title_size = 24.0f;
+    shelf.style.card.subtitle_size = 19.0f;
 }
 
 ui::CardItem card_for(const yt::FeedItem &item, const Context &context)

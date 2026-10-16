@@ -14,15 +14,16 @@ namespace hui::app
 namespace
 {
 
-constexpr float kLeft = 96.0f;
-constexpr float kRight = 1824.0f;
-constexpr float kTitleY = 842.0f;
-constexpr float kSubtitleY = 884.0f;
-constexpr float kTrackY = 922.0f;
-constexpr float kTimeY = 968.0f;
-constexpr float kButtonY = 1016.0f;
-constexpr float kButtonRadius = 30.0f;
-constexpr float kButtonPitch = 80.0f;
+// SmartTube's player overlay, measured off its 1080p layout.
+constexpr float kLeft = 112.0f;
+constexpr float kRight = 1808.0f;
+constexpr float kTitleY = 600.0f;
+constexpr float kSubtitleY = 652.0f;
+constexpr float kTopRowY = 784.0f;
+constexpr float kTrackY = 858.0f;
+constexpr float kBottomRowY = 936.0f;
+constexpr float kButtonRadius = 42.0f; // the grey circle behind the focused icon
+constexpr float kButtonPitch = 116.0f;
 constexpr float kHideAfter = 4.0f; // seconds without input while playing
 constexpr double kSeekStep = 10.0;
 constexpr float kQuarter = 1.5707963f;
@@ -94,7 +95,10 @@ void PlayerChrome::set_segment(std::string label)
 {
     segment_ = std::move(label);
     if (segment_.empty() && focus_ == Button::skip)
+    {
         focus_ = Button::play;
+        zone_ = Zone::top;
+    }
 }
 
 void PlayerChrome::set_badges(bool captions_on, std::string speed, std::string quality,
@@ -105,7 +109,10 @@ void PlayerChrome::set_badges(bool captions_on, std::string speed, std::string q
     quality_label_ = std::move(quality);
     audio_tracks_ = audio_tracks;
     if (!audio_tracks_ && focus_ == Button::audio)
+    {
         focus_ = Button::play;
+        zone_ = Zone::top;
+    }
 }
 
 void PlayerChrome::set_account(bool signed_in, bool liked, bool disliked, bool subscribed)
@@ -116,17 +123,28 @@ void PlayerChrome::set_account(bool signed_in, bool liked, bool disliked, bool s
     subscribed_ = subscribed;
     if (!signed_in_ &&
         (focus_ == Button::like || focus_ == Button::dislike || focus_ == Button::subscribe))
+    {
         focus_ = Button::play;
+        zone_ = Zone::top;
+    }
 }
 
-std::vector<PlayerChrome::Button> PlayerChrome::buttons() const
+std::vector<PlayerChrome::Button> PlayerChrome::top_buttons() const
 {
-    std::vector<Button> out{Button::restart, Button::rewind, Button::play, Button::forward};
+    std::vector<Button> out{Button::play, Button::restart};
     if (has_next_)
         out.push_back(Button::next);
+    out.push_back(Button::rewind);
+    out.push_back(Button::forward);
+    out.push_back(Button::speed);
     if (!segment_.empty())
         out.push_back(Button::skip);
-    out.push_back(Button::info);
+    return out;
+}
+
+std::vector<PlayerChrome::Button> PlayerChrome::bottom_buttons() const
+{
+    std::vector<Button> out{Button::quality};
     if (has_channel_)
         out.push_back(Button::channel);
     if (signed_in_)
@@ -136,65 +154,63 @@ std::vector<PlayerChrome::Button> PlayerChrome::buttons() const
         out.push_back(Button::subscribe);
     }
     out.push_back(Button::captions);
-    out.push_back(Button::speed);
-    out.push_back(Button::quality);
     if (audio_tracks_)
         out.push_back(Button::audio);
+    out.push_back(Button::info);
     return out;
 }
 
-bool PlayerChrome::right_side(Button button)
-{
-    return button == Button::skip || button == Button::captions || button == Button::speed ||
-           button == Button::quality || button == Button::audio || button == Button::like ||
-           button == Button::dislike || button == Button::subscribe || button == Button::channel ||
-           button == Button::info;
-}
-
-std::string PlayerChrome::button_label(Button button) const
+std::string PlayerChrome::tooltip(Button button) const
 {
     switch (button)
     {
+    case Button::restart:
+        return "Previous";
+    case Button::rewind:
+        return "Back 10 seconds";
+    case Button::play:
+        return playing_ ? "Pause" : "Play";
+    case Button::forward:
+        return "Forward 10 seconds";
+    case Button::next:
+        return "Next";
     case Button::skip:
         return "Skip " + segment_;
     case Button::captions:
-        return "CC";
+        return "Subtitles";
     case Button::speed:
-        return speed_label_;
+        return "Playback speed (" + speed_label_ + ")";
     case Button::quality:
-        return quality_label_.empty() ? std::string("Quality") : quality_label_;
+        return "Playback quality settings" +
+               (quality_label_.empty() ? std::string() : " (" + quality_label_ + ")");
     case Button::audio:
-        return "Audio";
+        return "Audio track";
     case Button::like:
         return liked_ ? "Liked" : "Like";
     case Button::dislike:
         return disliked_ ? "Disliked" : "Dislike";
     case Button::subscribe:
-        return subscribed_ ? "Subscribed" : "Subscribe";
+        return subscribed_ ? "Unsubscribe" : "Subscribe";
     case Button::channel:
-        return "Channel";
+        return "Open channel";
     case Button::info:
-        return "Info";
-    default:
-        return {};
+        return "Video info";
     }
+    return {};
 }
 
-float PlayerChrome::button_width(const ui::Fonts &fonts, Button button) const
+bool PlayerChrome::lit(Button button) const
 {
-    if (!right_side(button))
-        return kButtonRadius * 2.0f;
-    const std::string label = button_label(button);
-    const float text = fonts.semibold.font != nullptr ? fonts.semibold.measure(label, 22.0f)
-                                                      : 12.0f * static_cast<float>(label.size());
-    return std::max(kButtonRadius * 2.0f, text + 44.0f);
+    return (button == Button::like && liked_) || (button == Button::dislike && disliked_) ||
+           (button == Button::subscribe && subscribed_) ||
+           (button == Button::captions && captions_on_);
 }
 
 void PlayerChrome::show()
 {
     if (!shown_)
     {
-        zone_ = Zone::buttons;
+        zone_ = Zone::top;
         focus_ = Button::play;
     }
     shown_ = true;
@@ -367,9 +383,12 @@ PlayerChrome::Command PlayerChrome::handle(const InputFrame &input, ui::Feedback
             feedback.play(audio::Cue::tick);
             return seek_by(input.nav == Direction::right ? kSeekStep : -kSeekStep);
         }
-        if (input.nav == Direction::down)
+        if (input.nav == Direction::up || input.nav == Direction::down)
         {
-            zone_ = Zone::buttons;
+            const bool down = input.nav == Direction::down;
+            zone_ = down ? Zone::bottom : Zone::top;
+            const std::vector<Button> row = down ? bottom_buttons() : top_buttons();
+            focus_ = row.empty() ? Button::play : row.front();
             feedback.play(audio::Cue::focus);
             return Command::none;
         }
@@ -381,7 +400,7 @@ PlayerChrome::Command PlayerChrome::handle(const InputFrame &input, ui::Feedback
         return Command::none;
     }
 
-    const std::vector<Button> row = buttons();
+    const std::vector<Button> row = zone_ == Zone::top ? top_buttons() : bottom_buttons();
     std::size_t at = 0;
     for (std::size_t i = 0; i < row.size(); ++i)
     {
@@ -402,13 +421,26 @@ PlayerChrome::Command PlayerChrome::handle(const InputFrame &input, ui::Feedback
     }
     if (input.nav == Direction::up)
     {
-        zone_ = Zone::seek;
-        feedback.play(audio::Cue::focus);
+        if (zone_ == Zone::bottom)
+        {
+            zone_ = Zone::seek;
+            feedback.play(audio::Cue::focus);
+        }
+        else
+            feedback.play(audio::Cue::error);
         return Command::none;
     }
     if (input.nav == Direction::down)
+    {
+        if (zone_ == Zone::top)
+        {
+            zone_ = Zone::seek;
+            feedback.play(audio::Cue::focus);
+            return Command::none;
+        }
         return Command::suggestions;
-    if (input.is_pressed(Action::confirm))
+    }
+    if (input.is_pressed(Action::confirm) && !row.empty())
     {
         feedback.play(audio::Cue::select);
         return press(row[at]);
@@ -431,6 +463,99 @@ void PlayerChrome::update(float dt)
     lift_ = approach(lift_, lifted_ && shown_ ? 1.0f : 0.0f, 12.0f, dt);
 }
 
+void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button button, float cx,
+                             float cy, gfx::Color ink) const
+{
+    const gfx::Color hole = gfx::Color::rgb(0x161616);
+    const auto boxed = [&](const char *label)
+    {
+        // SmartTube's "CC" and "HQ": a filled rounded box, the letters cut out.
+        list.rounded_rect({cx - 24.0f, cy - 17.0f, 48.0f, 34.0f}, 6.0f, ink);
+        if (fonts.semibold.font != nullptr)
+            ui::text(list, fonts.semibold, label, cx, cy + 8.0f, 21.0f, hole, gfx::Align::center);
+    };
+    switch (button)
+    {
+    case Button::restart: // previous: a bar and a triangle pointing left
+        list.rounded_rect({cx - 16.0f, cy - 14.0f, 5.0f, 28.0f}, 1.5f, ink);
+        triangle(list, cx + 4.0f, cy, 28.0f, -1.0f, ink);
+        break;
+    case Button::rewind:
+        triangle(list, cx - 8.0f, cy, 22.0f, -1.0f, ink);
+        triangle(list, cx + 9.0f, cy, 22.0f, -1.0f, ink);
+        break;
+    case Button::play:
+        if (playing_)
+        {
+            list.rounded_rect({cx - 13.0f, cy - 17.0f, 9.0f, 34.0f}, 2.0f, ink);
+            list.rounded_rect({cx + 4.0f, cy - 17.0f, 9.0f, 34.0f}, 2.0f, ink);
+        }
+        else
+            triangle(list, cx + 4.0f, cy, 36.0f, 1.0f, ink);
+        break;
+    case Button::forward:
+        triangle(list, cx - 9.0f, cy, 22.0f, 1.0f, ink);
+        triangle(list, cx + 8.0f, cy, 22.0f, 1.0f, ink);
+        break;
+    case Button::next:
+        triangle(list, cx - 4.0f, cy, 28.0f, 1.0f, ink);
+        list.rounded_rect({cx + 11.0f, cy - 14.0f, 5.0f, 28.0f}, 1.5f, ink);
+        break;
+    case Button::skip: // skip forward, red: a segment is under the playhead
+        triangle(list, cx - 10.0f, cy, 22.0f, 1.0f, ink);
+        triangle(list, cx + 6.0f, cy, 22.0f, 1.0f, ink);
+        list.rounded_rect({cx + 15.0f, cy - 11.0f, 4.0f, 22.0f}, 1.5f, ink);
+        break;
+    case Button::speed: // a gauge
+        list.ring(cx, cy + 4.0f, 20.0f, 4.0f, ink);
+        list.line(cx, cy + 4.0f, cx + 11.0f, cy - 8.0f, 4.0f, ink);
+        list.circle(cx, cy + 4.0f, 4.0f, ink);
+        break;
+    case Button::captions:
+        boxed("CC");
+        break;
+    case Button::quality:
+        boxed("HQ");
+        break;
+    case Button::audio: // a note
+        list.circle(cx - 7.0f, cy + 10.0f, 8.0f, ink);
+        list.line(cx, cy + 10.0f, cx, cy - 16.0f, 4.0f, ink);
+        list.line(cx, cy - 16.0f, cx + 12.0f, cy - 9.0f, 4.0f, ink);
+        break;
+    case Button::like:
+    case Button::dislike:
+    {
+        // A thumb: cuff, palm and the raised thumb (flipped for dislike).
+        const float flip = button == Button::like ? 1.0f : -1.0f;
+        list.rounded_rect({cx - 20.0f, cy - 6.0f * flip - (flip < 0 ? 18.0f : 0.0f), 8.0f, 18.0f},
+                          2.0f, ink);
+        list.rounded_rect({cx - 9.0f, cy - 6.0f * flip - (flip < 0 ? 20.0f : 0.0f), 26.0f, 20.0f},
+                          4.0f, ink);
+        list.rounded_rect({cx - 7.0f, flip > 0 ? cy - 22.0f : cy + 6.0f, 10.0f, 18.0f}, 5.0f, ink);
+        break;
+    }
+    case Button::subscribe: // a person and a plus
+        list.circle(cx - 6.0f, cy - 9.0f, 8.0f, ink);
+        list.rounded_rect({cx - 20.0f, cy + 2.0f, 28.0f, 15.0f}, 7.0f, ink);
+        list.line(cx + 14.0f, cy - 6.0f, cx + 14.0f, cy + 8.0f, 4.0f, ink);
+        list.line(cx + 7.0f, cy + 1.0f, cx + 21.0f, cy + 1.0f, 4.0f, ink);
+        break;
+    case Button::channel: // the channel's initial in a round avatar
+    {
+        list.circle(cx, cy, 22.0f, gfx::Color::rgb(0x5c6bc0));
+        const std::string initial = subtitle_.empty() ? std::string("?") : subtitle_.substr(0, 1);
+        if (fonts.semibold.font != nullptr)
+            ui::text(list, fonts.semibold, initial, cx, cy + 8.0f, 24.0f, kInk, gfx::Align::center);
+        break;
+    }
+    case Button::info:
+        list.ring(cx, cy, 20.0f, 4.0f, ink);
+        list.circle(cx, cy - 9.0f, 3.0f, ink);
+        list.rounded_rect({cx - 2.0f, cy - 3.0f, 4.0f, 14.0f}, 1.0f, ink);
+        break;
+    }
+}
+
 void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) const
 {
     const float a = visibility_;
@@ -440,18 +565,58 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
     list.push_opacity(a);
 
     // Scrim: the lower part of the picture darkens toward the bottom edge.
-    const float scrim_top = 560.0f - rise;
+    const float scrim_top = 420.0f - rise;
     list.gradient_rect({0.0f, scrim_top, gfx::kVirtualWidth, gfx::kVirtualHeight - scrim_top}, 0.0f,
-                       gfx::Color::rgb(0x000000, 0.0f), gfx::Color::rgb(0x000000, 0.9f));
+                       gfx::Color::rgb(0x000000, 0.0f), gfx::Color::rgb(0x000000, 0.92f));
 
-    // Title and the channel line.
+    // Title, large and light, and the channel line under it.
     const float width = kRight - kLeft;
-    if (fonts.semibold.font != nullptr)
-        ui::text(list, fonts.semibold, fonts.semibold.font->fit(title_, 40.0f, width), kLeft,
-                 kTitleY - rise, 40.0f, kInk);
-    if (!subtitle_.empty() && fonts.regular.font != nullptr)
-        ui::text(list, fonts.regular, fonts.regular.font->fit(subtitle_, 24.0f, width), kLeft,
-                 kSubtitleY - rise, 24.0f, kMuted);
+    if (fonts.regular.font != nullptr)
+    {
+        ui::text(list, fonts.regular, fonts.regular.font->fit(title_, 60.0f, width), kLeft,
+                 kTitleY - rise, 60.0f, kInk);
+        if (!subtitle_.empty())
+            ui::text(list, fonts.regular, fonts.regular.font->fit(subtitle_, 30.0f, width), kLeft,
+                     kSubtitleY - rise, 30.0f, kInk);
+    }
+
+    // The format and the clock at the right of the top row.
+    if (!quality_.empty())
+        ui::text(list, fonts.regular, quality_, kRight, kTopRowY - 12.0f - rise, 30.0f, kInk,
+                 gfx::Align::right);
+    if (!clock_.empty())
+        ui::text(list, fonts.regular, clock_, kRight, kTopRowY + 28.0f - rise, 28.0f, kInk,
+                 gfx::Align::right);
+
+    // The rows of buttons: plain white icons; the focused one sits on a grey
+    // circle with its name in a pill beside the row.
+    std::string tip;
+    float tip_x = 0.0f;
+    float tip_y = 0.0f;
+    const auto draw_row = [&](const std::vector<Button> &row, float cy, Zone zone)
+    {
+        float cx = kLeft + 24.0f;
+        for (const Button button : row)
+        {
+            const bool focused = zone_ == zone && button == focus_ && !lifted_;
+            if (focused)
+            {
+                list.circle(cx, cy, kButtonRadius,
+                            gfx::Color::rgb(0x6b6b6b, panel_ == Panel::none ? 0.85f : 0.6f));
+                if (panel_ == Panel::none)
+                {
+                    tip = tooltip(button);
+                    tip_x = cx;
+                    tip_y =
+                        zone == Zone::top ? cy - kButtonRadius - 30.0f : cy + kButtonRadius + 38.0f;
+                }
+            }
+            const gfx::Color ink = button == Button::skip || lit(button) ? kRed : kInk;
+            draw_icon(list, fonts, button, cx, cy, ink);
+            cx += kButtonPitch;
+        }
+    };
+    draw_row(top_buttons(), kTopRowY - rise, Zone::top);
 
     // Seek bar: buffered, played, then the segments over both.
     const bool seek_focus = zone_ == Zone::seek;
@@ -463,12 +628,11 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
                              : 0.0f;
     const float loaded =
         duration_ > 0.0 ? static_cast<float>(std::clamp(buffered_ / duration_, 0.0, 1.0)) : 0.0f;
-    list.rounded_rect(track, track_h * 0.5f, gfx::Color::rgb(0xffffff, 0.25f));
+    list.rounded_rect(track, 0.0f, gfx::Color::rgb(0xffffff, 0.25f));
     if (loaded > played)
-        list.rounded_rect({track.x, track.y, track.w * loaded, track.h}, track_h * 0.5f,
+        list.rounded_rect({track.x, track.y, track.w * loaded, track.h}, 0.0f,
                           gfx::Color::rgb(0xffffff, 0.4f));
-    list.rounded_rect({track.x, track.y, std::max(track.w * played, track_h), track.h},
-                      track_h * 0.5f, kRed);
+    list.rounded_rect({track.x, track.y, std::max(track.w * played, 2.0f), track.h}, 0.0f, kRed);
     if (duration_ > 0.0)
     {
         for (const ui::MediaRange &range : ranges_)
@@ -483,86 +647,26 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
                 list.rounded_rect({x0, track.y, x1 - x0, track.h}, 0.0f, range.color);
         }
     }
-    const float thumb_x = track.x + track.w * played;
-    list.circle(thumb_x, track.y + track_h * 0.5f, seek_focus ? 15.0f : 9.0f,
-                seek_focus ? kInk : kRed);
+    if (seek_focus)
+        list.circle(track.x + track.w * played, track.y + track_h * 0.5f, 14.0f, kInk);
 
-    // Times, and the stream's quality on the right.
-    const std::string times = clock_text(shown_position) + " / " + clock_text(duration_);
-    ui::text(list, fonts.regular, times, kLeft, kTimeY - rise, 24.0f, kInk);
-    if (!quality_.empty())
-        ui::text(list, fonts.regular, quality_, kRight, kTimeY - rise, 22.0f, kMuted,
-                 gfx::Align::right);
+    draw_row(bottom_buttons(), kBottomRowY - rise, Zone::bottom);
 
-    // The buttons: transport on the left, the pills on the right.
-    const std::vector<Button> row = buttons();
-    const float cy = kButtonY - rise;
-    float cx = kLeft + kButtonRadius;
-    float right_x = kRight;
-    for (auto it = row.rbegin(); it != row.rend(); ++it)
+    // Remaining time, then position / length, at the right of the bottom row.
+    const double left = duration_ > shown_position ? duration_ - shown_position : 0.0;
+    ui::text(list, fonts.regular, "Remaining: " + clock_text(left), kRight,
+             kBottomRowY - 8.0f - rise, 30.0f, kInk, gfx::Align::right);
+    ui::text(list, fonts.regular, clock_text(shown_position) + " / " + clock_text(duration_),
+             kRight, kBottomRowY + 34.0f - rise, 30.0f, kInk, gfx::Align::right);
+
+    if (!tip.empty() && fonts.regular.font != nullptr)
     {
-        if (!right_side(*it))
-            continue;
-        const Button button = *it;
-        const bool focused = !seek_focus && panel_ == Panel::none && button == focus_;
-        const bool lit = button == focus_ && panel_ != Panel::none;
-        const float w = button_width(fonts, button);
-        const gfx::Rect pill{right_x - w, cy - kButtonRadius, w, kButtonRadius * 2.0f};
-        gfx::Color fill = gfx::Color::rgb(0xffffff, 0.12f);
-        if (focused || lit)
-            fill = kInk;
-        else if (button == Button::skip)
-            fill = gfx::Color::rgb(0xffffff, 0.2f);
-        else if ((button == Button::like && liked_) || (button == Button::dislike && disliked_) ||
-                 (button == Button::subscribe && subscribed_))
-            fill = gfx::Color::rgb(0xff0033, 0.85f); // YouTube's red for "on"
-        list.rounded_rect(pill, kButtonRadius, fill);
-        const gfx::Color ink = (focused || lit) ? kDark : kInk;
-        ui::text(list, fonts.semibold, button_label(button), pill.cx(), cy + 8.0f, 22.0f, ink,
+        const float w = fonts.regular.measure(tip, 26.0f) + 40.0f;
+        const float x = std::clamp(tip_x - w * 0.5f, 16.0f, gfx::kVirtualWidth - w - 16.0f);
+        const gfx::Rect pill{x, tip_y - 24.0f, w, 48.0f};
+        list.rounded_rect(pill, 24.0f, gfx::Color::rgb(0x424242, 0.95f));
+        ui::text(list, fonts.regular, tip, pill.cx(), pill.cy() + 9.0f, 26.0f, kInk,
                  gfx::Align::center);
-        if (button == Button::captions && captions_on_)
-            list.rounded_rect({pill.cx() - 14.0f, pill.y + pill.h - 12.0f, 28.0f, 4.0f}, 2.0f,
-                              kRed);
-        right_x -= w + 16.0f;
-    }
-    for (const Button button : row)
-    {
-        if (right_side(button))
-            continue;
-        const bool focused = !seek_focus && panel_ == Panel::none && button == focus_;
-        const gfx::Color ink = focused ? kDark : kInk;
-        list.circle(cx, cy, kButtonRadius, focused ? kInk : gfx::Color::rgb(0xffffff, 0.12f));
-        switch (button)
-        {
-        case Button::restart:
-            list.rounded_rect({cx - 11.0f, cy - 10.0f, 4.0f, 20.0f}, 1.5f, ink);
-            triangle(list, cx + 3.0f, cy, 20.0f, -1.0f, ink);
-            break;
-        case Button::rewind:
-            triangle(list, cx - 6.0f, cy, 17.0f, -1.0f, ink);
-            triangle(list, cx + 7.0f, cy, 17.0f, -1.0f, ink);
-            break;
-        case Button::play:
-            if (playing_)
-            {
-                list.rounded_rect({cx - 10.0f, cy - 12.0f, 7.0f, 24.0f}, 2.0f, ink);
-                list.rounded_rect({cx + 3.0f, cy - 12.0f, 7.0f, 24.0f}, 2.0f, ink);
-            }
-            else
-                triangle(list, cx + 3.0f, cy, 26.0f, 1.0f, ink);
-            break;
-        case Button::forward:
-            triangle(list, cx - 7.0f, cy, 17.0f, 1.0f, ink);
-            triangle(list, cx + 6.0f, cy, 17.0f, 1.0f, ink);
-            break;
-        case Button::next:
-            triangle(list, cx - 3.0f, cy, 20.0f, 1.0f, ink);
-            list.rounded_rect({cx + 7.0f, cy - 10.0f, 4.0f, 20.0f}, 1.5f, ink);
-            break;
-        default:
-            break;
-        }
-        cx += kButtonPitch;
     }
     list.pop_opacity();
     draw_panel(canvas, fonts);
@@ -573,44 +677,52 @@ void PlayerChrome::draw_panel(ui::Canvas &canvas, const ui::Fonts &fonts) const
     if (panel_open_ < 0.01f)
         return;
     gfx::DrawList &list = canvas.list;
-    // The description reads as text: tighter lines, no row highlight; Up and
-    // Down scroll it.
+    // SmartTube's settings panel: a header band with the title, then the
+    // choices with radio circles (red for the current one). The description
+    // reads as text: tighter lines, Up and Down scroll it.
     const bool reading = panel_ == Panel::info;
-    constexpr float kWidth = 560.0f;
-    const float row_height = reading ? 36.0f : 68.0f;
-    constexpr float kTop = 170.0f;
+    constexpr float kWidth = 720.0f;
+    constexpr float kHeader = 170.0f;
+    const float row_height = reading ? 38.0f : 96.0f;
+    const float top = kHeader + (reading ? 34.0f : 0.0f);
     const float x = gfx::kVirtualWidth - kWidth * panel_open_;
     list.push_opacity(std::min(1.0f, panel_open_ * 1.4f));
     list.rounded_rect({x, 0.0f, kWidth, gfx::kVirtualHeight}, 0.0f,
-                      gfx::Color::rgb(0x161616, 0.97f));
+                      gfx::Color::rgb(0x1d1d1d, 0.98f));
+    list.rounded_rect({x, 0.0f, kWidth, kHeader}, 0.0f, gfx::Color::rgb(0x262626));
     if (fonts.semibold.font != nullptr)
         ui::text(list, fonts.semibold,
-                 fonts.semibold.font->fit(panel_title_, 32.0f, kWidth - 96.0f), x + 48.0f, 112.0f,
-                 32.0f, kInk);
+                 fonts.semibold.font->fit(panel_title_, 38.0f, kWidth - 112.0f), x + 56.0f, 100.0f,
+                 38.0f, kInk);
     const int count = static_cast<int>(panel_options_.size());
-    const int visible = static_cast<int>((gfx::kVirtualHeight - kTop - 40.0f) / row_height);
+    const int visible = static_cast<int>((gfx::kVirtualHeight - top - 24.0f) / row_height);
     int first = reading ? panel_focus_ : std::max(0, panel_focus_ - visible / 2);
     first = std::min(first, std::max(0, count - visible));
     for (int i = first; i < count && i < first + visible; ++i)
     {
-        const float y = kTop + static_cast<float>(i - first) * row_height;
+        const float y = top + static_cast<float>(i - first) * row_height;
         const std::string &text = panel_options_[static_cast<std::size_t>(i)];
         if (reading)
         {
-            ui::text(list, fonts.regular, text, x + 48.0f, y + 26.0f, 24.0f,
+            ui::text(list, fonts.regular, text, x + 56.0f, y + 26.0f, 26.0f,
                      i == 0 ? kMuted : kInk);
             continue;
         }
         const bool focused = i == panel_focus_;
-        const gfx::Rect row{x + 24.0f, y, kWidth - 48.0f, row_height - 8.0f};
+        const gfx::Rect row{x, y, kWidth, row_height};
         if (focused)
-            list.rounded_rect(row, 10.0f, kInk);
-        const gfx::Color ink = focused ? kDark : kInk;
+            list.rounded_rect(row, 0.0f, gfx::Color::rgb(0xffffff, 0.12f));
+        const float radio_x = x + 80.0f;
         if (i == panel_selected_)
-            list.circle(row.x + 30.0f, row.cy(), 8.0f, kRed);
+        {
+            list.ring(radio_x, row.cy(), 18.0f, 3.0f, kRed);
+            list.circle(radio_x, row.cy(), 10.0f, kRed);
+        }
+        else
+            list.ring(radio_x, row.cy(), 18.0f, 3.0f, gfx::Color::rgb(0xd0d0d0));
         if (fonts.regular.font != nullptr)
-            ui::text(list, fonts.regular, fonts.regular.font->fit(text, 26.0f, row.w - 80.0f),
-                     row.x + 60.0f, row.cy() + 9.0f, 26.0f, ink);
+            ui::text(list, fonts.regular, fonts.regular.font->fit(text, 28.0f, kWidth - 180.0f),
+                     x + 144.0f, row.cy() + 10.0f, 28.0f, kInk);
     }
     list.pop_opacity();
 }

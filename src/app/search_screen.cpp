@@ -547,8 +547,6 @@ void SearchScreen::draw_channel(ui::Canvas &canvas, const Context &context) cons
 void SearchScreen::draw(const Context &context, Frame &frame) const
 {
     ui::Canvas canvas{frame.scene, context.fonts, frame.glass_texture, clock_};
-    ui::text(canvas.list, context.fonts.semibold, "Search", kContentX, kSectionTitleY,
-             kSectionTitleSize, kInk);
     field_.draw(canvas);
     if (in_channel_)
     {

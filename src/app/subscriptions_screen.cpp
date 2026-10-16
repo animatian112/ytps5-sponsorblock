@@ -161,8 +161,6 @@ void SubscriptionsScreen::draw(const Context &context, Frame &frame) const
         return;
     }
 
-    ui::text(canvas.list, context.fonts.semibold, title(), kContentX, kSectionTitleY,
-             kSectionTitleSize, gfx::Color::rgb(0xf1f1f1));
     subs_.draw(canvas, context);
 }
 

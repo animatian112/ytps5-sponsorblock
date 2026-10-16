@@ -121,8 +121,11 @@ void TopicScreen::update(const InputFrame &input, float dt, ui::Feedback &feedba
 void TopicScreen::draw(const Context &context, Frame &frame) const
 {
     ui::Canvas canvas{frame.scene, context.fonts, frame.glass_texture, clock_};
-    ui::text(canvas.list, context.fonts.semibold, title_.c_str(), kContentX, kSectionTitleY,
-             kSectionTitleSize, gfx::Color::rgb(0xf1f1f1));
+    // SmartTube names the section in its sidebar only; a playlist page keeps
+    // its title.
+    if (playlist_page_)
+        ui::text(canvas.list, context.fonts.semibold, title_.c_str(), kContentX, kSectionTitleY,
+                 kSectionTitleSize, gfx::Color::rgb(0xf1f1f1));
     if (use_rows_)
         rows_.draw(canvas);
     else

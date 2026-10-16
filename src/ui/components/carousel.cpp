@@ -295,7 +295,7 @@ void Carousel::draw(Canvas &canvas) const
     {
         list.push_opacity(tween::cubic_out(age_ / 0.3f));
         const float baseline = bounds_.y + style.title_size * 0.82f;
-        paint.label(title, bounds_.x, baseline, style.title_size, ink);
+        paint.label(title, bounds_.x, baseline, style.title_size, style.title_muted ? quiet : ink);
         if (style.counter && count > 0)
         {
             char text[32];

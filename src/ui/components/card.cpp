@@ -109,6 +109,10 @@ float card_text_height(const CardLook &look)
     if (look.text != CardText::below)
         return 0.0f;
     const float subtitle = look.subtitle_size > 0.0f ? look.subtitle_size * 1.3f : 0.0f;
+    if (look.info_box)
+        return 2.0f * look.info_padding +
+               look.title_size * 1.25f * static_cast<float>(std::max(1, look.title_lines)) +
+               subtitle;
     return look.text_gap + look.title_size * 1.1f + subtitle + 2.0f;
 }
 
@@ -383,7 +387,41 @@ void draw_card(Canvas &canvas, const ComponentStyle &style, const CardLook &look
                      theme.style == SurfaceStyle::glass ? theme.light : theme.outline);
 
     // ---- text under the art ----
-    if (look.text == CardText::below && !item.title.empty() && words > 0.0f)
+    if (look.info_box && look.text == CardText::below && words > 0.0f)
+    {
+        const float box_top = bed.y + bed.h;
+        const Rect box{bed.x, box_top, bed.w, std::max(card.y + card.h - box_top, 0.0f)};
+        list.rounded_rect(box, 0.0f, gfx::mix(look.info_color, look.info_focus, focus));
+        list.push_opacity(words);
+        const float room = std::max(box.w - 2.0f * look.info_padding, 20.0f);
+        const float x = box.x + look.info_padding;
+        float baseline = box.y + look.info_padding + look.title_size * 0.9f;
+        if (canvas.fonts.regular.font != nullptr && !item.title.empty())
+        {
+            std::vector<std::string> lines =
+                canvas.fonts.regular.font->wrap(item.title, look.title_size, room);
+            const std::size_t keep = static_cast<std::size_t>(std::max(1, look.title_lines));
+            if (lines.size() > keep)
+            {
+                std::string last = lines[keep - 1];
+                for (std::size_t i = keep; i < lines.size(); ++i)
+                    last += " " + lines[i];
+                lines.resize(keep);
+                lines.back() = canvas.fonts.regular.font->fit(last, look.title_size, room);
+            }
+            for (const std::string &line : lines)
+            {
+                text(list, canvas.fonts.regular, line, x, baseline, look.title_size, kWhite);
+                baseline += look.title_size * 1.25f;
+            }
+        }
+        if (look.subtitle_size > 0.0f && !item.subtitle.empty())
+            paint.body(fit_body(paint, item.subtitle, look.subtitle_size, room), x,
+                       box.y + box.h - look.info_padding - look.subtitle_size * 0.25f,
+                       look.subtitle_size, gfx::Color::rgb(0xbdbdbd), gfx::Align::left);
+        list.pop_opacity();
+    }
+    else if (look.text == CardText::below && !item.title.empty() && words > 0.0f)
     {
         list.push_opacity(words);
         const Color ink = look.plate || look.on_panel ? theme.text : paint.page_text();

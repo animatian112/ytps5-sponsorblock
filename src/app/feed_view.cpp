@@ -48,8 +48,8 @@ FeedView::FeedView()
 {
     // SmartTube's grid: five thumbnails a row, the duration bottom right.
     grid_.style.theme = card_theme();
-    grid_.style.columns = 5;
-    grid_.style.gap_x = 24.0f;
+    grid_.style.columns = 4;
+    grid_.style.gap_x = 30.0f;
     grid_.style.gap_y = 30.0f;
     grid_.style.card.art_aspect = 16.0f / 9.0f;
     grid_.style.card.text = ui::CardText::below;
@@ -58,8 +58,14 @@ FeedView::FeedView()
     grid_.style.card.text_gap = 10.0f;
     grid_.style.card.badge_corner = ui::CardCorner::bottom_right;
     grid_.style.card.badge_size = 15.0f;
-    grid_.style.card.focus_scale = 1.08f;
-    grid_.style.card.ring = true;
+    grid_.style.card.focus_scale = 1.1f;
+    grid_.style.card.info_box = true; // SmartTube's cards: square art, the text in a grey box
+    grid_.style.card.title_lines = 2;
+    grid_.style.card.radius = 0.0f;
+    grid_.style.card.ring = false;
+    grid_.style.card.title_size = 24.0f;
+    grid_.style.card.subtitle_size = 19.0f;
+
     grid_.style.pitch_by_row = true;
     grid_.style.exits.up = true;
     // Left at the first column leaves the grid instead of doing nothing, so

@@ -85,6 +85,15 @@ struct CardLook
     bool glow = false;                 // light in the item's accent colour around it
     gfx::Color glow_color{0, 0, 0, 0}; // alpha 0: the item's accent, else the theme's focus
     float dim = 0.0f;                  // 0..1: how far cards without the focus fade
+    // ---- Leanback's info box (CardText::below only) ----
+    // The text sits in a box under the art, as wide as the card: the title
+    // on up to title_lines lines, then the subtitle; the box lightens with
+    // the focus.
+    bool info_box = false;
+    int title_lines = 1;
+    float info_padding = 16.0f;
+    gfx::Color info_color = gfx::Color::rgb(0x262626);
+    gfx::Color info_focus = gfx::Color::rgb(0x3a3a3a);
 };
 
 // The animated state of one card, eased by its owner.

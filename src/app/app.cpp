@@ -914,21 +914,87 @@ void App::update(const InputFrame &input, float dt)
     }
 }
 
+void App::draw_sidebar(ui::Canvas &canvas)
+{
+    gfx::DrawList &list = canvas.list;
+    const float open = rail_.expansion();
+    const auto mix = [open](float closed, float opened)
+    { return closed + (opened - closed) * open; };
+    const gfx::Color grey = gfx::Color::rgb(0x9e9e9e);
+    const gfx::Color white = gfx::Color::rgb(0xffffff);
+    if (open > 0.01f)
+        list.rounded_rect({0.0f, 0.0f, mix(104.0f, 540.0f), gfx::kVirtualHeight}, 0.0f,
+                          gfx::Color::rgb(0x1e1e1e, std::min(1.0f, open * 1.5f)));
+
+    // The search orb (entry 0) and the account's picture.
+    const int focus = rail_focused_ ? rail_.focus() : -1;
+    const float orb_y = mix(92.0f, 112.0f);
+    const float orb_r = mix(30.0f, 50.0f);
+    const float search_x = mix(52.0f, 160.0f);
+    list.circle(search_x, orb_y, orb_r, gfx::Color::rgb(0xe53935));
+    if (focus == 0)
+        list.ring(search_x, orb_y, orb_r + 7.0f, 4.0f, white);
+    if (rail_.icon)
+    {
+        const float icon = orb_r * 1.05f;
+        rail_.icon(canvas, {search_x - icon * 0.5f, orb_y - icon * 0.5f, icon, icon},
+                   rail_.entries()[0], 0, 0.0f, white);
+    }
+    const std::pair<std::string, std::string> account = service_.account();
+    const float avatar_x = search_x + orb_r * 2.0f + mix(14.0f, 26.0f);
+    if (!account.second.empty())
+    {
+        const std::uint32_t avatar = thumbs_->texture(account.second);
+        const gfx::Rect at{avatar_x - orb_r, orb_y - orb_r, orb_r * 2.0f, orb_r * 2.0f};
+        if (avatar != 0)
+            list.image(avatar, at, gfx::kFullUv, white, orb_r);
+        else
+            list.circle(at.cx(), at.cy(), orb_r, gfx::Color::rgb(0x3a3a3a));
+    }
+
+    // The sections: icon and name, the current one white and larger, the
+    // others grey; the one the focus is on while the panel is open is white.
+    const auto &entries = rail_.entries();
+    const int current = rail_.current();
+    const float top = mix(210.0f, 250.0f);
+    const float pitch = mix(72.0f, 76.0f);
+    for (std::size_t i = 1; i < entries.size(); ++i)
+    {
+        const int index = static_cast<int>(i);
+        const float y = top + static_cast<float>(i - 1) * pitch;
+        const bool lit = index == focus || (focus < 0 && index == current);
+        const bool chosen = index == current;
+        const gfx::Color ink = lit || (open < 0.5f && chosen) ? white : grey;
+        const float icon = chosen && open > 0.5f ? 44.0f : 38.0f;
+        const float icon_x = mix(52.0f, 150.0f);
+        if (rail_.icon)
+            rail_.icon(canvas, {icon_x - icon * 0.5f, y - icon * 0.5f, icon, icon}, entries[i],
+                       index, lit ? 1.0f : 0.0f, ink);
+        if (open > 0.05f)
+        {
+            list.push_opacity(open);
+            const float size = lit ? 40.0f : 34.0f;
+            ui::text(list, fonts_.regular, entries[i].label, icon_x + 54.0f, y + size * 0.36f, size,
+                     ink);
+            list.pop_opacity();
+        }
+    }
+}
+
 void App::draw_chrome(Frame &frame)
 {
     ui::Canvas overlay{frame.overlay, fonts_, frame.glass_texture, clock_};
     if (current_ < kTabCount)
     {
-        // YouTube's layout: the rail on the left, the section title on top of
-        // the content.
-        ui::Canvas rail_canvas{frame.overlay, fonts_, frame.glass_texture, clock_};
-        rail_.draw(rail_canvas);
+        // SmartTube's layout: the sections on the left (a grey panel with
+        // the search orb and the account on top while it is open, bare icons
+        // while the content has the focus), the clock and the badge top right.
+        draw_sidebar(overlay);
 
-        // SmartTube's top right: the account's picture and the time.
-        float right = 1840.0f;
         int hour = 0;
         int minute = 0;
         bool twelve = true;
+        constexpr float kClockX = 1600.0f;
         if (sys::local_clock(&hour, &minute, &twelve))
         {
             char text[16];
@@ -937,20 +1003,28 @@ void App::draw_chrome(Frame &frame)
                               minute, hour < 12 ? "AM" : "PM");
             else
                 std::snprintf(text, sizeof(text), "%02d:%02d", hour, minute);
-            right -= ui::text(overlay.list, fonts_.regular, text, right, 100.0f, 30.0f,
-                              gfx::Color::rgb(0xe0e0e0), gfx::Align::right) +
-                     24.0f;
+            ui::text(overlay.list, fonts_.semibold, text, kClockX, 98.0f, 50.0f,
+                     gfx::Color::rgb(0xffffff), gfx::Align::center);
         }
-        const std::pair<std::string, std::string> account = service_.account();
-        if (!account.second.empty())
+        int weekday = 0;
+        int month = 0;
+        int day = 0;
+        if (sys::local_date(&weekday, &month, &day) && month >= 1 && month <= 12)
         {
-            const std::uint32_t avatar = thumbs_->texture(account.second);
-            const gfx::Rect at{right - 52.0f, 62.0f, 52.0f, 52.0f};
-            if (avatar != 0)
-                overlay.list.image(avatar, at, gfx::kFullUv, gfx::Color::rgb(0xffffff), 26.0f);
-            else
-                overlay.list.circle(at.cx(), at.cy(), 26.0f, gfx::Color::rgb(0x3a3a3a));
+            static const char *const kDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+            static const char *const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+            char text[32];
+            std::snprintf(text, sizeof(text), "%s %s %d", kDays[weekday % 7], kMonths[month - 1],
+                          day);
+            ui::text(overlay.list, fonts_.semibold, text, kClockX, 136.0f, 24.0f,
+                     gfx::Color::rgb(0xffffff), gfx::Align::center);
         }
+        // The app's badge, where SmartTube shows its "S".
+        const gfx::Rect badge{1756.0f, 56.0f, 92.0f, 66.0f};
+        overlay.list.rounded_rect(badge, 10.0f, gfx::Color::rgb(0xe62117));
+        ui::text(overlay.list, fonts_.semibold, "T", badge.cx(), badge.cy() + 17.0f, 48.0f,
+                 gfx::Color::rgb(0xffffff), gfx::Align::center);
         if (!version_.empty())
         {
             // The running version, and the newer release once one is known.
@@ -974,13 +1048,25 @@ void App::draw_chrome(Frame &frame)
     toasts_.draw(overlay);
 }
 
+void App::draw_screen()
+{
+    // Leanback: the open sidebar pushes the page to the right instead of
+    // covering it.
+    const float shift = current_ < kTabCount ? rail_.expansion() * (540.0f - 104.0f) : 0.0f;
+    if (shift > 0.5f)
+        frame_.scene.push_transform(1.0f, 0.0f, 0.0f, shift, 0.0f);
+    screens_[current_]->draw(context_, frame_);
+    if (shift > 0.5f)
+        frame_.scene.pop_transform();
+}
+
 void App::compose(gfx::Renderer &renderer)
 {
     frame_.reset();
     frame_.backdrop.mode = gfx::BackdropMode::none;
     frame_.backdrop.colors[0] = gfx::Color::rgb(0x0f0f0f);
     frame_.backdrop.time = clock_;
-    screens_[current_]->draw(context_, frame_);
+    draw_screen();
     draw_chrome(frame_);
 
     // The hint row is written by the player screen into the chrome.
@@ -995,7 +1081,7 @@ void App::compose(gfx::Renderer &renderer)
 void App::rehearse()
 {
     frame_.reset();
-    screens_[current_]->draw(context_, frame_);
+    draw_screen();
     draw_chrome(frame_);
 }
 

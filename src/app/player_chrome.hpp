@@ -75,6 +75,11 @@ class PlayerChrome
     {
         has_channel_ = has_channel;
     }
+    // The clock line on the right ("Fri Oct 16  10:34 AM").
+    void set_clock(std::string clock)
+    {
+        clock_ = std::move(clock);
+    }
 
     // Reads the frame. `back` is consumed (closes the panel, then hides the
     // controls) when they are on screen; the screen leaves on the next Circle.
@@ -143,14 +148,19 @@ class PlayerChrome
     };
     enum class Zone
     {
+        top,
         seek,
-        buttons,
+        bottom,
     };
 
-    std::vector<Button> buttons() const;
-    static bool right_side(Button button);
-    float button_width(const ui::Fonts &fonts, Button button) const;
-    std::string button_label(Button button) const;
+    // SmartTube's two rows: transport above the seek bar, the video's own
+    // buttons below it.
+    std::vector<Button> top_buttons() const;
+    std::vector<Button> bottom_buttons() const;
+    std::string tooltip(Button button) const;
+    bool lit(Button button) const;
+    void draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button button, float cx, float cy,
+                   gfx::Color ink) const;
     void wake();
     Command seek_by(double seconds);
     Command press(Button button);
@@ -176,13 +186,14 @@ class PlayerChrome
     bool disliked_ = false;
     bool subscribed_ = false;
     bool has_channel_ = false;
+    std::string clock_;
 
     bool shown_ = true;
     float visibility_ = 1.0f;
     float idle_ = 0.0f;
     bool lifted_ = false;
     float lift_ = 0.0f;
-    Zone zone_ = Zone::buttons;
+    Zone zone_ = Zone::top;
     Button focus_ = Button::play;
     double seek_target_ = 0.0;
     float seek_hold_ = 0.0f; // shows the target, not the clock, just after a seek

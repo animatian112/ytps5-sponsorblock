@@ -46,6 +46,18 @@ bool local_clock(int *hour, int *minute, bool *twelve_hour)
     return true;
 }
 
+bool local_date(int *weekday, int *month, int *day)
+{
+    const std::time_t now = std::time(nullptr);
+    std::tm parts{};
+    if (localtime_r(&now, &parts) == nullptr)
+        return false;
+    *weekday = parts.tm_wday;
+    *month = parts.tm_mon + 1;
+    *day = parts.tm_mday;
+    return true;
+}
+
 void sleep_us(std::uint32_t microseconds)
 {
     usleep(microseconds);

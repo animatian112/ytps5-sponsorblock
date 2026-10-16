@@ -13,9 +13,9 @@ namespace
 
 const gfx::Color kInk = gfx::Color::rgb(0xffffff);
 const gfx::Color kMuted = gfx::Color::rgb(0xaaaaaa);
-const gfx::Color kDark = gfx::Color::rgb(0x111111);
-constexpr float kWidth = 600.0f;
-constexpr float kRow = 68.0f;
+constexpr float kWidth = 720.0f;
+constexpr float kRow = 88.0f;
+constexpr float kHeader = 170.0f;
 
 } // namespace
 
@@ -73,37 +73,30 @@ void CardMenu::draw(ui::Canvas &canvas, const ui::Fonts &fonts) const
 {
     if (shown_ < 0.01f || fonts.regular.font == nullptr || fonts.semibold.font == nullptr)
         return;
-    // SmartTube's dialogs: a full-height panel that slides in from the right
-    // over a darkened page, the title on top and one row per choice.
+    // SmartTube's dialogs: a full-height panel from the right, a header band
+    // with the title, one full-width row per choice.
     gfx::DrawList &list = canvas.list;
     const float x = gfx::kVirtualWidth - kWidth * shown_;
     list.push_opacity(std::min(1.0f, shown_ * 1.4f));
     list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
                       gfx::Color::rgb(0x000000, 0.45f));
     list.rounded_rect({x, 0.0f, kWidth, gfx::kVirtualHeight}, 0.0f,
-                      gfx::Color::rgb(0x1b1b1b, 0.98f));
-    const std::vector<std::string> title = fonts.semibold.font->wrap(title_, 30.0f, kWidth - 96.0f);
-    float y = 104.0f;
-    for (std::size_t i = 0; i < title.size() && i < 2; ++i, y += 40.0f)
-        ui::text(list, fonts.semibold,
-                 i == 1 && title.size() > 2
-                     ? fonts.semibold.font->fit(title[i] + " " + title[2], 30.0f, kWidth - 96.0f)
-                     : title[i],
-                 x + 48.0f, y, 30.0f, kInk);
-    const float top = y + 28.0f;
+                      gfx::Color::rgb(0x1d1d1d, 0.98f));
+    list.rounded_rect({x, 0.0f, kWidth, kHeader}, 0.0f, gfx::Color::rgb(0x262626));
+    ui::text(list, fonts.semibold, fonts.semibold.font->fit(title_, 34.0f, kWidth - 112.0f),
+             x + 56.0f, 100.0f, 34.0f, kInk);
     const int count = static_cast<int>(entries_.size());
-    const int visible = std::max(1, static_cast<int>((gfx::kVirtualHeight - top - 48.0f) / kRow));
+    const int visible =
+        std::max(1, static_cast<int>((gfx::kVirtualHeight - kHeader - 24.0f) / kRow));
     const int first = std::clamp(focus_ - visible / 2, 0, std::max(0, count - visible));
     for (int i = first; i < count && i < first + visible; ++i)
     {
-        const float row_y = top + static_cast<float>(i - first) * kRow;
-        const bool focused = i == focus_;
-        const gfx::Rect row{x + 24.0f, row_y, kWidth - 48.0f, kRow - 8.0f};
-        if (focused)
-            list.rounded_rect(row, 10.0f, kInk);
+        const gfx::Rect row{x, kHeader + static_cast<float>(i - first) * kRow, kWidth, kRow};
+        if (i == focus_)
+            list.rounded_rect(row, 0.0f, gfx::Color::rgb(0xffffff, 0.12f));
         const std::string &label = entries_[static_cast<std::size_t>(i)].label;
-        ui::text(list, fonts.regular, fonts.regular.font->fit(label, 26.0f, row.w - 56.0f),
-                 row.x + 28.0f, row.cy() + 9.0f, 26.0f, focused ? kDark : kInk);
+        ui::text(list, fonts.regular, fonts.regular.font->fit(label, 28.0f, kWidth - 112.0f),
+                 x + 56.0f, row.cy() + 10.0f, 28.0f, kInk);
     }
     if (count > visible)
         ui::text(list, fonts.regular, std::to_string(focus_ + 1) + " / " + std::to_string(count),

@@ -196,8 +196,6 @@ void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedbac
 void HomeScreen::draw(const Context &context, Frame &frame) const
 {
     ui::Canvas canvas{frame.scene, context.fonts, frame.glass_texture, clock_};
-    ui::text(canvas.list, context.fonts.semibold, "Home", kContentX, kSectionTitleY,
-             kSectionTitleSize, gfx::Color::rgb(0xf1f1f1));
     const yt::FeedView view = context.service.feed(yt::FeedKind::home);
     if (view.state == yt::Load::loading && view.items.empty())
     {

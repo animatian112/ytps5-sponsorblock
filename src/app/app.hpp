@@ -112,6 +112,8 @@ class App
 
   private:
     void draw_chrome(Frame &frame);
+    void draw_sidebar(ui::Canvas &canvas);
+    void draw_screen();
     void handle_global(const InputFrame &input, float dt);
     // The card menu: hold Cross (or press Square) on a video card.
     void filter_card_hold(InputFrame &input, float dt);

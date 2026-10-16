@@ -40,6 +40,7 @@ struct CarouselStyle : ComponentStyle
     float neighbour_fade = 0.0f; // 0..1: opacity lost per item of distance from the focus
     float edge_fade = 0.9f;      // items fade over this share of their width at the edges
     float title_size = 26.0f;    // the shelf's title, when it has one
+    bool title_muted = false;    // the title in the quiet text colour (Leanback's row headers)
     float title_gap = 16.0f;     // between the title and the row
     bool counter = true;         // "07 / 24" at the right end of the title line
     bool dots = true;            // paged: one dot per page under the row

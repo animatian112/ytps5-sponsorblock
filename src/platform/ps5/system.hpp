@@ -24,6 +24,8 @@ void sleep_us(std::uint32_t microseconds);
 // The console's local time of day (its time-zone and summer-time settings
 // applied) and whether it shows 12-hour time. False when there is no clock.
 bool local_clock(int *hour, int *minute, bool *twelve_hour);
+// The console's local date: weekday 0 (Sunday) .. 6, month 1 .. 12, day 1 .. 31.
+bool local_date(int *weekday, int *month, int *day);
 
 // Never returns: keeps the title alive until the shell closes it. Returning
 // from main or calling exit() is not safe for a native title.
