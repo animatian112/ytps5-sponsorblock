@@ -154,6 +154,8 @@ std::vector<PlayerChrome::Button> PlayerChrome::bottom_buttons() const
         out.push_back(Button::subscribe);
     }
     out.push_back(Button::captions);
+    if (signed_in_)
+        out.push_back(Button::save);
     if (audio_tracks_)
         out.push_back(Button::audio);
     out.push_back(Button::info);
@@ -193,6 +195,8 @@ std::string PlayerChrome::tooltip(Button button) const
         return subscribed_ ? "Unsubscribe" : "Subscribe";
     case Button::channel:
         return "Open channel";
+    case Button::save:
+        return "Add to playlist";
     case Button::info:
         return "Video info";
     }
@@ -274,6 +278,8 @@ PlayerChrome::Command PlayerChrome::press(Button button)
         return Command::subscribe;
     case Button::channel:
         return Command::channel;
+    case Button::save:
+        return Command::save;
     case Button::info:
         return Command::open_info;
     }
@@ -548,6 +554,14 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
             ui::text(list, fonts.semibold, initial, cx, cy + 8.0f, 24.0f, kInk, gfx::Align::center);
         break;
     }
+    case Button::save: // three lines and a plus
+        for (int i = 0; i < 3; ++i)
+            list.rounded_rect({cx - 22.0f, cy - 14.0f + static_cast<float>(i) * 10.0f,
+                               i == 2 ? 16.0f : 26.0f, 4.0f},
+                              1.0f, ink);
+        list.line(cx + 14.0f, cy - 2.0f, cx + 14.0f, cy + 18.0f, 4.0f, ink);
+        list.line(cx + 4.0f, cy + 8.0f, cx + 24.0f, cy + 8.0f, 4.0f, ink);
+        break;
     case Button::info:
         list.ring(cx, cy, 20.0f, 4.0f, ink);
         list.circle(cx, cy - 9.0f, 3.0f, ink);

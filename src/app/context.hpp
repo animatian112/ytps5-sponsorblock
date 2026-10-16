@@ -47,6 +47,9 @@ struct Nav
     bool start_login = false;
     bool cancel_login = false;
     bool sign_out = false;
+    // "Add to playlist" from the player: the app's playlist picker for this video.
+    bool add_to_playlist = false;
+    yt::FeedItem playlist_item;
     bool quit = false; // leave the app
 };
 

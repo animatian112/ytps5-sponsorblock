@@ -814,6 +814,11 @@ void App::update(const InputFrame &input, float dt)
 
     // Apply what the screen asked for.
     const Nav &ask = context_.nav;
+    if (ask.add_to_playlist && !ask.playlist_item.video_id.empty())
+    {
+        menu_item_ = ask.playlist_item;
+        apply_card_pick(kPickPlaylist);
+    }
     if (ask.quit)
         quit_ = true;
     if (ask.open_video && ask.video_id.size() > 2 && ask.video_id.rfind("VL", 0) == 0)

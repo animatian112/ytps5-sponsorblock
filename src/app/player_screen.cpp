@@ -579,6 +579,12 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             context_.service.rate_video(id, lit ? "removelike" : (like ? "like" : "dislike"));
             break;
         }
+        case PlayerChrome::Command::save:
+            context_.nav.add_to_playlist = true;
+            context_.nav.playlist_item.video_id = playing_id_.empty() ? requested_id_ : playing_id_;
+            context_.nav.playlist_item.title = view.info.title;
+            context_.nav.playlist_item.author = view.info.author;
+            break;
         case PlayerChrome::Command::channel:
             if (!view.info.channel_id.empty())
             {

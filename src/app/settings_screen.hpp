@@ -12,6 +12,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace hui::app
 {
@@ -31,13 +33,13 @@ class SettingsScreen final : public Screen
     }
     const char *hint() const override
     {
-        return "Circle back   Left: menu   Options quit";
+        return open_ >= 0 ? "Circle back to the tiles   Options quit"
+                          : "Cross open   Left: menu   Options quit";
     }
-    // The Form consumes the directions, so a left press never reaches the rail
-    // here; the touchpad is the way in.
+    // Left past the first tile of a row hands the focus to the sidebar.
     bool wants_rail_focus() const override
     {
-        return false;
+        return wants_rail_;
     }
     void enter() override;
     void update(const InputFrame &input, float dt, ui::Feedback &feedback) override;
@@ -45,11 +47,41 @@ class SettingsScreen final : public Screen
     std::span<const TourStep> tour() const override;
 
   private:
+    // SmartTube's settings: a grid of tiles, each opening its group of
+    // options (or doing one thing, like the network test).
+    enum class Icon
+    {
+        accounts,
+        player,
+        sponsorblock,
+        general,
+        network,
+        updates,
+        about,
+    };
+    struct Tile
+    {
+        std::string label;
+        Icon icon = Icon::general;
+        std::unique_ptr<ui::Form> form; // null: the tile is an action
+        int action = 0;
+    };
+
+    ui::Form &form()
+    {
+        return *tiles_[static_cast<std::size_t>(open_)].form;
+    }
+    ui::Form &add_tile(const char *label, Icon icon);
     void apply(int id, ui::Feedback &feedback);
     void activate(int id);
+    void update_grid(const InputFrame &input, ui::Feedback &feedback);
+    void draw_icon(gfx::DrawList &list, Icon icon, const gfx::Rect &box) const;
 
     Context &context_;
-    ui::Form form_;
+    std::vector<Tile> tiles_;
+    int focus_ = 0;
+    int open_ = -1; // the tile whose options are on screen, -1 for the grid
+    bool wants_rail_ = false;
     float clock_ = 0.0f;
     // The "Check for updates" action waits for the background check to settle
     // before it reports the result.

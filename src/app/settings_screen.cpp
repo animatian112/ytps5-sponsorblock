@@ -13,6 +13,8 @@
 
 #include <pthread.h>
 
+#include <algorithm>
+#include <cmath>
 #include <memory>
 #include <mutex>
 
@@ -99,7 +101,16 @@ enum : int
     kSignOut,
     kCheckUpdates,
     kNetTest,
+    kSignIn,
+    kAbout,
 };
+
+constexpr int kColumns = 6;
+constexpr float kTileW = 236.0f;
+constexpr float kTileH = 236.0f;
+constexpr float kTileGap = 18.0f;
+constexpr float kGridX = 170.0f;
+constexpr float kGridY = 200.0f;
 
 constexpr int kHeights[] = {720, 1080, 1440, 2160};
 
@@ -190,7 +201,10 @@ const char *sb_scope_description(int scope)
 }
 
 const TourStep kTour[] = {
-    {1.0f, 0, Direction::none, "toggles"},
+    {1.0f, 0, Direction::none, "tiles"},
+    {0.7f, 0, Direction::right, nullptr},
+    {0.7f, hui::action_bit(Action::confirm), Direction::none, nullptr},
+    {0.9f, 0, Direction::none, "toggles"},
     {0.7f, hui::action_bit(Action::down), Direction::none, nullptr},
     {0.7f, hui::action_bit(Action::down), Direction::none, nullptr},
     {0.7f, hui::action_bit(Action::down), Direction::none, nullptr},
@@ -199,17 +213,34 @@ const TourStep kTour[] = {
 
 } // namespace
 
+ui::Form &SettingsScreen::add_tile(const char *label, Icon icon)
+{
+    Tile tile;
+    tile.label = label;
+    tile.icon = icon;
+    tile.form = std::make_unique<ui::Form>();
+    tile.form->style.theme = youtube_theme();
+    tile.form->set_bounds({480.0f, 220.0f, 960.0f, 740.0f});
+    tiles_.push_back(std::move(tile));
+    return *tiles_.back().form;
+}
+
 SettingsScreen::SettingsScreen(Context &context) : context_(context)
 {
-    form_.style.theme = youtube_theme();
-    form_.set_bounds({600.0f, 200.0f, 880.0f, 760.0f});
+    {
+        ui::Form &account = add_tile("Accounts", Icon::accounts);
+        account.add_action(kSignIn, "Sign in").description =
+            "Scan the code with your phone: the sign-in page opens with it filled in";
+        account.add_action(kSaveAccount, "Back up account").description =
+            "Write a token copy into the app folder";
+        account.add_action(kSignOut, "Sign out");
+    }
+    ui::Form &player = add_tile("Player", Icon::player);
+    player.add_toggle(kCodecAvc, "AVC (H.264)", context_.settings.codec_avc);
+    player.add_toggle(kCodecVp9, "VP9", context_.settings.codec_vp9);
+    player.add_toggle(kCodecAv1, "AV1", context_.settings.codec_av1);
 
-    form_.add_header("Playback");
-    form_.add_toggle(kCodecAvc, "AVC (H.264)", context_.settings.codec_avc);
-    form_.add_toggle(kCodecVp9, "VP9", context_.settings.codec_vp9);
-    form_.add_toggle(kCodecAv1, "AV1", context_.settings.codec_av1);
-
-    ui::FormRow &resolution = form_.add_stepper(
+    ui::FormRow &resolution = player.add_stepper(
         kMaxHeight, "Maximum resolution", height_to_index(context_.settings.max_height), 0, 3, 1);
     // The codec ceilings (VP9 720p, AV1 480p) cap the stream below this value
     // while decoding runs on the CPU; the selector's log line names what it picked.
@@ -222,7 +253,7 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         return kLabels[value];
     };
 
-    ui::FormRow &decode = form_.add_stepper(
+    ui::FormRow &decode = player.add_stepper(
         kDecodeMode, "Decoding", decode_mode_to_index(context_.settings.decode_mode), 0, 2, 1);
     decode.description = decode_mode_description(context_.settings.decode_mode);
     decode.stepper.format = [](int value) -> std::string
@@ -233,14 +264,11 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         return kLabels[value];
     };
 
-    form_.add_toggle(kHaptics, "Haptics", context_.settings.haptics).description =
-        "Rumble on clicks and drags";
-
-    form_.add_header("SponsorBlock");
-    form_.add_toggle(kSbEnabled, "Skip segments", context_.settings.sb_enabled).description =
+    ui::Form &sponsor = add_tile("SponsorBlock", Icon::sponsorblock);
+    sponsor.add_toggle(kSbEnabled, "Skip segments", context_.settings.sb_enabled).description =
         "Community-marked segments from sponsor.ajay.app";
     ui::FormRow &sb_mode =
-        form_.add_stepper(kSbMode, "When a segment starts", context_.settings.sb_mode, 0, 2, 1);
+        sponsor.add_stepper(kSbMode, "When a segment starts", context_.settings.sb_mode, 0, 2, 1);
     sb_mode.description = sb_mode_description(context_.settings.sb_mode);
     sb_mode.stepper.format = [](int value) -> std::string
     {
@@ -250,7 +278,7 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         return kLabels[value];
     };
     ui::FormRow &sb_scope =
-        form_.add_stepper(kSbScope, "Segments", context_.settings.sb_scope, 0, 2, 1);
+        sponsor.add_stepper(kSbScope, "Segments", context_.settings.sb_scope, 0, 2, 1);
     sb_scope.description = sb_scope_description(context_.settings.sb_scope);
     sb_scope.stepper.format = [](int value) -> std::string
     {
@@ -260,22 +288,20 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         return kLabels[value];
     };
 
-    form_.add_header("Account");
-    form_.add_action(kSaveAccount, "Back up account").description =
-        "Write a token copy into the app folder";
-    form_.add_action(kSignOut, "Sign out");
-    form_.add_header("About");
-    form_.add_action(kNetTest, "Network test").description =
-        "Try YouTube, Google sign-in and SponsorBlock and show what answers";
-    form_.add_action(kCheckUpdates, "Check for updates").description =
-        "Ask github.com/animatian112/ytps5-sponsorblock for a newer build";
+    ui::Form &general = add_tile("General", Icon::general);
+    general.add_toggle(kHaptics, "Haptics", context_.settings.haptics).description =
+        "Rumble on clicks and drags";
+
+    // One-shot tiles.
+    tiles_.push_back({"Network test", Icon::network, nullptr, kNetTest});
+    tiles_.push_back({"Updates", Icon::updates, nullptr, kCheckUpdates});
+    tiles_.push_back({"About", Icon::about, nullptr, kAbout});
 }
 
 void SettingsScreen::enter()
 {
-    form_.enter();
-    form_.set_active(true);
-    form_.focus_row(kCodecAvc);
+    open_ = -1;
+    wants_rail_ = false;
 }
 
 void SettingsScreen::apply(int id, ui::Feedback &feedback)
@@ -286,16 +312,16 @@ void SettingsScreen::apply(int id, ui::Feedback &feedback)
     case kCodecVp9:
     case kCodecAv1:
     {
-        const bool on = form_.toggle_value(id);
+        const bool on = form().toggle_value(id);
         const int enabled = (context_.settings.codec_avc ? 1 : 0) +
                             (context_.settings.codec_vp9 ? 1 : 0) +
                             (context_.settings.codec_av1 ? 1 : 0);
         // Turning off the last enabled codec must not stick.
         if (!on && enabled <= 1)
         {
-            form_.set_toggle(id, true);
+            form().set_toggle(id, true);
             context_.toasts.push(ui::StatusKind::warning, "At least one codec must stay enabled");
-            ui::play_cue(feedback, form_.style, form_.style.sounds.refuse);
+            ui::play_cue(feedback, form().style, form().style.sounds.refuse);
             return;
         }
         if (id == kCodecAvc)
@@ -308,35 +334,35 @@ void SettingsScreen::apply(int id, ui::Feedback &feedback)
         break;
     }
     case kMaxHeight:
-        context_.settings.max_height = index_to_height(form_.stepper_value(id));
+        context_.settings.max_height = index_to_height(form().stepper_value(id));
         context_.settings_changed = true;
         break;
     case kDecodeMode:
     {
-        const yt::DecodeMode mode = index_to_decode_mode(form_.stepper_value(id));
+        const yt::DecodeMode mode = index_to_decode_mode(form().stepper_value(id));
         context_.settings.decode_mode = mode;
-        if (ui::FormRow *row = form_.row(kDecodeMode))
+        if (ui::FormRow *row = form().row(kDecodeMode))
             row->description = decode_mode_description(mode);
         context_.settings_changed = true;
         break;
     }
     case kHaptics:
-        context_.settings.haptics = form_.toggle_value(id);
+        context_.settings.haptics = form().toggle_value(id);
         context_.settings_changed = true;
         break;
     case kSbEnabled:
-        context_.settings.sb_enabled = form_.toggle_value(id);
+        context_.settings.sb_enabled = form().toggle_value(id);
         context_.settings_changed = true;
         break;
     case kSbMode:
-        context_.settings.sb_mode = form_.stepper_value(id);
-        if (ui::FormRow *row = form_.row(kSbMode))
+        context_.settings.sb_mode = form().stepper_value(id);
+        if (ui::FormRow *row = form().row(kSbMode))
             row->description = sb_mode_description(context_.settings.sb_mode);
         context_.settings_changed = true;
         break;
     case kSbScope:
-        context_.settings.sb_scope = form_.stepper_value(id);
-        if (ui::FormRow *row = form_.row(kSbScope))
+        context_.settings.sb_scope = form().stepper_value(id);
+        if (ui::FormRow *row = form().row(kSbScope))
             row->description = sb_scope_description(context_.settings.sb_scope);
         context_.settings_changed = true;
         break;
@@ -347,6 +373,22 @@ void SettingsScreen::apply(int id, ui::Feedback &feedback)
 
 void SettingsScreen::activate(int id)
 {
+    if (id == kSignIn)
+    {
+        if (context_.service.signed_in())
+            context_.toasts.push(ui::StatusKind::info, "Already signed in");
+        else
+            context_.nav.start_login = true;
+        return;
+    }
+    if (id == kAbout)
+    {
+        context_.toasts.push(ui::StatusKind::info, "TubeBlock",
+                             "YouTube with SponsorBlock for PS5. Based on ytps5; segments from "
+                             "sponsor.ajay.app (CC BY-NC-SA 4.0).",
+                             8.0f);
+        return;
+    }
     if (id == kSaveAccount)
     {
         // The sandbox copy in /download0 survives reboots and re-jailbreaks;
@@ -382,21 +424,83 @@ void SettingsScreen::activate(int id)
     context_.toasts.push(ui::StatusKind::info, was_signed_in ? "Signed out" : "Not signed in");
 }
 
-void SettingsScreen::update(const InputFrame &input, float dt, ui::Feedback &feedback)
+void SettingsScreen::update_grid(const InputFrame &input, ui::Feedback &feedback)
 {
-    clock_ += dt;
-    switch (form_.handle(input, feedback))
+    const int count = static_cast<int>(tiles_.size());
+    const int column = focus_ % kColumns;
+    int next = focus_;
+    switch (input.nav)
     {
-    case ui::Event::changed:
-        apply(form_.changed_id(), feedback);
+    case Direction::left:
+        if (column == 0)
+        {
+            wants_rail_ = true;
+            return;
+        }
+        next = focus_ - 1;
         break;
-    case ui::Event::activated:
-        activate(form_.changed_id());
+    case Direction::right:
+        next = focus_ + 1;
+        break;
+    case Direction::up:
+        next = focus_ - kColumns;
+        break;
+    case Direction::down:
+        next = std::min(focus_ + kColumns, count - 1);
         break;
     default:
         break;
     }
-    form_.update(dt);
+    if (next != focus_)
+    {
+        if (next >= 0 && next < count && (input.nav != Direction::right || next % kColumns != 0))
+        {
+            focus_ = next;
+            feedback.play(audio::Cue::focus);
+        }
+        else
+            feedback.play(audio::Cue::error);
+        return;
+    }
+    if (!input.is_pressed(Action::confirm) || focus_ < 0 || focus_ >= count)
+        return;
+    feedback.play(audio::Cue::select);
+    Tile &tile = tiles_[static_cast<std::size_t>(focus_)];
+    if (tile.form == nullptr)
+    {
+        activate(tile.action);
+        return;
+    }
+    open_ = focus_;
+    form().enter();
+    form().set_active(true);
+}
+
+void SettingsScreen::update(const InputFrame &input, float dt, ui::Feedback &feedback)
+{
+    clock_ += dt;
+    wants_rail_ = false;
+    if (open_ < 0)
+        update_grid(input, feedback);
+    else
+    {
+        switch (form().handle(input, feedback))
+        {
+        case ui::Event::changed:
+            apply(form().changed_id(), feedback);
+            break;
+        case ui::Event::activated:
+            activate(form().changed_id());
+            break;
+        case ui::Event::cancelled:
+            open_ = -1; // Circle: back to the tiles
+            break;
+        default:
+            break;
+        }
+        if (open_ >= 0)
+            form().update(dt);
+    }
 
     {
         std::vector<std::pair<std::string, std::string>> done;
@@ -453,22 +557,102 @@ void SettingsScreen::update(const InputFrame &input, float dt, ui::Feedback &fee
     }
 }
 
+void SettingsScreen::draw_icon(gfx::DrawList &list, Icon icon, const gfx::Rect &box) const
+{
+    const gfx::Color ink = gfx::Color::rgb(0xffffff);
+    const gfx::Color hole = gfx::Color::rgb(0x1e1e1e);
+    const float cx = box.cx();
+    const float cy = box.cy();
+    const float s = box.w * 0.5f;
+    switch (icon)
+    {
+    case Icon::accounts: // a white square with a person cut out
+        list.rounded_rect({cx - s, cy - s, s * 2.0f, s * 2.0f}, 6.0f, ink);
+        list.circle(cx, cy - s * 0.25f, s * 0.32f, hole);
+        list.rounded_rect({cx - s * 0.62f, cy + s * 0.2f, s * 1.24f, s * 0.6f}, s * 0.3f, hole);
+        list.rounded_rect({cx - s * 0.62f, cy + s * 0.5f, s * 1.24f, s * 0.3f}, 0.0f, hole);
+        break;
+    case Icon::player: // a clapperboard
+        list.rounded_rect({cx - s, cy - s * 0.35f, s * 2.0f, s * 1.25f}, 6.0f, ink);
+        list.rounded_rect({cx - s, cy - s * 0.85f, s * 2.0f, s * 0.38f}, 4.0f, ink);
+        for (int i = 0; i < 4; ++i)
+        {
+            const float x = cx - s * 0.7f + static_cast<float>(i) * s * 0.5f;
+            list.line(x, cy - s * 0.85f, x + s * 0.22f, cy - s * 0.47f, s * 0.12f, hole);
+        }
+        break;
+    case Icon::sponsorblock: // a shield with a play mark
+        list.rounded_rect({cx - s * 0.8f, cy - s, s * 1.6f, s * 1.1f}, 10.0f, ink);
+        list.triangle({cx - s * 0.8f, cy + s * 0.05f, s * 1.6f, s * 0.95f}, ink, 0.0f, 3.14159265f);
+        list.triangle({cx - s * 0.22f, cy - s * 0.42f, s * 0.6f, s * 0.6f}, hole, 0.0f, 1.5707963f);
+        break;
+    case Icon::general: // a gear
+        for (int i = 0; i < 8; ++i)
+        {
+            const float angle = static_cast<float>(i) * 0.785398f;
+            list.line(cx, cy, cx + std::cos(angle) * s * 0.95f, cy + std::sin(angle) * s * 0.95f,
+                      s * 0.36f, ink);
+        }
+        list.circle(cx, cy, s * 0.72f, ink);
+        list.circle(cx, cy, s * 0.3f, hole);
+        break;
+    case Icon::network: // a globe
+        list.ring(cx, cy, s * 0.9f, s * 0.12f, ink);
+        list.ring(cx, cy, s * 0.42f, s * 0.1f, ink);
+        list.line(cx - s * 0.9f, cy, cx + s * 0.9f, cy, s * 0.1f, ink);
+        list.line(cx, cy - s * 0.9f, cx, cy + s * 0.9f, s * 0.1f, ink);
+        break;
+    case Icon::updates: // a cloud with an arrow up
+        list.circle(cx - s * 0.45f, cy + s * 0.1f, s * 0.42f, ink);
+        list.circle(cx + s * 0.05f, cy - s * 0.2f, s * 0.55f, ink);
+        list.circle(cx + s * 0.55f, cy + s * 0.15f, s * 0.38f, ink);
+        list.rounded_rect({cx - s * 0.85f, cy + s * 0.1f, s * 1.75f, s * 0.42f}, s * 0.2f, ink);
+        list.triangle({cx - s * 0.3f, cy - s * 0.35f, s * 0.6f, s * 0.36f}, hole);
+        list.rounded_rect({cx - s * 0.1f, cy - s * 0.02f, s * 0.2f, s * 0.42f}, 0.0f, hole);
+        break;
+    case Icon::about: // an "i" in a circle
+        list.circle(cx, cy, s * 0.9f, ink);
+        list.circle(cx, cy - s * 0.42f, s * 0.13f, hole);
+        list.rounded_rect({cx - s * 0.1f, cy - s * 0.18f, s * 0.2f, s * 0.68f}, 2.0f, hole);
+        break;
+    }
+}
+
 void SettingsScreen::draw(const Context &context, Frame &frame) const
 {
     ui::Canvas canvas{frame.scene, context.fonts, frame.glass_texture, clock_};
-    ui::text(canvas.list, context.fonts.display, "Settings", 600.0f, 150.0f, 44.0f,
-             gfx::Color::rgb(0xf1f1f1));
-    form_.draw(canvas);
-    ui::text(canvas.list, context.fonts.regular,
-             "TubeBlock - YouTube with SponsorBlock - PPSA98260", 600.0f, 980.0f, 20.0f,
-             gfx::Color::rgb(0x777777));
-    ui::text(canvas.list, context.fonts.regular,
-             "Based on ytps5. Segments: sponsor.ajay.app (CC BY-NC-SA 4.0)", 600.0f, 1012.0f, 20.0f,
-             gfx::Color::rgb(0x777777));
-    ui::text(canvas.list, context.fonts.regular,
-             context.service.signed_in() ? "Signed in - token in /download0/hui/auth.json"
-                                         : "Not signed in",
-             1400.0f, 980.0f, 20.0f, gfx::Color::rgb(0x999999), gfx::Align::right);
+    gfx::DrawList &list = canvas.list;
+    if (open_ >= 0)
+    {
+        // One group's options, under its name.
+        const Tile &tile = tiles_[static_cast<std::size_t>(open_)];
+        ui::text(list, context.fonts.semibold, tile.label, 480.0f, 170.0f, 40.0f,
+                 gfx::Color::rgb(0xf1f1f1));
+        tile.form->draw(canvas);
+        if (tile.icon == Icon::accounts)
+            ui::text(list, context.fonts.regular,
+                     context.service.signed_in() ? "Signed in" : "Not signed in", 480.0f, 1000.0f,
+                     22.0f, gfx::Color::rgb(0x999999));
+        return;
+    }
+    // SmartTube's tiles: dark squares, a white icon, the name under it; the
+    // focused tile lightens and its name sits on a white strip.
+    for (std::size_t i = 0; i < tiles_.size(); ++i)
+    {
+        const int index = static_cast<int>(i);
+        const float x = kGridX + static_cast<float>(index % kColumns) * (kTileW + kTileGap);
+        const float y = kGridY + static_cast<float>(index / kColumns) * (kTileH + kTileGap);
+        const bool focused = index == focus_;
+        const gfx::Rect tile{x, y, kTileW, kTileH};
+        list.rounded_rect(tile, 0.0f, gfx::Color::rgb(focused ? 0x2c2c2c : 0x1e1e1e));
+        draw_icon(list, tiles_[i].icon, {tile.cx() - 56.0f, y + 48.0f, 112.0f, 112.0f});
+        const gfx::Rect strip{x, y + kTileH - 54.0f, kTileW, 54.0f};
+        if (focused)
+            list.rounded_rect(strip, 0.0f, gfx::Color::rgb(0xffffff));
+        ui::text(list, context.fonts.regular, tiles_[i].label, strip.cx(), strip.cy() + 9.0f, 24.0f,
+                 focused ? gfx::Color::rgb(0x111111) : gfx::Color::rgb(0xffffff),
+                 gfx::Align::center);
+    }
 }
 
 std::span<const TourStep> SettingsScreen::tour() const

@@ -43,6 +43,7 @@ class PlayerChrome
         dislike,
         subscribe,
         channel,
+        save, // add to playlist
         open_info,
         pick, // a panel choice: panel() and picked()
     };
@@ -144,6 +145,7 @@ class PlayerChrome
         dislike,
         subscribe,
         channel,
+        save,
         info,
     };
     enum class Zone
