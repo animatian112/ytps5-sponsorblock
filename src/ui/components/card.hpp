@@ -94,6 +94,7 @@ struct CardLook
     float info_padding = 16.0f;
     gfx::Color info_color = gfx::Color::rgb(0x262626);
     gfx::Color info_focus = gfx::Color::rgb(0x3a3a3a);
+    gfx::Color info_focus_text = gfx::Color::rgb(0xffffff); // text on the focused box
 };
 
 // The animated state of one card, eased by its owner.

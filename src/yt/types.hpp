@@ -157,7 +157,13 @@ struct FeedItem
     std::string channel_id;
     std::string not_interested_token;
     std::string dont_recommend_token;
+    std::string remove_history_token; // "Remove from watch history" (History's cards)
 
+    // A channel card: video_id is the channel's "UC..." id.
+    bool is_channel() const
+    {
+        return video_id.size() == 24 && video_id[0] == 'U' && video_id[1] == 'C';
+    }
     bool is_playlist() const
     {
         return video_id.size() > 2 && video_id[0] == 'V' && video_id[1] == 'L';

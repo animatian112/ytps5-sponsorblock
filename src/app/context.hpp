@@ -12,6 +12,7 @@
 #include "yt/types.hpp"
 
 #include <string>
+#include <vector>
 
 namespace yt
 {
@@ -83,6 +84,8 @@ struct Context
     yt::ChannelItem &pending_channel;
     // The playlist ("VL...") the browse screen shows when it enters.
     std::string &pending_browse;
+    // "Play next": videos the player plays before its suggestions, in order.
+    std::vector<yt::FeedItem> &play_queue;
 };
 
 } // namespace hui::app

@@ -59,10 +59,13 @@ FeedView::FeedView()
     grid_.style.card.badge_corner = ui::CardCorner::bottom_right;
     grid_.style.card.badge_size = 15.0f;
     grid_.style.card.focus_scale = 1.1f;
-    grid_.style.card.info_box = true; // SmartTube's cards: square art, the text in a grey box
+    grid_.style.card.info_box = true; // SmartTube's cards: the text in a box under the art
     grid_.style.card.title_lines = 2;
-    grid_.style.card.radius = 0.0f;
+    grid_.style.card.radius = 12.0f;
     grid_.style.card.ring = false;
+    grid_.style.card.info_color = gfx::Color::rgb(0x1f1f1f);
+    grid_.style.card.info_focus = gfx::Color::rgb(0xe3e3e3); // the focused card's box lights up
+    grid_.style.card.info_focus_text = gfx::Color::rgb(0x4a4a4a);
     grid_.style.card.title_size = 24.0f;
     grid_.style.card.subtitle_size = 19.0f;
 

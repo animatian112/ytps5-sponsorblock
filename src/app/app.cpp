@@ -84,9 +84,9 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     : fonts_(fonts), data_root_(std::move(data_root)), settings_(settings), service_(service),
       thumbs_(std::make_unique<ThumbCache>(batch, &delete_texture, 192)),
       resume_(data_root_.empty() ? std::string() : data_root_ + "/resume.txt"),
-      context_{fonts_,  telemetry_,       settings_,      false, *thumbs_,
-               batch,   service_,         toasts_,        nav_,  active_video_,
-               resume_, pending_channel_, pending_browse_}
+      context_{fonts_,  telemetry_,       settings_,       false,      *thumbs_,
+               batch,   service_,         toasts_,         nav_,       active_video_,
+               resume_, pending_channel_, pending_browse_, play_queue_}
 {
     toasts_.style.theme = youtube_theme();
     toasts_.style.anchor = ui::ToastAnchor::top_right;
@@ -527,6 +527,9 @@ enum CardPick
     kPickOpen,
     kPickAddAccount,
     kPickSignOut,
+    kPickRemoveHistory,
+    kPickPlayNext,
+    kPickSubscribe,
     kPickPlaylistBase = 1000, // + the index into menu_playlists_
     kPickAccountBase = 2000,  // + the index into the saved accounts
 };
@@ -584,26 +587,31 @@ void App::filter_card_hold(InputFrame &input, float dt)
 
 void App::open_card_menu(const yt::FeedItem &item)
 {
+    // SmartTube's video menu, in its order.
     menu_item_ = item;
     std::vector<CardMenu::Entry> entries;
     const bool signed_in = service_.signed_in();
-    if (item.is_playlist())
-        entries.push_back({"Open playlist", kPickOpen});
-    else
-        entries.push_back({"Play video", kPickOpen});
-    if (!item.channel_id.empty())
-        entries.push_back({"Open channel", kPickChannel});
-    if (signed_in && !item.is_playlist())
-    {
-        entries.push_back({"Add to Watch later", kPickWatchLater});
-        entries.push_back({"Add to playlist", kPickPlaylist});
-    }
+    const bool video = !item.is_playlist() && !item.is_channel();
+    if (signed_in && !item.remove_history_token.empty())
+        entries.push_back({"Remove from history", kPickRemoveHistory});
+    if (signed_in && video)
+        entries.push_back({"Add/Remove from playlist", kPickPlaylist});
     if (signed_in && !item.not_interested_token.empty())
         entries.push_back({"Not interested", kPickNotInterested});
     if (signed_in && !item.dont_recommend_token.empty())
         entries.push_back({"Don't recommend channel", kPickDontRecommend});
+    if (video)
+        entries.push_back({"Play next", kPickPlayNext});
+    if (!item.channel_id.empty() || item.is_channel())
+        entries.push_back({"Open channel", kPickChannel});
+    if (signed_in && (!item.channel_id.empty() || item.is_channel()))
+        entries.push_back({"Subscribe to the channel", kPickSubscribe});
+    if (item.is_playlist())
+        entries.push_back({"Open playlist", kPickOpen});
     if (current_ == kHomeScreen)
         entries.push_back({"Refresh Home", kPickRefresh});
+    if (entries.empty())
+        entries.push_back({"Play video", kPickOpen});
     card_menu_.open(item.title, std::move(entries));
 }
 
@@ -704,8 +712,24 @@ void App::apply_card_pick(int pick)
         context_.nav.video_id = item.video_id;
         break;
     case kPickChannel:
-        pending_channel_ = {item.channel_id, item.author, {}, {}};
+        pending_channel_ = {item.is_channel() ? item.video_id : item.channel_id,
+                            item.is_channel() ? item.title : item.author,
+                            {},
+                            {}};
         context_.nav.open_channel = true;
+        break;
+    case kPickRemoveHistory:
+        service_.send_feedback(item.remove_history_token, "Removed from history");
+        service_.hide_item(item.video_id);
+        break;
+    case kPickPlayNext:
+        play_queue_.push_back(item);
+        toasts_.push(ui::StatusKind::info, "Plays next", item.title, 2.0f);
+        break;
+    case kPickSubscribe:
+        service_.set_subscribed(item.is_channel() ? item.video_id : item.channel_id, true);
+        toasts_.push(ui::StatusKind::success, "Subscribed",
+                     item.is_channel() ? item.title : item.author, 2.0f);
         break;
     case kPickWatchLater:
         service_.add_to_playlist("WL", item.video_id, "Added to Watch later");
@@ -897,7 +921,13 @@ void App::update(const InputFrame &input, float dt)
     }
     if (ask.quit)
         quit_ = true;
-    if (ask.open_video && ask.video_id.size() > 2 && ask.video_id.rfind("VL", 0) == 0)
+    if (ask.open_video && ask.video_id.size() == 24 && ask.video_id.rfind("UC", 0) == 0)
+    {
+        // A channel card: its channel page.
+        pending_channel_ = {ask.video_id, {}, {}, {}};
+        context_.nav.open_channel = true;
+    }
+    else if (ask.open_video && ask.video_id.size() > 2 && ask.video_id.rfind("VL", 0) == 0)
     {
         // A playlist card: its videos on the browse screen.
         pending_browse_ = ask.video_id;
@@ -1015,8 +1045,9 @@ void App::draw_sidebar(ui::Canvas &canvas)
     const gfx::Color grey = gfx::Color::rgb(0x9e9e9e);
     const gfx::Color white = gfx::Color::rgb(0xffffff);
     if (open > 0.01f)
-        list.rounded_rect({0.0f, 0.0f, mix(104.0f, 540.0f), gfx::kVirtualHeight}, 0.0f,
-                          gfx::Color::rgb(0x1e1e1e, std::min(1.0f, open * 1.5f)));
+        list.rounded_rect(
+            {0.0f, 0.0f, mix(104.0f, 540.0f), gfx::kVirtualHeight}, 0.0f,
+            gfx::Color::rgb(0x2b3d52, std::min(1.0f, open * 1.5f))); // SmartTube's slate
 
     // The search orb (entry 0) and the account's picture.
     const int focus = rail_focused_ ? rail_.focus() : -1;

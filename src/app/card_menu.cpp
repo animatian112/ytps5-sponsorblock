@@ -81,8 +81,8 @@ void CardMenu::draw(ui::Canvas &canvas, const ui::Fonts &fonts) const
     list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
                       gfx::Color::rgb(0x000000, 0.45f));
     list.rounded_rect({x, 0.0f, kWidth, gfx::kVirtualHeight}, 0.0f,
-                      gfx::Color::rgb(0x1d1d1d, 0.98f));
-    list.rounded_rect({x, 0.0f, kWidth, kHeader}, 0.0f, gfx::Color::rgb(0x262626));
+                      gfx::Color::rgb(0x2f4156, 0.98f)); // SmartTube's slate dialog
+    list.rounded_rect({x, 0.0f, kWidth, kHeader}, 0.0f, gfx::Color::rgb(0x2a3a4d));
     ui::text(list, fonts.semibold, fonts.semibold.font->fit(title_, 34.0f, kWidth - 112.0f),
              x + 56.0f, 100.0f, 34.0f, kInk);
     const int count = static_cast<int>(entries_.size());
@@ -93,7 +93,7 @@ void CardMenu::draw(ui::Canvas &canvas, const ui::Fonts &fonts) const
     {
         const gfx::Rect row{x, kHeader + static_cast<float>(i - first) * kRow, kWidth, kRow};
         if (i == focus_)
-            list.rounded_rect(row, 0.0f, gfx::Color::rgb(0xffffff, 0.12f));
+            list.rounded_rect(row, 0.0f, gfx::Color::rgb(0x5a7391));
         const std::string &label = entries_[static_cast<std::size_t>(i)].label;
         ui::text(list, fonts.regular, fonts.regular.font->fit(label, 28.0f, kWidth - 112.0f),
                  x + 56.0f, row.cy() + 10.0f, 28.0f, kInk);

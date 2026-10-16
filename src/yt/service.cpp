@@ -1428,7 +1428,20 @@ struct Service::Impl
                 player_open = false;
             }
             if (taken.home)
+            {
                 do_feed(FeedKind::home, {}, false);
+                // SmartTube's Home is many shelves: the TV answer gives a few
+                // per page, so the next pages are fetched right away.
+                for (int page = 0; page < 4; ++page)
+                {
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        if (home.state != Load::ready || home.continuation.empty() || quit)
+                            break;
+                    }
+                    do_feed(FeedKind::home, {}, true);
+                }
+            }
             if (taken.subscriptions)
                 do_feed(FeedKind::subscriptions, {}, false);
             if (taken.history)

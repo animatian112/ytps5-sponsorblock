@@ -677,6 +677,8 @@ void scan_card_menu(yyjson_val *value, const std::string &label, FeedItem *item,
             item->not_interested_token = token;
         else if (contains_text(current.c_str(), "recommend") && item->dont_recommend_token.empty())
             item->dont_recommend_token = token;
+        else if (contains_text(current.c_str(), "history") && item->remove_history_token.empty())
+            item->remove_history_token = token;
     }
     if (item->channel_id.empty())
     {
@@ -766,6 +768,9 @@ void collect_tile(yyjson_val *tile, FeedPage *page)
         const std::string browse =
             string_field(yyjson_obj_get(command, "browseEndpoint"), "browseId");
         if (browse.size() > 2 && browse.rfind("VL", 0) == 0)
+            video_id = browse;
+        // A channel tile ("Top channels you watch"): opened as the channel.
+        else if (browse.size() == 24 && browse.rfind("UC", 0) == 0)
             video_id = browse;
     }
     if (video_id.empty())
@@ -1674,6 +1679,22 @@ bool parse_feed_page(std::string_view json, FeedPage *page)
 
     std::string continuation;
     walk_feed(root, page, &continuation);
+
+    // The TV client pages with nextContinuationData: the section list's own
+    // token (not a shelf's) is the next page of a TV feed, in the first
+    // answer and in the continuation answers alike.
+    for (const char *list : {"sectionListContinuation", "sectionListRenderer"})
+    {
+        yyjson_val *section = find_object(root, list);
+        yyjson_val *next = yyjson_obj_get(
+            yyjson_arr_get_first(yyjson_obj_get(section, "continuations")), "nextContinuationData");
+        const std::string token = string_field(next, "continuation");
+        if (!token.empty())
+        {
+            continuation = token;
+            break;
+        }
+    }
 
     // The account's standing toward the video (a /next answer).
     yyjson_val *subscribe = find_object(root, "subscribeButtonRenderer");

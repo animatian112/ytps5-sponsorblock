@@ -267,6 +267,17 @@ void draw_card(Canvas &canvas, const ComponentStyle &style, const CardLook &look
     if (state.marks)
         draw_card_halo(canvas, style, look, frame, item.accent, focus);
 
+    // ---- Leanback's info box, under the art (drawn first so the art's
+    // rounded bottom corners sit on it) ----
+    if (look.info_box && look.text == CardText::below)
+    {
+        const Rect art_at = card_art(look, card);
+        const float r = std::max(radius, 0.0f);
+        const float top = art_at.y + art_at.h - r;
+        list.rounded_rect({art_at.x, top, art_at.w, std::max(card.y + card.h - top, 0.0f)}, r,
+                          gfx::mix(look.info_color, look.info_focus, focus));
+    }
+
     // ---- the plate and the art ----
     Rect body = card;
     if (look.plate)
@@ -391,7 +402,11 @@ void draw_card(Canvas &canvas, const ComponentStyle &style, const CardLook &look
     {
         const float box_top = bed.y + bed.h;
         const Rect box{bed.x, box_top, bed.w, std::max(card.y + card.h - box_top, 0.0f)};
-        list.rounded_rect(box, 0.0f, gfx::mix(look.info_color, look.info_focus, focus));
+        // SmartTube: light text on the dark box, dark text once the box
+        // lights up with the focus.
+        const Color title_ink = gfx::mix(kWhite, look.info_focus_text, focus);
+        const Color detail_ink =
+            gfx::mix(Color::rgb(0xbdbdbd), look.info_focus_text, focus * 0.85f);
         list.push_opacity(words);
         const float room = std::max(box.w - 2.0f * look.info_padding, 20.0f);
         const float x = box.x + look.info_padding;
@@ -411,14 +426,14 @@ void draw_card(Canvas &canvas, const ComponentStyle &style, const CardLook &look
             }
             for (const std::string &line : lines)
             {
-                text(list, canvas.fonts.regular, line, x, baseline, look.title_size, kWhite);
+                text(list, canvas.fonts.regular, line, x, baseline, look.title_size, title_ink);
                 baseline += look.title_size * 1.25f;
             }
         }
         if (look.subtitle_size > 0.0f && !item.subtitle.empty())
             paint.body(fit_body(paint, item.subtitle, look.subtitle_size, room), x,
                        box.y + box.h - look.info_padding - look.subtitle_size * 0.25f,
-                       look.subtitle_size, gfx::Color::rgb(0xbdbdbd), gfx::Align::left);
+                       look.subtitle_size, detail_ink, gfx::Align::left);
         list.pop_opacity();
     }
     else if (look.text == CardText::below && !item.title.empty() && words > 0.0f)

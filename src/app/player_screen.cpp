@@ -147,9 +147,12 @@ PlayerScreen::PlayerScreen(Context &context) : context_(context)
     related_.style.card.title_size = 21.0f;
     related_.style.card.subtitle_size = 18.0f;
     related_.style.card.badge_corner = ui::CardCorner::bottom_right;
-    related_.style.card.radius = 0.0f;
+    related_.style.card.radius = 12.0f;
     related_.style.card.info_box = true;
     related_.style.card.ring = false;
+    related_.style.card.info_color = gfx::Color::rgb(0x1f1f1f);
+    related_.style.card.info_focus = gfx::Color::rgb(0xe3e3e3);
+    related_.style.card.info_focus_text = gfx::Color::rgb(0x4a4a4a);
     related_.style.item_width = 330.0f;
     related_.style.counter = false;
     related_.title = "Suggestions";
@@ -477,7 +480,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
                           player_->clock_s() + player_->buffered_s());
         chrome_.set_playing(!player_->paused() && !ended_);
     }
-    chrome_.set_has_next(!related_items_.empty());
+    chrome_.set_has_next(next_suggestion() != nullptr);
     {
         // SmartTube's line under the title: channel, then the view count.
         std::string meta = view.info.author;
@@ -666,6 +669,12 @@ const yt::FeedItem *PlayerScreen::next_suggestion() const
     // The first suggestion that is not this video: the list YouTube answers
     // can start with the one playing.
     const std::string current = playing_id_.empty() ? requested_id_ : playing_id_;
+    // "Play next" picks come first.
+    for (const yt::FeedItem &item : context_.play_queue)
+    {
+        if (!item.video_id.empty() && item.video_id != current)
+            return &item;
+    }
     for (const yt::FeedItem &item : related_items_)
     {
         if (!item.video_id.empty() && item.video_id != current)
@@ -680,6 +689,11 @@ void PlayerScreen::play_next()
     if (next == nullptr)
         return;
     const std::string id = next->video_id;
+    // A queued pick is played once.
+    auto &queue = context_.play_queue;
+    queue.erase(std::remove_if(queue.begin(), queue.end(),
+                               [&](const yt::FeedItem &item) { return item.video_id == id; }),
+                queue.end());
     yt::log::line("player: next -> %s", id.c_str());
     request_video(id);
     chrome_.show();

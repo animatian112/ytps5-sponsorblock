@@ -450,3 +450,18 @@ TEST(InnerTube, ReadsTheCardMenuOfATile)
     EXPECT_EQ(page.items[0].not_interested_token, "tok-ni");
     EXPECT_EQ(page.items[0].dont_recommend_token, "tok-dr");
 }
+
+TEST(InnerTube, ReadsTheTvSectionContinuationAndChannelTiles)
+{
+    // The TV Home pages with nextContinuationData on its section list (a
+    // shelf's own token is not the next page), and "Top channels you watch"
+    // tiles open channels.
+    const char *json =
+        R"({"contents":{"tvBrowseRenderer":{"content":{"tvSurfaceContentRenderer":{"content":{"sectionListRenderer":{"contents":[{"shelfRenderer":{"headerRenderer":{"shelfHeaderRenderer":{"title":{"simpleText":"Top channels you watch"}}},"content":{"horizontalListRenderer":{"items":[{"tileRenderer":{"contentType":"TILE_CONTENT_TYPE_CHANNEL","metadata":{"tileMetadataRenderer":{"title":{"simpleText":"Scott The Woz"}}},"onSelectCommand":{"browseEndpoint":{"browseId":"UC4rqhyiTs7XyuODcECvuiiQ"}}}}],"continuations":[{"nextContinuationData":{"continuation":"shelf-token"}}]}}}}],"continuations":[{"nextContinuationData":{"continuation":"page-token"}}]}}}}}}})";
+    yt::FeedPage page;
+    ASSERT_TRUE(yt::parse_feed_page(json, &page));
+    ASSERT_EQ(page.items.size(), 1u);
+    EXPECT_TRUE(page.items[0].is_channel());
+    EXPECT_EQ(page.items[0].shelf, "Top channels you watch");
+    EXPECT_EQ(page.continuation, "page-token");
+}

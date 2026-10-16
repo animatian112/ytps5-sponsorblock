@@ -28,7 +28,7 @@ void style_shelf(ui::Carousel &shelf)
     shelf.style.peek = 0.0f;
     shelf.style.counter = false;
     shelf.style.title_size = 36.0f;
-    shelf.style.title_muted = true;
+    shelf.style.title_muted = false; // SmartTube's row titles are white
     shelf.style.title_gap = 14.0f;
     shelf.style.edge_fade = 0.0f;
     shelf.style.exits.left = true;
@@ -40,10 +40,13 @@ void style_shelf(ui::Carousel &shelf)
     shelf.style.card.badge_corner = ui::CardCorner::bottom_right;
     shelf.style.card.badge_size = 15.0f;
     shelf.style.card.focus_scale = 1.1f; // Leanback's zoom on the focused card
-    shelf.style.card.info_box = true;    // SmartTube's cards: square art, the text in a grey box
+    shelf.style.card.info_box = true;    // SmartTube's cards: the text in a box under the art
     shelf.style.card.title_lines = 2;
-    shelf.style.card.radius = 0.0f;
+    shelf.style.card.radius = 12.0f;
     shelf.style.card.ring = false;
+    shelf.style.card.info_color = gfx::Color::rgb(0x1f1f1f);
+    shelf.style.card.info_focus = gfx::Color::rgb(0xe3e3e3); // the focused card's box lights up
+    shelf.style.card.info_focus_text = gfx::Color::rgb(0x4a4a4a);
     shelf.style.card.title_size = 24.0f;
     shelf.style.card.subtitle_size = 19.0f;
 }
@@ -248,7 +251,7 @@ void RowsView::draw(ui::Canvas &canvas) const
             continue;
         // Leanback dims every row but the one with the focus.
         const bool lit = !active_ || static_cast<int>(i) == focus_row_;
-        canvas.list.push_opacity(lit ? 1.0f : 0.5f);
+        canvas.list.push_opacity(lit ? 1.0f : 0.85f);
         row->shelf.draw(canvas);
         canvas.list.pop_opacity();
     }
