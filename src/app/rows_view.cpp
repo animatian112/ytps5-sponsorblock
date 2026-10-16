@@ -38,7 +38,7 @@ void style_shelf(ui::Carousel &shelf)
     shelf.style.card.text_gap = 10.0f;
     shelf.style.card.badge_corner = ui::CardCorner::bottom_right;
     shelf.style.card.badge_size = 15.0f;
-    shelf.style.card.focus_scale = 1.08f;
+    shelf.style.card.focus_scale = 1.12f; // Leanback's zoom on the focused card
 }
 
 ui::CardItem card_for(const yt::FeedItem &item, const Context &context)
@@ -233,12 +233,17 @@ void RowsView::draw(ui::Canvas &canvas) const
     // The focused card grows past its row: the clip leaves room above.
     canvas.list.push_clip({0.0f, bounds_.y - 20.0f, gfx::kVirtualWidth, bounds_.h + 20.0f});
     canvas.list.push_transform(1.0f, 0.0f, 0.0f, 0.0f, -scroll_);
-    for (const auto &row : rows_)
+    for (std::size_t i = 0; i < rows_.size(); ++i)
     {
+        const auto &row = rows_[i];
         const gfx::Rect &at = row->shelf.bounds();
         if (at.y + at.h - scroll_ < bounds_.y - 40.0f || at.y - scroll_ > bounds_.y + bounds_.h)
             continue;
+        // Leanback dims every row but the one with the focus.
+        const bool lit = !active_ || static_cast<int>(i) == focus_row_;
+        canvas.list.push_opacity(lit ? 1.0f : 0.5f);
         row->shelf.draw(canvas);
+        canvas.list.pop_opacity();
     }
     canvas.list.pop_transform();
     canvas.list.pop_clip();

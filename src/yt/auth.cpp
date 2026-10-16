@@ -555,4 +555,34 @@ bool Auth::adopt_token_json(std::string_view json, std::string *error)
     return true;
 }
 
+std::string prefilled_verification_url(const std::string &verification_url,
+                                       const std::string &user_code)
+{
+    std::string url =
+        verification_url.empty() ? std::string("https://www.google.com/device") : verification_url;
+    if (url.find("://") == std::string::npos)
+        url = "https://" + url;
+    if (user_code.empty())
+        return url;
+    url += url.find('?') == std::string::npos ? '?' : '&';
+    url += "user_code=";
+    for (const char c : user_code)
+    {
+        // Codes are letters, digits and dashes; anything else is escaped.
+        const bool plain =
+            (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+        if (plain)
+        {
+            url += c;
+            continue;
+        }
+        static const char kHex[] = "0123456789ABCDEF";
+        const auto byte = static_cast<unsigned char>(c);
+        url += '%';
+        url += kHex[byte >> 4];
+        url += kHex[byte & 15];
+    }
+    return url;
+}
+
 } // namespace yt

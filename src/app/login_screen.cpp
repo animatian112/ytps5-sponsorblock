@@ -10,6 +10,7 @@
 #include "app/thumbs.hpp"
 #include "ui/components.hpp"
 #include "ui/motion.hpp"
+#include "yt/auth.hpp"
 #include "yt/qr.hpp"
 #include "yt/service.hpp"
 
@@ -85,7 +86,8 @@ void LoginScreen::update(const InputFrame &input, float dt, ui::Feedback &feedba
     {
         seen_revision_ = revision;
         if (!view.user_code.empty() && view.user_code != qr_key_)
-            build_qr(view.verification_url, view.user_code);
+            build_qr(yt::prefilled_verification_url(view.verification_url, view.user_code),
+                     view.user_code);
     }
 
     if (input.is_pressed(Action::back))
@@ -148,7 +150,9 @@ void LoginScreen::draw(const Context &context, Frame &frame) const
     // The right column: instruction, the code, the URL and the flow state.
     ui::text(canvas.list, context.fonts.display, "Sign in", kColumnX, 300.0f, 48.0f, kInk);
     float y = ui::paragraph(canvas.list, context.fonts.regular,
-                            "Open youtube.com/activate on your phone or PC and enter this code:",
+                            "Scan the code with your phone's camera: the sign-in page opens with "
+                            "this code already filled in. Just pick your account and allow. "
+                            "Or open the address below and type it:",
                             kColumnX, 360.0f, 24.0f, 800.0f, 34.0f, kInk);
     y += 40.0f;
 

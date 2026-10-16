@@ -72,4 +72,12 @@ class Auth
     Impl *impl_;
 };
 
+// The address the sign-in QR code opens: the device page with the code
+// already in its box (?user_code=), so a phone that scans it only has to
+// confirm. Google's page fills the field from that parameter; if it ever
+// ignores it, the code is still on screen to type. Adds https:// when the
+// answer names the page without a scheme.
+std::string prefilled_verification_url(const std::string &verification_url,
+                                       const std::string &user_code);
+
 } // namespace yt

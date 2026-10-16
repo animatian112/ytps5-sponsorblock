@@ -214,3 +214,14 @@ TEST(Auth, ARefusalThatNamesNoDeadGrantKeepsTheToken)
 }
 
 } // namespace
+
+TEST(Auth, PutsTheCodeIntoTheQrAddress)
+{
+    EXPECT_EQ(yt::prefilled_verification_url("https://www.google.com/device", "ABCD-EFGH"),
+              "https://www.google.com/device?user_code=ABCD-EFGH");
+    EXPECT_EQ(yt::prefilled_verification_url("google.com/device", "AB C"),
+              "https://google.com/device?user_code=AB%20C");
+    EXPECT_EQ(yt::prefilled_verification_url("https://x.test/a?b=1", "Q"),
+              "https://x.test/a?b=1&user_code=Q");
+    EXPECT_EQ(yt::prefilled_verification_url("", ""), "https://www.google.com/device");
+}

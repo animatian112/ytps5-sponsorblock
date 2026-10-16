@@ -14,10 +14,8 @@ namespace
 const gfx::Color kInk = gfx::Color::rgb(0xffffff);
 const gfx::Color kMuted = gfx::Color::rgb(0xaaaaaa);
 const gfx::Color kDark = gfx::Color::rgb(0x111111);
-constexpr float kWidth = 760.0f;
-constexpr float kRow = 72.0f;
-constexpr float kHeader = 120.0f;
-constexpr int kMaxVisible = 9;
+constexpr float kWidth = 600.0f;
+constexpr float kRow = 68.0f;
 
 } // namespace
 
@@ -67,7 +65,7 @@ int CardMenu::handle(const InputFrame &input, ui::Feedback &feedback)
 void CardMenu::update(float dt)
 {
     const float target = active_ ? 1.0f : 0.0f;
-    const float step = dt * 8.0f;
+    const float step = dt * 6.0f;
     shown_ = shown_ < target ? std::min(target, shown_ + step) : std::max(target, shown_ - step);
 }
 
@@ -75,35 +73,41 @@ void CardMenu::draw(ui::Canvas &canvas, const ui::Fonts &fonts) const
 {
     if (shown_ < 0.01f || fonts.regular.font == nullptr || fonts.semibold.font == nullptr)
         return;
+    // SmartTube's dialogs: a full-height panel that slides in from the right
+    // over a darkened page, the title on top and one row per choice.
     gfx::DrawList &list = canvas.list;
-    list.push_opacity(shown_);
+    const float x = gfx::kVirtualWidth - kWidth * shown_;
+    list.push_opacity(std::min(1.0f, shown_ * 1.4f));
     list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
-                      gfx::Color::rgb(0x000000, 0.6f));
+                      gfx::Color::rgb(0x000000, 0.45f));
+    list.rounded_rect({x, 0.0f, kWidth, gfx::kVirtualHeight}, 0.0f,
+                      gfx::Color::rgb(0x1b1b1b, 0.98f));
+    const std::vector<std::string> title = fonts.semibold.font->wrap(title_, 30.0f, kWidth - 96.0f);
+    float y = 104.0f;
+    for (std::size_t i = 0; i < title.size() && i < 2; ++i, y += 40.0f)
+        ui::text(list, fonts.semibold,
+                 i == 1 && title.size() > 2
+                     ? fonts.semibold.font->fit(title[i] + " " + title[2], 30.0f, kWidth - 96.0f)
+                     : title[i],
+                 x + 48.0f, y, 30.0f, kInk);
+    const float top = y + 28.0f;
     const int count = static_cast<int>(entries_.size());
-    const int visible = std::min(count, kMaxVisible);
-    const float height = kHeader + static_cast<float>(visible) * kRow + 32.0f;
-    const float x = (gfx::kVirtualWidth - kWidth) * 0.5f;
-    const float y = (gfx::kVirtualHeight - height) * 0.5f + (1.0f - shown_) * 24.0f;
-    list.rounded_rect({x, y, kWidth, height}, 18.0f, gfx::Color::rgb(0x212121));
-    ui::text(list, fonts.semibold, fonts.semibold.font->fit(title_, 30.0f, kWidth - 80.0f),
-             x + 40.0f, y + 66.0f, 30.0f, kInk);
-    list.rounded_rect({x + 40.0f, y + kHeader - 26.0f, kWidth - 80.0f, 2.0f}, 0.0f,
-                      gfx::Color::rgb(0x3a3a3a));
+    const int visible = std::max(1, static_cast<int>((gfx::kVirtualHeight - top - 48.0f) / kRow));
     const int first = std::clamp(focus_ - visible / 2, 0, std::max(0, count - visible));
     for (int i = first; i < count && i < first + visible; ++i)
     {
-        const float row_y = y + kHeader + static_cast<float>(i - first) * kRow;
+        const float row_y = top + static_cast<float>(i - first) * kRow;
         const bool focused = i == focus_;
-        const gfx::Rect row{x + 20.0f, row_y, kWidth - 40.0f, kRow - 8.0f};
+        const gfx::Rect row{x + 24.0f, row_y, kWidth - 48.0f, kRow - 8.0f};
         if (focused)
-            list.rounded_rect(row, 12.0f, kInk);
+            list.rounded_rect(row, 10.0f, kInk);
         const std::string &label = entries_[static_cast<std::size_t>(i)].label;
-        ui::text(list, fonts.regular, fonts.regular.font->fit(label, 28.0f, row.w - 60.0f),
-                 row.x + 30.0f, row.cy() + 10.0f, 28.0f, focused ? kDark : kInk);
+        ui::text(list, fonts.regular, fonts.regular.font->fit(label, 26.0f, row.w - 56.0f),
+                 row.x + 28.0f, row.cy() + 9.0f, 26.0f, focused ? kDark : kInk);
     }
     if (count > visible)
         ui::text(list, fonts.regular, std::to_string(focus_ + 1) + " / " + std::to_string(count),
-                 x + kWidth - 40.0f, y + 66.0f, 22.0f, kMuted, gfx::Align::right);
+                 x + kWidth - 48.0f, gfx::kVirtualHeight - 36.0f, 20.0f, kMuted, gfx::Align::right);
     list.pop_opacity();
 }
 

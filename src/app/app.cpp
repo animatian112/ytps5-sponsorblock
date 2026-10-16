@@ -589,13 +589,11 @@ void App::open_card_menu(const yt::FeedItem &item)
     else
         entries.push_back({"Play video", kPickOpen});
     if (!item.channel_id.empty())
-        entries.push_back(
-            {"Open channel" + (item.author.empty() ? std::string() : ": " + item.author),
-             kPickChannel});
+        entries.push_back({"Open channel", kPickChannel});
     if (signed_in && !item.is_playlist())
     {
-        entries.push_back({"Save to Watch later", kPickWatchLater});
-        entries.push_back({"Save to playlist...", kPickPlaylist});
+        entries.push_back({"Add to Watch later", kPickWatchLater});
+        entries.push_back({"Add to playlist", kPickPlaylist});
     }
     if (signed_in && !item.not_interested_token.empty())
         entries.push_back({"Not interested", kPickNotInterested});
@@ -610,6 +608,7 @@ void App::open_playlist_menu()
 {
     menu_playlists_.clear();
     std::vector<CardMenu::Entry> entries;
+    entries.push_back({"Watch later", kPickWatchLater});
     for (const yt::FeedItem &list : service_.feed(yt::FeedKind::library).items)
     {
         // Watch later has its own entry; Liked videos is filled by the like button.
@@ -621,13 +620,7 @@ void App::open_playlist_menu()
         if (menu_playlists_.size() >= 50)
             break;
     }
-    if (entries.empty())
-    {
-        toasts_.push(ui::StatusKind::info, "No playlists of your own yet",
-                     "Make one on your phone, then it shows up here", 3.5f);
-        return;
-    }
-    card_menu_.open("Save to playlist", std::move(entries));
+    card_menu_.open("Add to playlist", std::move(entries));
 }
 
 void App::refresh_home()
@@ -649,7 +642,7 @@ void App::apply_card_pick(int pick)
         const std::size_t index = static_cast<std::size_t>(pick - kPickPlaylistBase);
         if (index < menu_playlists_.size())
             service_.add_to_playlist(menu_playlists_[index].video_id.substr(2), item.video_id,
-                                     "Saved to " + menu_playlists_[index].title);
+                                     "Added to " + menu_playlists_[index].title);
         return;
     }
     switch (pick)
@@ -663,7 +656,7 @@ void App::apply_card_pick(int pick)
         context_.nav.open_channel = true;
         break;
     case kPickWatchLater:
-        service_.add_to_playlist("WL", item.video_id, "Saved to Watch later");
+        service_.add_to_playlist("WL", item.video_id, "Added to Watch later");
         break;
     case kPickPlaylist:
     {
