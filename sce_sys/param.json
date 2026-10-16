@@ -7,16 +7,23 @@
     "pagetableMemorySizeInMib": 256,
     "vaRangeInGib": 512
   },
-  "applicationCategoryType": 65536,
+  "applicationCategoryType": 0,
   "applicationDrmType": "free",
   "attribute": 0,
   "attribute2": 0,
   "attribute3": 0,
   "conceptId": "98260",
-  "contentBadgeType": 2,
+  "contentBadgeType": 1,
   "contentId": "UP9000-PPSA98260_00-YOUTUBESPONSORBK",
-  "contentVersion": "01.000.125",
+  "contentVersion": "01.000.126",
   "downloadDataSize": 256,
+  "gameIntent": {
+    "permittedIntents": [
+      {
+        "intentType": "launchActivity"
+      }
+    ]
+  },
   "kernel": {
     "cpuPageTableSize": 268435456,
     "gpuPageTableSize": 268435456
