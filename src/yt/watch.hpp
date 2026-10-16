@@ -29,9 +29,26 @@ std::string make_cpn(std::uint64_t seed);
 std::string stats_url(const std::string &base,
                       const std::vector<std::pair<std::string, std::string>> &fields);
 
-// The two requests, as URLs ready to GET.
-std::string playback_ping(const std::string &playback_url, const std::string &cpn);
+// Who is reporting: the TV client the account signed in with. YouTube credits
+// a ping to the account only when it names a signed-in client (c, cver) the
+// way that client's own player does.
+struct Client
+{
+    std::string name;    // "TVHTML5"
+    std::string version; // its clientVersion
+};
+
+// The tracking URLs point at s.youtube.com, which answers but only reads
+// cookies; YouTube's own TV player sends the pings with its OAuth token to
+// www.youtube.com, the host that reads the Authorization header.
+std::string account_host(const std::string &url);
+
+// The two requests, as URLs ready to GET. `elapsed_s` is the wall time since
+// playback started (rt).
+std::string playback_ping(const std::string &playback_url, const std::string &cpn,
+                          const Client &client = {});
 std::string watchtime_ping(const std::string &watchtime_url, const std::string &cpn, double from_s,
-                           double to_s, double length_s);
+                           double to_s, double length_s, const Client &client = {},
+                           double elapsed_s = -1.0);
 
 } // namespace yt::watch

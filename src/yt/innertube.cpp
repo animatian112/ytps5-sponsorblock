@@ -2381,6 +2381,11 @@ bool InnerTube::action(const char *endpoint, const std::string &extra)
     return attempt.http_ok;
 }
 
+const char *tv_client_version()
+{
+    return kTvClientVersion;
+}
+
 bool InnerTube::tracking(const std::string &video_id, std::string *playback, std::string *watchtime)
 {
     // The TV client with the account's token: its tracking URLs are the ones

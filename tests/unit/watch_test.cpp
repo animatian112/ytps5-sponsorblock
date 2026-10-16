@@ -29,6 +29,17 @@ TEST(Watch, ThePlaybackPingKeepsTheTrackingFieldsAndDropsFexp)
               "CPNCPNCPNCPNCPN0");
 }
 
+TEST(Watch, AccountPingsGoToWwwAndNameTheTvClient)
+{
+    EXPECT_EQ(yt::watch::account_host("https://s.youtube.com/api/stats/playback?docid=x"),
+              "https://www.youtube.com/api/stats/playback?docid=x");
+    EXPECT_EQ(yt::watch::account_host("https://example.com/a"), "https://example.com/a");
+    const std::string url = yt::watch::playback_ping(
+        "https://s.youtube.com/api/stats/playback?docid=abc&c=VISIONOS", "N", {"TVHTML5", "7.1"});
+    EXPECT_NE(url.find("&c=TVHTML5&cver=7.1&"), std::string::npos);
+    EXPECT_EQ(url.find("c=VISIONOS"), std::string::npos);
+}
+
 TEST(Watch, TheWatchtimePingNamesTheSpan)
 {
     const std::string url = yt::watch::watchtime_ping(

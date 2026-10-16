@@ -459,8 +459,9 @@ void SettingsScreen::draw(const Context &context, Frame &frame) const
     ui::text(canvas.list, context.fonts.display, "Settings", 600.0f, 150.0f, 44.0f,
              gfx::Color::rgb(0xf1f1f1));
     form_.draw(canvas);
-    ui::text(canvas.list, context.fonts.regular, "YouTube for PS5 + SponsorBlock - PPSA98260",
-             600.0f, 980.0f, 20.0f, gfx::Color::rgb(0x777777));
+    ui::text(canvas.list, context.fonts.regular,
+             "TubeBlock - YouTube with SponsorBlock - PPSA98260", 600.0f, 980.0f, 20.0f,
+             gfx::Color::rgb(0x777777));
     ui::text(canvas.list, context.fonts.regular,
              "Based on ytps5. Segments: sponsor.ajay.app (CC BY-NC-SA 4.0)", 600.0f, 1012.0f, 20.0f,
              gfx::Color::rgb(0x777777));

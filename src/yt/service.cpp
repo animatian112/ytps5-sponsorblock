@@ -161,6 +161,7 @@ struct Service::Impl
         std::string token;
         double length_s = 0.0;
         double reported_s = 0.0;
+        std::chrono::steady_clock::time_point started{};
     } watch;
     bool video_running = false;
     // The device flow runs on the worker; `login_running` tells the frame
@@ -1052,7 +1053,8 @@ struct Service::Impl
             std::chrono::steady_clock::now().time_since_epoch().count()));
         const std::string token = auth.access_token();
         const http::Response response =
-            http::get(watch::playback_ping(playback, cpn), watch_headers(token), 8);
+            http::get(watch::account_host(watch::playback_ping(playback, cpn, tv_watch_client())),
+                      watch_headers(token), 8);
         log::line("history: playback ping (%s) -> %ld %s", source.c_str(), response.status,
                   response.error.c_str());
         set_history_status(response.ok() && response.status >= 200 && response.status < 300
@@ -1064,6 +1066,12 @@ struct Service::Impl
         watch.cpn = cpn;
         watch.token = token;
         watch.length_s = playing.length_s;
+        watch.started = std::chrono::steady_clock::now();
+    }
+
+    static watch::Client tv_watch_client()
+    {
+        return {"TVHTML5", tv_client_version()};
     }
 
     void set_history_status(const std::string &status)
@@ -1499,8 +1507,11 @@ void Service::report_watch_progress(double position_s)
         if (watch.watchtime_url.empty() || watch.token.empty() ||
             position_s <= watch.reported_s + 1.0)
             return;
-        job = new DetachedGet{watch::watchtime_ping(watch.watchtime_url, watch.cpn,
-                                                    watch.reported_s, position_s, watch.length_s),
+        const double elapsed =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - watch.started).count();
+        job = new DetachedGet{watch::account_host(watch::watchtime_ping(
+                                  watch.watchtime_url, watch.cpn, watch.reported_s, position_s,
+                                  watch.length_s, Impl::tv_watch_client(), elapsed)),
                               Impl::watch_headers(watch.token)};
         watch.reported_s = position_s;
     }

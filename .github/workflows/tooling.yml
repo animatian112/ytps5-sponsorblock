@@ -299,5 +299,5 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --generate-notes \
-              --title "YouTube SponsorBlock $VERSION"
+              --title "TubeBlock $VERSION"
           fi

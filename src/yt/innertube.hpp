@@ -78,6 +78,10 @@ class InnerTube
 // line) next to the videos; the walker skips ad renderers as before.
 bool parse_feed_page(std::string_view json, FeedPage *page);
 bool parse_video_info(std::string_view json, VideoInfo *info);
+
+// The TVHTML5 clientVersion the signed-in requests use (the history pings
+// name it too).
+const char *tv_client_version();
 // A one-line census of one answer's formats ("24 formats: 12 avc, ...; max
 // 1080p, host rr5---sn-x.googlevideo.com"): the per-client log line and the
 // no-stream failure text both use it. The plain/ciphered counts and the URL

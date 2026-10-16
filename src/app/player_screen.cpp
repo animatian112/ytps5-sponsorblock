@@ -408,9 +408,9 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         related_.set_items(std::move(cards));
     }
 
-    // Watch history: the span watched, every half minute of playback.
+    // Watch history: the span watched, first after 10 s, then every 30 s.
     if (player_ != nullptr && !player_->paused() &&
-        player_->clock_s() >= history_reported_s_ + 30.0)
+        player_->clock_s() >= history_reported_s_ + (history_reported_s_ <= 0.0 ? 10.0 : 30.0))
     {
         history_reported_s_ = player_->clock_s();
         context_.service.report_watch_progress(history_reported_s_);
