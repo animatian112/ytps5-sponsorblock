@@ -424,6 +424,16 @@ int main()
                      static_cast<unsigned long long>(audio_out.grains()),
                      static_cast<unsigned long long>(audio_out.errors()), mixer.active_voices(),
                      static_cast<unsigned long long>(mixer.stream_underruns()));
+            // The same in yt.log while the count grows: gaps in the video's
+            // sound and how slow the frames were around them.
+            static unsigned long long last_underruns = 0;
+            const unsigned long long underruns = mixer.stream_underruns();
+            if (underruns != last_underruns)
+            {
+                yt::log::line("audio: %llu new gaps in 10 s (%s)", underruns - last_underruns,
+                              summary);
+                last_underruns = underruns;
+            }
             stats.reset();
         }
     }

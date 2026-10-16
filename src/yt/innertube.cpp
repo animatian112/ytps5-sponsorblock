@@ -2944,6 +2944,40 @@ bool InnerTube::browse(const std::string &browse_id, FeedPage *page,
     return parsed;
 }
 
+namespace
+{
+
+// The first "UC..." browse id in an answer.
+void find_channel_id(yyjson_val *value, std::string *out, int depth)
+{
+    if (value == nullptr || depth > 40 || !out->empty())
+        return;
+    if (yyjson_is_obj(value))
+    {
+        const std::string id = string_field(value, "browseId");
+        if (id.size() == 24 && id.rfind("UC", 0) == 0)
+        {
+            *out = id;
+            return;
+        }
+        yyjson_obj_iter iter;
+        yyjson_obj_iter_init(value, &iter);
+        yyjson_val *key = nullptr;
+        while ((key = yyjson_obj_iter_next(&iter)) != nullptr && out->empty())
+            find_channel_id(yyjson_obj_iter_get_val(key), out, depth + 1);
+    }
+    else if (yyjson_is_arr(value))
+    {
+        yyjson_val *child = nullptr;
+        yyjson_arr_iter iter;
+        yyjson_arr_iter_init(value, &iter);
+        while ((child = yyjson_arr_iter_next(&iter)) != nullptr && out->empty())
+            find_channel_id(child, out, depth + 1);
+    }
+}
+
+} // namespace
+
 bool InnerTube::account(std::string *name, std::string *photo, std::string *channel_id)
 {
     Impl::Attempt attempt = impl_->post_once("account/accounts_list", "", kTvClient);
@@ -2959,14 +2993,57 @@ bool InnerTube::account(std::string *name, std::string *photo, std::string *chan
     *name = text_of(yyjson_obj_get(item, "accountName"));
     yyjson_val *photo_obj = yyjson_obj_get(item, "accountPhoto");
     *photo = largest_thumbnail(yyjson_obj_get(photo_obj, "thumbnails"));
+    std::string handle;
     if (channel_id != nullptr)
     {
         // The account's own channel, where the answer links it.
         const std::string id = string_field(find_object(item, "browseEndpoint"), "browseId");
         if (id.size() == 24 && id.rfind("UC", 0) == 0)
             *channel_id = id;
+        // Else its handle ("@name"), resolved below.
+        for (const char *key : {"channelHandle", "accountByline"})
+        {
+            const std::string text = text_of(yyjson_obj_get(item, key));
+            const std::size_t at = text.find('@');
+            if (handle.empty() && at != std::string::npos)
+                handle = text.substr(at, text.find_first_of(" \t", at) - at);
+        }
     }
     yyjson_doc_free(doc);
+    if (channel_id != nullptr && channel_id->empty() && !handle.empty())
+    {
+        // youtube.com/@handle names the channel: resolve_url answers its id.
+        Impl::Attempt resolved =
+            impl_->post_once("navigation/resolve_url",
+                             field_string("url", "https://www.youtube.com/" + handle), kWebClient);
+        if (resolved.http_ok)
+            if (yyjson_doc *answer = yyjson_read(resolved.body.data(), resolved.body.size(), 0))
+            {
+                const std::string id = string_field(
+                    find_object(yyjson_doc_get_root(answer), "browseEndpoint"), "browseId");
+                if (id.size() == 24 && id.rfind("UC", 0) == 0)
+                    *channel_id = id;
+                yyjson_doc_free(answer);
+            }
+        log::line("account: handle %s -> %s", handle.c_str(),
+                  channel_id->empty() ? "(unresolved)" : channel_id->c_str());
+    }
+    if (channel_id != nullptr && channel_id->empty())
+    {
+        // The account menu's "Your channel" entry links it.
+        Impl::Attempt menu = impl_->post_once("account/account_menu", "", kTvClient);
+        if (menu.http_ok)
+            if (yyjson_doc *answer = yyjson_read(menu.body.data(), menu.body.size(), 0))
+            {
+                std::string found;
+                find_channel_id(yyjson_doc_get_root(answer), &found, 0);
+                if (!found.empty())
+                    *channel_id = found;
+                yyjson_doc_free(answer);
+            }
+        log::line("account: account menu (%ld) -> %s", menu.status,
+                  channel_id->empty() ? "(no channel)" : channel_id->c_str());
+    }
     log::line("account: %s", name->empty() ? "(no name)" : "found");
     return !name->empty() || !photo->empty();
 }

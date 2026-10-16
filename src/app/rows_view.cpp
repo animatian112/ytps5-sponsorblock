@@ -97,29 +97,66 @@ float RowsView::row_height() const
 
 void RowsView::set_items(const std::vector<yt::FeedItem> &items, const Context &context)
 {
-    // Remember where the focus was, by row title and card.
+    // Remember where the focus was: the row (its title and which occurrence
+    // of that title) and the card.
     std::string focus_title;
+    int focus_occurrence = 0;
     int focus_card = 0;
     if (focus_row_ >= 0 && focus_row_ < static_cast<int>(rows_.size()))
     {
         focus_title = rows_[static_cast<std::size_t>(focus_row_)]->title;
         focus_card = rows_[static_cast<std::size_t>(focus_row_)]->shelf.focus();
+        for (int i = 0; i < focus_row_; ++i)
+            if (rows_[static_cast<std::size_t>(i)]->title == focus_title)
+                ++focus_occurrence;
     }
 
-    std::vector<std::unique_ptr<Row>> rows;
+    // Group the items into rows (titles and items only).
+    struct Group
+    {
+        std::string title;
+        std::vector<yt::FeedItem> items;
+    };
+    std::vector<Group> groups;
     for (const yt::FeedItem &item : items)
     {
-        const std::string title = item.shelf.empty() ? std::string() : item.shelf;
-        if (rows.empty() || (!title.empty() && title != rows.back()->title))
-        {
-            auto row = std::make_unique<Row>();
-            row->title = title.empty() ? "Recommended" : title;
-            rows.push_back(std::move(row));
-        }
-        rows.back()->items.push_back(item);
+        const std::string &title = item.shelf;
+        if (groups.empty() || (!title.empty() && title != groups.back().title))
+            groups.push_back({title.empty() ? std::string("Recommended") : title, {}});
+        groups.back().items.push_back(item);
     }
-    for (auto &row : rows)
+
+    // A row that is unchanged (same title, same videos) keeps its carousel:
+    // its focus and glide stay put while later pages arrive around it.
+    const auto same = [](const Row &row, const Group &group)
     {
+        if (row.title != group.title || row.items.size() != group.items.size())
+            return false;
+        for (std::size_t i = 0; i < row.items.size(); ++i)
+            if (row.items[i].video_id != group.items[i].video_id)
+                return false;
+        return true;
+    };
+    std::vector<std::unique_ptr<Row>> rows;
+    for (std::size_t g = 0; g < groups.size(); ++g)
+    {
+        std::unique_ptr<Row> reused;
+        for (auto &old : rows_)
+        {
+            if (old != nullptr && same(*old, groups[g]))
+            {
+                reused = std::move(old);
+                break;
+            }
+        }
+        if (reused != nullptr)
+        {
+            rows.push_back(std::move(reused));
+            continue;
+        }
+        auto row = std::make_unique<Row>();
+        row->title = groups[g].title;
+        row->items = std::move(groups[g].items);
         style_shelf(row->shelf);
         row->shelf.title = row->title;
         std::vector<ui::CardItem> cards;
@@ -127,20 +164,27 @@ void RowsView::set_items(const std::vector<yt::FeedItem> &items, const Context &
         for (const yt::FeedItem &item : row->items)
             cards.push_back(card_for(item, context));
         row->shelf.set_items(std::move(cards));
+        rows.push_back(std::move(row));
     }
     rows_ = std::move(rows);
 
+    const int before = focus_row_;
     focus_row_ = 0;
+    int seen = 0;
     for (std::size_t i = 0; i < rows_.size(); ++i)
     {
-        if (!focus_title.empty() && rows_[i]->title == focus_title)
-        {
-            focus_row_ = static_cast<int>(i);
-            const int count = static_cast<int>(rows_[i]->items.size());
-            rows_[i]->shelf.set_focus(std::min(focus_card, std::max(0, count - 1)));
-            break;
-        }
+        if (focus_title.empty() || rows_[i]->title != focus_title)
+            continue;
+        if (seen++ < focus_occurrence)
+            continue;
+        focus_row_ = static_cast<int>(i);
+        const int count = static_cast<int>(rows_[i]->items.size());
+        rows_[i]->shelf.set_focus(std::min(focus_card, std::max(0, count - 1)));
+        break;
     }
+    // The view stays where it was when the focus row kept its place.
+    if (focus_row_ != before)
+        scroll_ = static_cast<float>(focus_row_) * row_height();
     place();
 }
 

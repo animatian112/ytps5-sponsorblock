@@ -73,7 +73,10 @@ constexpr int kDecoderThreads = 4;
 constexpr int kVideoPacketsPerUpdate = 4;
 constexpr int kAudioPacketsPerUpdate = 8;
 // Stop feeding the sink once it holds half a second; keeps latency low.
-constexpr int kAudioCushionFrames = kOutputRate / 2;
+// One second: a slow frame (a heavy stream, a busy screen) must not empty
+// the ring, or the sound gaps and the picture, which follows the sound's
+// clock, stalls and then rushes. The ring holds 1.36 s.
+constexpr int kAudioCushionFrames = kOutputRate;
 // A decoder that will not write must not grow the carry buffer without end.
 constexpr std::size_t kMaxCarryFrames = kOutputRate;
 // Blocking network reads (http "timeout" / "rw_timeout", microseconds).
