@@ -643,15 +643,21 @@ void collect_lockup(yyjson_val *obj, FeedPage *page)
         return;
 
     yyjson_val *content_id = yyjson_obj_get(lockup, "contentId");
-    const char *video_id = yyjson_is_str(content_id) ? yyjson_get_str(content_id) : nullptr;
-    if (video_id == nullptr || std::strlen(video_id) != 11)
+    const char *raw_id = yyjson_is_str(content_id) ? yyjson_get_str(content_id) : nullptr;
+    if (raw_id == nullptr)
         return;
-
     const std::string content_type = string_field(lockup, "contentType");
-    if (contains_text(content_type.c_str(), "playlist") ||
-        contains_text(content_type.c_str(), "channel") ||
-        contains_text(content_type.c_str(), "shorts"))
+    std::string id_text = raw_id;
+    if (contains_text(content_type.c_str(), "playlist"))
+    {
+        // A playlist card: opened through its browse page.
+        if (id_text.rfind("VL", 0) != 0)
+            id_text = "VL" + id_text;
+    }
+    else if (id_text.size() != 11 || contains_text(content_type.c_str(), "channel") ||
+             contains_text(content_type.c_str(), "shorts"))
         return;
+    const char *video_id = id_text.c_str();
 
     for (const FeedItem &existing : page->items)
     {
@@ -688,6 +694,15 @@ void collect_tile(yyjson_val *tile, FeedPage *page)
     std::string video_id = string_field(yyjson_obj_get(command, "watchEndpoint"), "videoId");
     if (video_id.empty())
         video_id = string_field(yyjson_obj_get(command, "reelWatchEndpoint"), "videoId");
+    if (video_id.empty())
+    {
+        // A playlist tile opens its browse page ("VL..."): it becomes a
+        // playlist card whose video_id is that browse id.
+        const std::string browse =
+            string_field(yyjson_obj_get(command, "browseEndpoint"), "browseId");
+        if (browse.size() > 2 && browse.rfind("VL", 0) == 0)
+            video_id = browse;
+    }
     if (video_id.empty())
         return;
     for (const FeedItem &existing : page->items)
@@ -858,6 +873,41 @@ void collect_channel_lockup(yyjson_val *obj, FeedPage *page)
     page->channels.push_back(std::move(item));
 }
 
+// A web playlist renderer (gridPlaylistRenderer, playlistRenderer, ...): a
+// playlist card opened through "VL" + playlistId.
+void collect_playlist(yyjson_val *obj, FeedPage *page)
+{
+    if (!yyjson_is_obj(obj) || page->items.size() >= kMaxItems)
+        return;
+    const std::string playlist_id = string_field(obj, "playlistId");
+    if (playlist_id.empty())
+        return;
+    const std::string id = playlist_id.rfind("VL", 0) == 0 ? playlist_id : "VL" + playlist_id;
+    for (const FeedItem &existing : page->items)
+    {
+        if (existing.video_id == id)
+            return;
+    }
+    FeedItem item;
+    item.video_id = id;
+    item.title = title_text(obj);
+    if (item.title.empty())
+        return;
+    item.thumbnail_url = thumbnail_text(obj);
+    if (item.thumbnail_url.empty())
+    {
+        yyjson_val *sets = yyjson_obj_get(obj, "thumbnails");
+        item.thumbnail_url =
+            largest_thumbnail(yyjson_obj_get(yyjson_arr_get_first(sets), "thumbnails"));
+    }
+    std::string count = renderer_text(yyjson_obj_get(obj, "videoCountText"));
+    if (count.empty())
+        count = renderer_text(yyjson_obj_get(obj, "videoCountShortText"));
+    item.detail = count;
+    item.shelf = page->current_shelf;
+    page->items.push_back(std::move(item));
+}
+
 void walk_feed(yyjson_val *value, FeedPage *page, std::string *continuation)
 {
     if (yyjson_is_obj(value))
@@ -880,6 +930,10 @@ void walk_feed(yyjson_val *value, FeedPage *page, std::string *continuation)
                 collect_channel_lockup(child, page);
             if (std::strcmp(name, "tileRenderer") == 0)
                 collect_tile(child, page);
+            if (std::strcmp(name, "gridPlaylistRenderer") == 0 ||
+                std::strcmp(name, "playlistRenderer") == 0 ||
+                std::strcmp(name, "compactPlaylistRenderer") == 0)
+                collect_playlist(child, page);
             if (std::strcmp(name, "shelfRenderer") == 0 ||
                 std::strcmp(name, "richShelfRenderer") == 0)
             {
@@ -1813,6 +1867,8 @@ bool parse_video_info(std::string_view json, VideoInfo *info)
     info->title = string_field(details, "title");
     info->author = string_field(details, "author");
     info->channel_id = string_field(details, "channelId");
+    info->description = string_field(details, "shortDescription");
+    info->view_count = string_field(details, "viewCount");
     info->length_s = number_field(details, "lengthSeconds", 0.0);
     yyjson_val *live = yyjson_obj_get(details, "isLiveContent");
     info->live = yyjson_is_bool(live) && yyjson_get_bool(live);
@@ -2434,6 +2490,26 @@ bool InnerTube::browse(const std::string &browse_id, FeedPage *page,
     if (!parsed)
         page->error = impl_->error;
     return parsed;
+}
+
+bool InnerTube::account(std::string *name, std::string *photo)
+{
+    Impl::Attempt attempt = impl_->post_once("account/accounts_list", "", kTvClient);
+    if (!attempt.transport_ok || !attempt.http_ok)
+    {
+        log::line("account: %ld %s", attempt.status, attempt.error.c_str());
+        return false;
+    }
+    yyjson_doc *doc = yyjson_read(attempt.body.data(), attempt.body.size(), 0);
+    if (doc == nullptr)
+        return false;
+    yyjson_val *item = find_object(yyjson_doc_get_root(doc), "accountItem");
+    *name = text_of(yyjson_obj_get(item, "accountName"));
+    yyjson_val *photo_obj = yyjson_obj_get(item, "accountPhoto");
+    *photo = largest_thumbnail(yyjson_obj_get(photo_obj, "thumbnails"));
+    yyjson_doc_free(doc);
+    log::line("account: %s", name->empty() ? "(no name)" : "found");
+    return !name->empty() || !photo->empty();
 }
 
 bool InnerTube::history(FeedPage *page, const std::string &continuation)

@@ -41,6 +41,7 @@ struct Nav
     bool open_channel = false; // show context.pending_channel on the search screen
     std::string video_id;
     bool leave_player = false; // close the player and go back to the tab
+    bool leave_browse = false; // close a playlist page and go back to the tab
     bool go_to = false;        // switch to `screen`
     int screen_index = 0;      // index into App::screen_count()
     bool start_login = false;
@@ -75,6 +76,8 @@ struct Context
     // A channel to show (the player's Channel button): the search screen opens
     // its page when it enters, then clears it.
     yt::ChannelItem &pending_channel;
+    // The playlist ("VL...") the browse screen shows when it enters.
+    std::string &pending_browse;
 };
 
 } // namespace hui::app

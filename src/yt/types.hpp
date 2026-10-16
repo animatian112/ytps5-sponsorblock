@@ -118,7 +118,9 @@ struct VideoInfo
     // account's history (see yt/watch.hpp). Empty when the answer has none.
     std::string playback_url;
     std::string watchtime_url;
-    std::string channel_id; // videoDetails.channelId
+    std::string channel_id;  // videoDetails.channelId
+    std::string description; // videoDetails.shortDescription
+    std::string view_count;  // videoDetails.viewCount, digits
     std::vector<CaptionTrack> captions;
     int preroll_ads = 0;
     // std::chrono::steady_clock milliseconds when the URLs start to play:
@@ -132,6 +134,8 @@ struct VideoInfo
     }
 };
 
+// A card in a feed. A playlist is a FeedItem too: its video_id is then the
+// playlist's browse id ("VL" + playlist id), which is_playlist() tells.
 struct FeedItem
 {
     std::string video_id;
@@ -147,6 +151,11 @@ struct FeedItem
     std::string shelf;
     // 0..1 of it already watched (YouTube's red bar), -1 for none.
     float watched = -1.0f;
+
+    bool is_playlist() const
+    {
+        return video_id.size() > 2 && video_id[0] == 'V' && video_id[1] == 'L';
+    }
 };
 
 // A channel as search answers with it (avatar, name, subscriber line).

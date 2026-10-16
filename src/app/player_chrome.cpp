@@ -126,6 +126,7 @@ std::vector<PlayerChrome::Button> PlayerChrome::buttons() const
         out.push_back(Button::next);
     if (!segment_.empty())
         out.push_back(Button::skip);
+    out.push_back(Button::info);
     if (has_channel_)
         out.push_back(Button::channel);
     if (signed_in_)
@@ -146,7 +147,8 @@ bool PlayerChrome::right_side(Button button)
 {
     return button == Button::skip || button == Button::captions || button == Button::speed ||
            button == Button::quality || button == Button::audio || button == Button::like ||
-           button == Button::dislike || button == Button::subscribe || button == Button::channel;
+           button == Button::dislike || button == Button::subscribe || button == Button::channel ||
+           button == Button::info;
 }
 
 std::string PlayerChrome::button_label(Button button) const
@@ -171,6 +173,8 @@ std::string PlayerChrome::button_label(Button button) const
         return subscribed_ ? "Subscribed" : "Subscribe";
     case Button::channel:
         return "Channel";
+    case Button::info:
+        return "Info";
     default:
         return {};
     }
@@ -254,6 +258,8 @@ PlayerChrome::Command PlayerChrome::press(Button button)
         return Command::subscribe;
     case Button::channel:
         return Command::channel;
+    case Button::info:
+        return Command::open_info;
     }
     return Command::none;
 }
@@ -567,32 +573,43 @@ void PlayerChrome::draw_panel(ui::Canvas &canvas, const ui::Fonts &fonts) const
     if (panel_open_ < 0.01f)
         return;
     gfx::DrawList &list = canvas.list;
+    // The description reads as text: tighter lines, no row highlight; Up and
+    // Down scroll it.
+    const bool reading = panel_ == Panel::info;
     constexpr float kWidth = 560.0f;
-    constexpr float kRowHeight = 68.0f;
+    const float row_height = reading ? 36.0f : 68.0f;
     constexpr float kTop = 170.0f;
     const float x = gfx::kVirtualWidth - kWidth * panel_open_;
     list.push_opacity(std::min(1.0f, panel_open_ * 1.4f));
     list.rounded_rect({x, 0.0f, kWidth, gfx::kVirtualHeight}, 0.0f,
                       gfx::Color::rgb(0x161616, 0.97f));
-    ui::text(list, fonts.semibold, panel_title_, x + 48.0f, 112.0f, 34.0f, kInk);
+    if (fonts.semibold.font != nullptr)
+        ui::text(list, fonts.semibold,
+                 fonts.semibold.font->fit(panel_title_, 32.0f, kWidth - 96.0f), x + 48.0f, 112.0f,
+                 32.0f, kInk);
     const int count = static_cast<int>(panel_options_.size());
-    const int visible = static_cast<int>((gfx::kVirtualHeight - kTop - 40.0f) / kRowHeight);
-    int first = std::max(0, panel_focus_ - visible / 2);
+    const int visible = static_cast<int>((gfx::kVirtualHeight - kTop - 40.0f) / row_height);
+    int first = reading ? panel_focus_ : std::max(0, panel_focus_ - visible / 2);
     first = std::min(first, std::max(0, count - visible));
     for (int i = first; i < count && i < first + visible; ++i)
     {
-        const float y = kTop + static_cast<float>(i - first) * kRowHeight;
+        const float y = kTop + static_cast<float>(i - first) * row_height;
+        const std::string &text = panel_options_[static_cast<std::size_t>(i)];
+        if (reading)
+        {
+            ui::text(list, fonts.regular, text, x + 48.0f, y + 26.0f, 24.0f,
+                     i == 0 ? kMuted : kInk);
+            continue;
+        }
         const bool focused = i == panel_focus_;
-        const gfx::Rect row{x + 24.0f, y, kWidth - 48.0f, kRowHeight - 8.0f};
+        const gfx::Rect row{x + 24.0f, y, kWidth - 48.0f, row_height - 8.0f};
         if (focused)
             list.rounded_rect(row, 10.0f, kInk);
         const gfx::Color ink = focused ? kDark : kInk;
         if (i == panel_selected_)
-            list.circle(row.x + 30.0f, row.cy(), 8.0f, focused ? kRed : kRed);
+            list.circle(row.x + 30.0f, row.cy(), 8.0f, kRed);
         if (fonts.regular.font != nullptr)
-            ui::text(list, fonts.regular,
-                     fonts.regular.font->fit(panel_options_[static_cast<std::size_t>(i)], 26.0f,
-                                             row.w - 80.0f),
+            ui::text(list, fonts.regular, fonts.regular.font->fit(text, 26.0f, row.w - 80.0f),
                      row.x + 60.0f, row.cy() + 9.0f, 26.0f, ink);
     }
     list.pop_opacity();

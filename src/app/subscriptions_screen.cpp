@@ -43,14 +43,35 @@ void SubscriptionsScreen::enter()
     sign_in_.set_active(true);
     refresh_from_service();
     // History changes with every video watched: fetch it fresh on each visit.
-    if (kind_ == yt::FeedKind::history && context_.service.signed_in())
+    if ((kind_ == yt::FeedKind::history || kind_ == yt::FeedKind::library) &&
+        context_.service.signed_in())
         request();
 }
 
 void SubscriptionsScreen::refresh_from_service()
 {
     const yt::FeedView view = context_.service.feed(kind_);
-    subs_.set_items(view.items, context_);
+    if (kind_ == yt::FeedKind::library)
+    {
+        // Watch later and Liked videos first, then the account's playlists.
+        std::vector<yt::FeedItem> items;
+        yt::FeedItem later;
+        later.video_id = "VLWL";
+        later.title = "Watch later";
+        items.push_back(later);
+        yt::FeedItem liked;
+        liked.video_id = "VLLL";
+        liked.title = "Liked videos";
+        items.push_back(liked);
+        for (const yt::FeedItem &item : view.items)
+        {
+            if (item.is_playlist() && item.video_id != "VLWL" && item.video_id != "VLLL")
+                items.push_back(item);
+        }
+        subs_.set_items(items, context_);
+    }
+    else
+        subs_.set_items(view.items, context_);
     if (context_.service.signed_in())
     {
         subs_.set_empty_text(kind_ == yt::FeedKind::history ? "No watch history yet"
@@ -132,8 +153,9 @@ void SubscriptionsScreen::draw(const Context &context, Frame &frame) const
         ui::text(canvas.list, context.fonts.semibold, title(), 960.0f, 400.0f, 40.0f,
                  gfx::Color::rgb(0xf1f1f1), gfx::Align::center);
         ui::text(canvas.list, context.fonts.regular,
-                 kind_ == yt::FeedKind::history ? "Sign in to see your watch history."
-                                                : "Sign in to see your subscriptions.",
+                 kind_ == yt::FeedKind::history   ? "Sign in to see your watch history."
+                 : kind_ == yt::FeedKind::library ? "Sign in to see your playlists."
+                                                  : "Sign in to see your subscriptions.",
                  960.0f, 470.0f, 24.0f, gfx::Color::rgb(0xaaaaaa), gfx::Align::center);
         sign_in_.draw(canvas);
         return;
@@ -153,6 +175,8 @@ void SubscriptionsScreen::request()
 {
     if (kind_ == yt::FeedKind::history)
         context_.service.request_history();
+    else if (kind_ == yt::FeedKind::library)
+        context_.service.request_library();
     else
         context_.service.request_subscriptions();
 }
@@ -160,6 +184,11 @@ void SubscriptionsScreen::request()
 std::unique_ptr<Screen> make_subscriptions_screen(Context &context)
 {
     return std::make_unique<SubscriptionsScreen>(context);
+}
+
+std::unique_ptr<Screen> make_playlists_screen(Context &context)
+{
+    return std::make_unique<SubscriptionsScreen>(context, yt::FeedKind::library);
 }
 
 std::unique_ptr<Screen> make_history_screen(Context &context)

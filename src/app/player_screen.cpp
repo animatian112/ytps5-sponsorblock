@@ -37,15 +37,13 @@ const TourStep kTour[] = {
     {0.9f, 0, Direction::up, nullptr, 0, 0, 0, 0, 0},
     {0.9f, 0, Direction::none, "seek", 0, 0, 0, 0, 0},
     {0.6f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
-    // Right to the speed pill, and its panel.
-    {0.4f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
+    // Right to the Info pill, and the description.
     {0.4f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
     {0.4f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
     {0.4f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
     {0.9f, hui::action_bit(Action::confirm), Direction::none, nullptr, 0, 0, 0, 0, 0},
-    {0.9f, 0, Direction::none, "speed-menu", 0, 0, 0, 0, 0},
+    {0.9f, 0, Direction::none, "info", 0, 0, 0, 0, 0},
     {0.9f, hui::action_bit(Action::back), Direction::none, nullptr, 0, 0, 0, 0, 0},
-    {0.6f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
     {0.6f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
     {0.6f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
     {0.9f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
@@ -514,6 +512,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         case PlayerChrome::Command::open_speed:
         case PlayerChrome::Command::open_quality:
         case PlayerChrome::Command::open_audio:
+        case PlayerChrome::Command::open_info:
             open_menu(command);
             break;
         case PlayerChrome::Command::pick:
@@ -585,29 +584,11 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     }
     related_.set_active(in_related_);
 
-    // Autoplay at the end of the video.
-    if (ended_ && !in_related_ && !autoplay_cancelled_ && next_suggestion() != nullptr)
+    // Autoplay: the next suggestion starts the moment the video ends.
+    if (ended_ && !in_related_ && next_suggestion() != nullptr)
     {
-        if (autoplay_left_ < 0.0f)
-            autoplay_left_ = 5.0f;
-        autoplay_left_ -= dt;
-        if (input.is_pressed(Action::back))
-        {
-            autoplay_cancelled_ = true;
-            autoplay_left_ = -1.0f;
-            back_used = true;
-        }
-        else if (autoplay_left_ <= 0.0f || (input.is_pressed(Action::confirm) && !chrome_.shown()))
-        {
-            autoplay_left_ = -1.0f;
-            play_next();
-            return;
-        }
-    }
-    else if (!ended_)
-    {
-        autoplay_left_ = -1.0f;
-        autoplay_cancelled_ = false;
+        play_next();
+        return;
     }
 
     if (input.is_pressed(Action::back) && !back_used)
@@ -640,8 +621,6 @@ void PlayerScreen::play_next()
         return;
     const std::string id = next->video_id;
     yt::log::line("player: next -> %s", id.c_str());
-    autoplay_left_ = -1.0f;
-    autoplay_cancelled_ = false;
     request_video(id);
     chrome_.show();
 }
@@ -722,6 +701,49 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
         chrome_.open_panel(PlayerChrome::Panel::quality, "Quality", std::move(options), selected);
         break;
     }
+    case PlayerChrome::Command::open_info:
+    {
+        // The description, wrapped to the panel; Up/Down scroll it.
+        std::vector<std::string> lines;
+        std::string head = view.info.author;
+        if (!view.info.view_count.empty())
+        {
+            // "1234567" -> "1,234,567 views"
+            std::string digits = view.info.view_count;
+            std::string grouped;
+            for (std::size_t i = 0; i < digits.size(); ++i)
+            {
+                if (i > 0 && (digits.size() - i) % 3 == 0)
+                    grouped += ',';
+                grouped += digits[i];
+            }
+            head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + grouped + " views";
+        }
+        if (!head.empty())
+            lines.push_back(head);
+        const std::string text =
+            view.info.description.empty() ? std::string("No description.") : view.info.description;
+        std::size_t at = 0;
+        while (at <= text.size() && context_.fonts.regular.font != nullptr)
+        {
+            const std::size_t end = text.find('\n', at);
+            const std::string paragraph =
+                text.substr(at, end == std::string::npos ? std::string::npos : end - at);
+            if (paragraph.empty())
+                lines.push_back(" ");
+            else
+                for (const std::string &line :
+                     context_.fonts.regular.font->wrap(paragraph, 26.0f, 440.0f))
+                    lines.push_back(line);
+            if (end == std::string::npos || lines.size() > 400)
+                break;
+            at = end + 1;
+        }
+        chrome_.open_panel(PlayerChrome::Panel::info,
+                           view.info.title.empty() ? std::string("Info") : view.info.title,
+                           std::move(lines), -1);
+        break;
+    }
     case PlayerChrome::Command::open_audio:
     {
         const std::vector<yt::AudioTrack> tracks = yt::audio_tracks(view.info.formats);
@@ -799,6 +821,7 @@ void PlayerScreen::apply_pick()
             reopen();
         }
         break;
+    case PlayerChrome::Panel::info:
     case PlayerChrome::Panel::none:
         break;
     }
@@ -979,30 +1002,7 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
         canvas.list.pop_opacity();
     }
 
-    if (player_ != nullptr && ended_ && autoplay_left_ >= 0.0f)
-    {
-        // "Up next" card, top right: the next video and the countdown.
-        const yt::FeedItem *next = next_suggestion();
-        if (next != nullptr)
-        {
-            const gfx::Rect card{1300.0f, 80.0f, 540.0f, 400.0f};
-            canvas.list.rounded_rect(card, 14.0f, gfx::Color::rgb(0x111111, 0.92f));
-            const gfx::Rect art{card.x + 20.0f, card.y + 60.0f, 500.0f, 281.0f};
-            const std::uint32_t texture = context.thumbs.texture(card_thumbnail(*next));
-            if (texture != 0)
-                canvas.list.image(texture, art, gfx::kFullUv, gfx::Color::rgb(0xffffff), 8.0f);
-            else
-                canvas.list.rounded_rect(art, 8.0f, gfx::Color::rgb(0x2a2a2a));
-            const int seconds = static_cast<int>(autoplay_left_ + 0.999f);
-            ui::text(canvas.list, context.fonts.semibold, "Up next in " + std::to_string(seconds),
-                     card.x + 20.0f, card.y + 42.0f, 28.0f, gfx::Color::rgb(0xffffff));
-            if (context.fonts.regular.font != nullptr)
-                ui::text(canvas.list, context.fonts.regular,
-                         context.fonts.regular.font->fit(next->title, 24.0f, 500.0f),
-                         card.x + 20.0f, card.y + 378.0f, 24.0f, gfx::Color::rgb(0xdddddd));
-        }
-    }
-    else if (player_ != nullptr && ended_)
+    if (player_ != nullptr && ended_)
         ui::text(canvas.list, context.fonts.semibold, "Ended", gfx::kVirtualWidth * 0.5f, 500.0f,
                  30.0f, gfx::Color::rgb(0xf5a524), gfx::Align::center);
 

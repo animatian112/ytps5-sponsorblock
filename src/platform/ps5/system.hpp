@@ -21,6 +21,10 @@ bool hide_splash_screen();
 
 void sleep_us(std::uint32_t microseconds);
 
+// The console's local time of day (its time-zone and summer-time settings
+// applied) and whether it shows 12-hour time. False when there is no clock.
+bool local_clock(int *hour, int *minute, bool *twelve_hour);
+
 // Never returns: keeps the title alive until the shell closes it. Returning
 // from main or calling exit() is not safe for a native title.
 [[noreturn]] void park();

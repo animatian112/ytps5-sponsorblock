@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace yt
@@ -26,6 +27,8 @@ enum class FeedKind : unsigned char
     // One channel's uploads, opened from a search result.
     channel,
     history,
+    // The account's playlists (Library).
+    library,
     // A topic page (Music, Gaming, News, Live, Sports): one slot, the screen
     // that asked last owns it (topic_id()).
     topic,
@@ -105,6 +108,9 @@ class Service
     void request_home(bool force = false);
     void request_subscriptions(bool force = false);
     void request_history();
+    void request_library();
+    // The signed-in account's name and avatar (empty until fetched).
+    std::pair<std::string, std::string> account() const;
     void request_topic(std::string browse_id);
     // The browse id the topic feed holds (or is loading).
     std::string topic_id() const;

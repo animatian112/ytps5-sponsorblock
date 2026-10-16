@@ -26,11 +26,15 @@ class SubscriptionsScreen final : public Screen
 
     const char *id() const override
     {
-        return kind_ == yt::FeedKind::history ? "history" : "subscriptions";
+        return kind_ == yt::FeedKind::history   ? "history"
+               : kind_ == yt::FeedKind::library ? "playlists"
+                                                : "subscriptions";
     }
     const char *title() const override
     {
-        return kind_ == yt::FeedKind::history ? "History" : "Subscriptions";
+        return kind_ == yt::FeedKind::history   ? "History"
+               : kind_ == yt::FeedKind::library ? "Playlists"
+                                                : "Subscriptions";
     }
     const char *hint() const override
     {

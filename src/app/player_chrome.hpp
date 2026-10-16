@@ -43,6 +43,7 @@ class PlayerChrome
         dislike,
         subscribe,
         channel,
+        open_info,
         pick, // a panel choice: panel() and picked()
     };
     enum class Panel
@@ -52,6 +53,7 @@ class PlayerChrome
         speed,
         quality,
         audio,
+        info,
     };
 
     void set_times(double position, double duration, double buffered);
@@ -137,6 +139,7 @@ class PlayerChrome
         dislike,
         subscribe,
         channel,
+        info,
     };
     enum class Zone
     {

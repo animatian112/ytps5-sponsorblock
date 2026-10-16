@@ -335,6 +335,13 @@ int main(int argc, char **argv)
     video.info.video_id = "fixture0000";
     video.info.title = "Ad-free: how playback works through InnerTube";
     video.info.author = "PS5 Homebrew";
+    video.info.view_count = "1234567";
+    video.info.channel_id = "UCfixture0001";
+    video.info.description =
+        "How a video gets from YouTube to the console: the player answer, the stream URLs, "
+        "the pre-roll wait and the range requests that keep googlevideo happy.\n\n"
+        "Chapters:\n0:00 Intro\n1:30 The player answer\n6:10 Streams and ranges\n"
+        "14:45 SponsorBlock\n\nThanks for watching!";
     video.info.length_s = 1548.0;
     if (std::getenv("YT_SNAPSHOT_FAIL") != nullptr)
     {

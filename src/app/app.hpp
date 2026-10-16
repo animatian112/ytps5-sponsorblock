@@ -139,6 +139,8 @@ class App
     std::string active_video_;
     ResumeStore resume_;
     yt::ChannelItem pending_channel_;
+    std::string pending_browse_;    // the playlist the browse screen opens
+    std::size_t player_return_ = 0; // where Circle in the player goes back to
     Context context_;
     std::vector<std::unique_ptr<Screen>> screens_;
     std::vector<std::unique_ptr<Screen>>::size_type current_ = kHomeScreen;

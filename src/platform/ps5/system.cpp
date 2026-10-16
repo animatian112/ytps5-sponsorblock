@@ -15,6 +15,7 @@ extern "C"
     int sceKernelUsleep(unsigned int microseconds);
     int sceSystemServiceHideSplashScreen(void);
     int sceSystemServiceLoadExec(const char *path, const char **arguments);
+    int sceSystemServiceParamGetInt(int param_id, int *value);
 }
 
 extern "C" void hui_release_splash(void) __attribute__((weak));
@@ -28,6 +29,35 @@ std::int64_t monotonic_us()
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
         return 0;
     return static_cast<std::int64_t>(now.tv_sec) * 1000000 + now.tv_nsec / 1000;
+}
+
+bool local_clock(int *hour, int *minute, bool *twelve_hour)
+{
+    // System parameters: 3 time format (0 = 12-hour), 4 time zone (minutes
+    // east of UTC), 5 summer time (1 = on).
+    constexpr int kTimeFormat = 3;
+    constexpr int kTimeZone = 4;
+    constexpr int kSummerTime = 5;
+    const long long now = static_cast<long long>(std::time(nullptr));
+    if (now < 1600000000LL)
+        return false;
+    int zone = 0;
+    int summer = 0;
+    int format = 1;
+    if (sceSystemServiceParamGetInt(kTimeZone, &zone) != 0)
+        zone = 0;
+    if (sceSystemServiceParamGetInt(kSummerTime, &summer) != 0)
+        summer = 0;
+    if (sceSystemServiceParamGetInt(kTimeFormat, &format) != 0)
+        format = 1;
+    long long local = now + static_cast<long long>(zone) * 60 + (summer != 0 ? 3600 : 0);
+    local %= 86400;
+    if (local < 0)
+        local += 86400;
+    *hour = static_cast<int>(local / 3600);
+    *minute = static_cast<int>((local % 3600) / 60);
+    *twelve_hour = format == 0;
+    return true;
 }
 
 void log(const char *format, ...)

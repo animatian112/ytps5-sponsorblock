@@ -34,6 +34,18 @@ bool hide_splash_screen()
     return true;
 }
 
+bool local_clock(int *hour, int *minute, bool *twelve_hour)
+{
+    const std::time_t now = std::time(nullptr);
+    std::tm parts{};
+    if (localtime_r(&now, &parts) == nullptr)
+        return false;
+    *hour = parts.tm_hour;
+    *minute = parts.tm_min;
+    *twelve_hour = true;
+    return true;
+}
+
 void sleep_us(std::uint32_t microseconds)
 {
     usleep(microseconds);

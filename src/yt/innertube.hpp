@@ -36,6 +36,8 @@ class InnerTube
     bool browse(const std::string &browse_id, FeedPage *page, const std::string &continuation = {});
     // The account's watch history (browseId FEhistory), newest first.
     bool history(FeedPage *page, const std::string &continuation = {});
+    // The signed-in account's display name and avatar URL.
+    bool account(std::string *name, std::string *photo);
     // One signed-in action ("like/like", "subscription/subscribe", ...) with
     // `extra` the request fields after the context. True on a 2xx answer.
     bool action(const char *endpoint, const std::string &extra);

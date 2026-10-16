@@ -107,6 +107,7 @@ struct Service::Impl
         bool history = false;
         bool topic = false;
         std::string topic_id;
+        bool library = false;
         bool more = false;
         FeedKind more_kind = FeedKind::home;
         bool channel = false;
@@ -139,6 +140,10 @@ struct Service::Impl
     FeedView history;
     FeedView topic;
     std::string topic_id;
+    FeedView library;
+    std::string account_name;
+    std::string account_photo;
+    bool account_fetched = false;
     FeedView search;
     FeedView related;
     FeedView channel_feed; // one channel's videos, opened from search
@@ -273,6 +278,8 @@ struct Service::Impl
             return &history;
         case FeedKind::topic:
             return &topic;
+        case FeedKind::library:
+            return &library;
         default:
             return &search;
         }
@@ -311,6 +318,11 @@ struct Service::Impl
         subscriptions.revision++;
         history = FeedView{};
         history.revision++;
+        library = FeedView{};
+        library.revision++;
+        account_name.clear();
+        account_photo.clear();
+        account_fetched = false;
     }
 
     // ---- jobs ----
@@ -451,6 +463,11 @@ struct Service::Impl
         case FeedKind::topic:
             ok = tube.browse(query, &page, continuation);
             break;
+        case FeedKind::library:
+            ok = tube.browse("FElibrary", &page, continuation);
+            if (continuation.empty() && (!ok || page.items.empty()))
+                ok = tube.browse("FEplaylist_aggregation", &page, continuation);
+            break;
         default:
             ok = tube.search(query, &page, continuation);
             break;
@@ -476,6 +493,9 @@ struct Service::Impl
                     break;
                 case FeedKind::topic:
                     ok = tube.browse(query, &page, continuation);
+                    break;
+                case FeedKind::library:
+                    ok = tube.browse("FElibrary", &page, continuation);
                     break;
                 default:
                     ok = tube.search(query, &page, continuation);
@@ -1214,6 +1234,21 @@ struct Service::Impl
                 do_feed(FeedKind::history, {}, false);
             if (taken.topic)
                 do_feed(FeedKind::topic, taken.topic_id, false);
+            if (taken.library)
+                do_feed(FeedKind::library, {}, false);
+            if (auth.signed_in() && !account_fetched)
+            {
+                // Once per sign-in: the name and avatar for the corner.
+                account_fetched = true;
+                std::string name;
+                std::string photo;
+                if (tube.account(&name, &photo))
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    account_name = name;
+                    account_photo = photo;
+                }
+            }
             if (taken.channel)
                 do_channel_page(taken.channel_id);
             if (taken.channel_tab)
@@ -1259,10 +1294,10 @@ struct Service::Impl
 
     bool any_request()
     {
-        return job.home || job.subscriptions || job.history || job.topic || job.more ||
-               job.search || job.channel || job.channel_tab || job.video || job.close_video ||
-               job.sign_in || job.cancel_sign_in || job.sign_out || job.refresh ||
-               job.import_token || job.rate || job.subscribe;
+        return job.home || job.subscriptions || job.history || job.topic || job.library ||
+               job.more || job.search || job.channel || job.channel_tab || job.video ||
+               job.close_video || job.sign_in || job.cancel_sign_in || job.sign_out ||
+               job.refresh || job.import_token || job.rate || job.subscribe;
     }
 };
 
@@ -1361,6 +1396,19 @@ std::string Service::topic_id() const
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->topic_id;
+}
+
+void Service::request_library()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.library = true;
+    impl_->wake.notify_all();
+}
+
+std::pair<std::string, std::string> Service::account() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return {impl_->account_name, impl_->account_photo};
 }
 
 void Service::request_history()
@@ -1647,6 +1695,8 @@ std::uint64_t Service::revision(FeedKind kind) const
         return impl_->history.revision;
     case FeedKind::topic:
         return impl_->topic.revision;
+    case FeedKind::library:
+        return impl_->library.revision;
     default:
         return impl_->search.revision;
     }
@@ -1669,6 +1719,8 @@ FeedView Service::feed(FeedKind kind) const
         return impl_->history;
     case FeedKind::topic:
         return impl_->topic;
+    case FeedKind::library:
+        return impl_->library;
     default:
         return impl_->search;
     }

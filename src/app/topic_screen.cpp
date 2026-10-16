@@ -26,8 +26,23 @@ bool TopicScreen::mine() const
     return context_.service.topic_id() == browse_id_;
 }
 
+std::unique_ptr<TopicScreen> TopicScreen::playlist_page(Context &context)
+{
+    auto screen = std::make_unique<TopicScreen>(context, "playlist", "Playlist", std::string());
+    screen->playlist_page_ = true;
+    return screen;
+}
+
 void TopicScreen::enter()
 {
+    if (playlist_page_ && !context_.pending_browse.empty())
+    {
+        browse_id_ = context_.pending_browse;
+        context_.pending_browse.clear();
+        title_ = browse_id_ == "VLWL"   ? "Watch later"
+                 : browse_id_ == "VLLL" ? "Liked videos"
+                                        : "Playlist";
+    }
     // One slot serves every topic: ask for this one unless it already holds it.
     const yt::FeedView view = context_.service.feed(yt::FeedKind::topic);
     if (!mine() || view.state == yt::Load::idle || view.state == yt::Load::failed)
@@ -58,6 +73,11 @@ void TopicScreen::refresh()
 void TopicScreen::update(const InputFrame &input, float dt, ui::Feedback &feedback)
 {
     clock_ += dt;
+    if (playlist_page_ && input.is_pressed(Action::back))
+    {
+        context_.nav.leave_browse = true;
+        return;
+    }
     const std::uint64_t revision = context_.service.revision(yt::FeedKind::topic);
     if (revision != seen_revision_)
     {
@@ -101,12 +121,17 @@ void TopicScreen::update(const InputFrame &input, float dt, ui::Feedback &feedba
 void TopicScreen::draw(const Context &context, Frame &frame) const
 {
     ui::Canvas canvas{frame.scene, context.fonts, frame.glass_texture, clock_};
-    ui::text(canvas.list, context.fonts.semibold, title_, kContentX, kSectionTitleY,
+    ui::text(canvas.list, context.fonts.semibold, title_.c_str(), kContentX, kSectionTitleY,
              kSectionTitleSize, gfx::Color::rgb(0xf1f1f1));
     if (use_rows_)
         rows_.draw(canvas);
     else
         grid_.draw(canvas, context);
+}
+
+std::unique_ptr<Screen> make_browse_screen(Context &context)
+{
+    return TopicScreen::playlist_page(context);
 }
 
 std::unique_ptr<Screen> make_topic_screen(Context &context, const char *id, const char *title,

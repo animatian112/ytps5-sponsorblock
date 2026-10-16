@@ -6,6 +6,7 @@
 
 #include "app/screens.hpp"
 #include "app/theme.hpp"
+#include "platform/ps5/system.hpp"
 #include "app/thumbs.hpp"
 #include "core/save_file.hpp"
 #include "core/version.hpp"
@@ -83,8 +84,9 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     : fonts_(fonts), data_root_(std::move(data_root)), settings_(settings), service_(service),
       thumbs_(std::make_unique<ThumbCache>(batch, &delete_texture, 192)),
       resume_(data_root_.empty() ? std::string() : data_root_ + "/resume.txt"),
-      context_{fonts_,   telemetry_, settings_, false,         *thumbs_, batch,
-               service_, toasts_,    nav_,      active_video_, resume_,  pending_channel_}
+      context_{fonts_,  telemetry_,       settings_,      false, *thumbs_,
+               batch,   service_,         toasts_,        nav_,  active_video_,
+               resume_, pending_channel_, pending_browse_}
 {
     toasts_.style.theme = youtube_theme();
     toasts_.style.anchor = ui::ToastAnchor::top_right;
@@ -112,12 +114,13 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
                        {"Home", {}, {}, false, false, false, 1},
                        {"Subscriptions", {}, {}, false, false, false, 2},
                        {"History", {}, {}, false, false, false, 3},
-                       {"Music", {}, {}, false, false, false, 4},
-                       {"Gaming", {}, {}, false, false, false, 5},
-                       {"News", {}, {}, false, false, false, 6},
-                       {"Live", {}, {}, false, false, false, 7},
-                       {"Sports", {}, {}, false, false, false, 8},
-                       {"Settings", {}, {}, false, false, false, 9}});
+                       {"Playlists", {}, {}, false, false, false, 4},
+                       {"Music", {}, {}, false, false, false, 5},
+                       {"Gaming", {}, {}, false, false, false, 6},
+                       {"News", {}, {}, false, false, false, 7},
+                       {"Live", {}, {}, false, false, false, 8},
+                       {"Sports", {}, {}, false, false, false, 9},
+                       {"Settings", {}, {}, false, false, false, 10}});
     rail_.icon = [](ui::Canvas &canvas, const gfx::Rect &box, const ui::NavEntry &, int index,
                     float, gfx::Color ink)
     {
@@ -155,20 +158,29 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
             canvas.list.line(centre_x, centre_y, centre_x + s * 0.38f, centre_y + s * 0.1f,
                              s * 0.14f, ink);
             break;
-        case 4: // music: a note
+        case 4: // playlists: lines and a play mark
+            for (int row = 0; row < 3; ++row)
+                canvas.list.rounded_rect({centre_x - s * 0.85f,
+                                          centre_y - s * 0.6f + static_cast<float>(row) * s * 0.45f,
+                                          s * (row == 2 ? 0.8f : 1.3f), s * 0.16f},
+                                         2.0f, ink);
+            canvas.list.triangle({centre_x + s * 0.2f, centre_y + s * 0.1f, s * 0.6f, s * 0.6f},
+                                 ink, 0.0f, 1.5708f);
+            break;
+        case 5: // music: a note
             canvas.list.circle(centre_x - s * 0.35f, centre_y + s * 0.5f, s * 0.3f, ink);
             canvas.list.line(centre_x - s * 0.08f, centre_y + s * 0.5f, centre_x - s * 0.08f,
                              centre_y - s * 0.75f, s * 0.14f, ink);
             canvas.list.line(centre_x - s * 0.08f, centre_y - s * 0.75f, centre_x + s * 0.55f,
                              centre_y - s * 0.45f, s * 0.14f, ink);
             break;
-        case 5: // gaming: a pad
+        case 6: // gaming: a pad
             canvas.list.rounded_rect(
                 {centre_x - s * 0.9f, centre_y - s * 0.45f, s * 1.8f, s * 0.9f}, s * 0.4f, ink);
             canvas.list.circle(centre_x - s * 0.42f, centre_y, s * 0.16f, page);
             canvas.list.circle(centre_x + s * 0.42f, centre_y, s * 0.16f, page);
             break;
-        case 6: // news: a page with lines
+        case 7: // news: a page with lines
             canvas.list.rounded_rect(
                 {centre_x - s * 0.75f, centre_y - s * 0.8f, s * 1.5f, s * 1.6f}, 3.0f, ink);
             for (int row = 0; row < 3; ++row)
@@ -177,12 +189,12 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
                                           s * 1.0f, s * 0.14f},
                                          1.0f, page);
             break;
-        case 7: // live: a dot in two rings
+        case 8: // live: a dot in two rings
             canvas.list.circle(centre_x, centre_y, s * 0.25f, ink);
             canvas.list.ring(centre_x, centre_y, s * 0.55f, s * 0.12f, ink);
             canvas.list.ring(centre_x, centre_y, s * 0.88f, s * 0.12f, ink);
             break;
-        case 8: // sports: a ball
+        case 9: // sports: a ball
             canvas.list.ring(centre_x, centre_y, s * 0.8f, s * 0.15f, ink);
             canvas.list.line(centre_x - s * 0.8f, centre_y, centre_x + s * 0.8f, centre_y,
                              s * 0.12f, ink);
@@ -206,6 +218,7 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     screens_.push_back(make_home_screen(context_));
     screens_.push_back(make_subscriptions_screen(context_));
     screens_.push_back(make_history_screen(context_));
+    screens_.push_back(make_playlists_screen(context_));
     screens_.push_back(make_topic_screen(context_, "music", "Music", "UC-9-kyTW8ZkZNDHQJ6FgpwQ"));
     screens_.push_back(make_topic_screen(context_, "gaming", "Gaming", "UCOpNcN46UbXVtpKMrmU4Abg"));
     screens_.push_back(make_topic_screen(context_, "news", "News", "UCYfdidRxbB8Qhf0Nx7ioOYw"));
@@ -214,6 +227,7 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     screens_.push_back(make_settings_screen(context_));
     screens_.push_back(make_login_screen(context_));
     screens_.push_back(make_player_screen(context_));
+    screens_.push_back(make_browse_screen(context_));
     screens_[current_]->enter();
 }
 
@@ -597,12 +611,22 @@ void App::update(const InputFrame &input, float dt)
     const Nav &ask = context_.nav;
     if (ask.quit)
         quit_ = true;
-    if (ask.open_video && !ask.video_id.empty())
+    if (ask.open_video && ask.video_id.size() > 2 && ask.video_id.rfind("VL", 0) == 0)
+    {
+        // A playlist card: its videos on the browse screen.
+        pending_browse_ = ask.video_id;
+        show(kBrowseScreen);
+    }
+    else if (ask.open_video && !ask.video_id.empty())
     {
         active_video_ = ask.video_id;
         const std::size_t player = kPlayerScreen;
         if (current_ != player)
+        {
+            // Circle in the player comes back here: a playlist page too.
+            player_return_ = current_ == kBrowseScreen ? kBrowseScreen : previous_tab();
             show(player); // the player screen reads the id when it enters
+        }
     }
     if (ask.open_channel && !pending_channel_.channel_id.empty())
     {
@@ -611,11 +635,13 @@ void App::update(const InputFrame &input, float dt)
         service_.request_close_video();
         show(kSearchScreen);
     }
+    if (ask.leave_browse && current_ == kBrowseScreen)
+        show(previous_tab());
     if (ask.leave_player && current_ == kPlayerScreen)
     {
         active_video_.clear();
         service_.request_close_video();
-        show(previous_tab());
+        show(player_return_ == kBrowseScreen ? kBrowseScreen : previous_tab());
     }
     if (ask.go_to && ask.screen_index >= 0 &&
         static_cast<std::size_t>(ask.screen_index) < kTabCount)
@@ -692,6 +718,34 @@ void App::draw_chrome(Frame &frame)
         // the content.
         ui::Canvas rail_canvas{frame.overlay, fonts_, frame.glass_texture, clock_};
         rail_.draw(rail_canvas);
+
+        // SmartTube's top right: the account's picture and the time.
+        float right = 1840.0f;
+        int hour = 0;
+        int minute = 0;
+        bool twelve = true;
+        if (sys::local_clock(&hour, &minute, &twelve))
+        {
+            char text[16];
+            if (twelve)
+                std::snprintf(text, sizeof(text), "%d:%02d %s", hour % 12 == 0 ? 12 : hour % 12,
+                              minute, hour < 12 ? "AM" : "PM");
+            else
+                std::snprintf(text, sizeof(text), "%02d:%02d", hour, minute);
+            right -= ui::text(overlay.list, fonts_.regular, text, right, 100.0f, 30.0f,
+                              gfx::Color::rgb(0xe0e0e0), gfx::Align::right) +
+                     24.0f;
+        }
+        const std::pair<std::string, std::string> account = service_.account();
+        if (!account.second.empty())
+        {
+            const std::uint32_t avatar = thumbs_->texture(account.second);
+            const gfx::Rect at{right - 52.0f, 62.0f, 52.0f, 52.0f};
+            if (avatar != 0)
+                overlay.list.image(avatar, at, gfx::kFullUv, gfx::Color::rgb(0xffffff), 26.0f);
+            else
+                overlay.list.circle(at.cx(), at.cy(), 26.0f, gfx::Color::rgb(0x3a3a3a));
+        }
         if (!version_.empty())
         {
             // The running version, and the newer release once one is known.

@@ -11,6 +11,7 @@
 #include "app/screen.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 
 namespace hui::app
@@ -20,6 +21,9 @@ class TopicScreen final : public Screen
 {
   public:
     TopicScreen(Context &context, const char *id, const char *title, std::string browse_id);
+    // A playlist page: the browse id comes from context.pending_browse on
+    // each enter, and Circle goes back.
+    static std::unique_ptr<TopicScreen> playlist_page(Context &context);
 
     const char *id() const override
     {
@@ -27,11 +31,12 @@ class TopicScreen final : public Screen
     }
     const char *title() const override
     {
-        return title_;
+        return title_.c_str();
     }
     const char *hint() const override
     {
-        return "Left: menu   L1/R1 section   Options quit";
+        return playlist_page_ ? "Circle back   Options quit"
+                              : "Left: menu   L1/R1 section   Options quit";
     }
     bool wants_rail_focus() const override
     {
@@ -47,7 +52,8 @@ class TopicScreen final : public Screen
 
     Context &context_;
     const char *id_;
-    const char *title_;
+    std::string title_;
+    bool playlist_page_ = false;
     std::string browse_id_;
     FeedView grid_;
     RowsView rows_;
