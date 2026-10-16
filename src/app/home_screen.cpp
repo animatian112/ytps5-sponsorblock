@@ -22,6 +22,9 @@ const TourStep kTour[] = {
     {0.6f, 0, Direction::right, nullptr, 0, 0, 0, 0, 0},
     {0.9f, 0, Direction::down, nullptr, 0, 0, 0, 0, 0},
     {1.0f, 0, Direction::none, "rows", 0, 0, 0, 0, 0},
+    // Square on a card: the card menu (holding Cross opens the same one).
+    {0.4f, action_bit(Action::west), Direction::none, nullptr, 0, 0, 0, 0, 0},
+    {0.8f, action_bit(Action::back), Direction::none, "menu", 0, 0, 0, 0, 0},
     // Left twice: back to the first card, then out into the rail.
     {0.6f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
     {0.6f, 0, Direction::left, nullptr, 0, 0, 0, 0, 0},
@@ -119,6 +122,19 @@ void HomeScreen::refresh_from_service()
 void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedback)
 {
     clock_ += dt;
+    // Triangle loads Home again: fresh recommendations, history and
+    // subscriptions rows.
+    if (input.is_pressed(Action::north))
+    {
+        context_.service.request_home(true);
+        if (context_.service.signed_in())
+        {
+            context_.service.request_history();
+            context_.service.request_subscriptions(true);
+        }
+        context_.toasts.push(ui::StatusKind::info, "Refreshing Home", {}, 1.5f);
+        feedback.play(audio::Cue::select);
+    }
     // The account can arrive after Home opened (the saved token loads in the
     // background): ask for its rows then.
     if (!extras_requested_ && context_.service.signed_in())

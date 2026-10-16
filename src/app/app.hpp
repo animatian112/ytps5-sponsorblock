@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "app/card_menu.hpp"
 #include "app/frame.hpp"
 #include "app/screen.hpp"
 #include "app/screens.hpp"
@@ -112,6 +113,12 @@ class App
   private:
     void draw_chrome(Frame &frame);
     void handle_global(const InputFrame &input, float dt);
+    // The card menu: hold Cross (or press Square) on a video card.
+    void filter_card_hold(InputFrame &input, float dt);
+    void open_card_menu(const yt::FeedItem &item);
+    void open_playlist_menu();
+    void apply_card_pick(int pick);
+    void refresh_home();
     void save_settings();
     std::size_t previous_tab() const
     {
@@ -155,6 +162,13 @@ class App
     bool rail_focused_ = false;
     bool rail_pinned_ = false;
     ui::Feedback feedback_;
+    CardMenu card_menu_;
+    yt::FeedItem menu_item_;
+    bool hold_active_ = false;
+    float hold_time_ = 0.0f;
+    bool waiting_playlists_ = false; // "Save to playlist" asked before the list loaded
+    std::vector<yt::FeedItem> menu_playlists_;
+    std::uint64_t seen_action_revision_ = 0;
     Frame frame_;
     std::string version_;
     bool quit_ = false;

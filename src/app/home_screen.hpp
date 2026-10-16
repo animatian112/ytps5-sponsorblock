@@ -29,7 +29,7 @@ class HomeScreen final : public Screen
     }
     const char *hint() const override
     {
-        return "Left: menu   L1/R1 section   Options quit";
+        return "Triangle refresh   Hold Cross: video menu   L1/R1 section   Options quit";
     }
     // True once the grid ran off its left edge: the app moves the focus into
     // the rail.
@@ -38,6 +38,10 @@ class HomeScreen final : public Screen
         return use_rows_ ? rows_.wants_rail_focus() : feed_.wants_rail_focus();
     }
     void enter() override;
+    const yt::FeedItem *focused_item() const override
+    {
+        return use_rows_ ? rows_.focused_item() : feed_.focused_item();
+    }
     void update(const InputFrame &input, float dt, ui::Feedback &feedback) override;
     void draw(const Context &context, Frame &frame) const override;
     std::span<const TourStep> tour() const override;

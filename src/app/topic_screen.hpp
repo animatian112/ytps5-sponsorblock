@@ -43,6 +43,10 @@ class TopicScreen final : public Screen
         return use_rows_ ? rows_.wants_rail_focus() : grid_.wants_rail_focus();
     }
     void enter() override;
+    const yt::FeedItem *focused_item() const override
+    {
+        return use_rows_ ? rows_.focused_item() : grid_.focused_item();
+    }
     void update(const InputFrame &input, float dt, ui::Feedback &feedback) override;
     void draw(const Context &context, Frame &frame) const override;
 

@@ -101,6 +101,8 @@ constexpr int kMaxConsecutiveErrors = 3;
 // kMaxConsecutiveErrors, because such a read is classified as retryable: a
 // dead host would otherwise hold the frame thread at ~1 fps forever.
 constexpr int kMaxStallReads = 4;
+// How often one video's sound is restarted after it stopped before the end.
+constexpr int kMaxAudioRecoveries = 12;
 // Software AV1 on this CPU is far slower than real time, so a handful of
 // packets proves nothing: during open() the decoder gets this many access units
 // and this long before "no frames" is a verdict. The console has no AV1
@@ -388,6 +390,8 @@ class FfmpegPlayer final : public Player
     // Playback speed and the atempo graph that stretches the 48 kHz output
     // to it (none at 1x).
     double speed_ = 1.0;
+    // Times this video's sound was brought back after it stopped early.
+    int audio_recoveries_ = 0;
     AVFilterGraph *tempo_graph_ = nullptr;
     AVFilterContext *tempo_src_ = nullptr;
     AVFilterContext *tempo_sink_ = nullptr;
@@ -552,6 +556,7 @@ bool FfmpegPlayer::open(const std::string &video_url, const std::string &audio_u
     release();
     error_.clear();
     sink_ = sink;
+    audio_recoveries_ = 0;
     if (sink_ != nullptr)
         sink_->set_paused(false);
 
@@ -918,6 +923,19 @@ void FfmpegPlayer::update()
         if (audio_active_)
         {
             pump_audio(kAudioPacketsPerUpdate);
+        }
+        if (audio_active_ && audio_.drained && audio_recoveries_ < kMaxAudioRecoveries &&
+            duration_s() > 0.0 && clock_ < duration_s() - 5.0)
+        {
+            // The sound stopped well before the end: a stalled or refused
+            // read, not the end of the stream. Start both streams over at the
+            // clock (the range reader asks again, the decoders restart) rather
+            // than playing the rest of the video silent.
+            ++audio_recoveries_;
+            log::line("ffmpeg: audio stopped at %.1fs of %.1fs, restarting it (%d)", clock_,
+                      duration_s(), audio_recoveries_);
+            audio_.drained = false;
+            seek(clock_);
         }
         if (audio_active_ && audio_.drained)
         {
@@ -2049,6 +2067,8 @@ void FfmpegPlayer::seek(double seconds)
         avcodec_flush_buffers(video_.codec);
         video_.eof = false;
         video_.drained = false;
+        video_.stalled_reads = 0; // a fresh start: old stalls must not end it at once
+        video_.consecutive_errors = 0;
     }
     if (audio_.format != nullptr)
     {
@@ -2057,6 +2077,8 @@ void FfmpegPlayer::seek(double seconds)
         avcodec_flush_buffers(audio_.codec);
         audio_.eof = false;
         audio_.drained = false;
+        audio_.stalled_reads = 0; // a fresh start: old stalls must not end it at once
+        audio_.consecutive_errors = 0;
     }
     if (sws_ != nullptr)
     {
@@ -2101,6 +2123,14 @@ void FfmpegPlayer::seek(double seconds)
     wall_anchor_ = true;
     wall_last_ = std::chrono::steady_clock::now();
     ended_ = false;
+    // A sound path given up earlier (a dead read) gets its chance again: the
+    // demuxer above was moved and the range reader asks the server anew.
+    if (!audio_active_ && audio_.format != nullptr && swr_ != nullptr && sink_ != nullptr)
+    {
+        audio_active_ = true;
+        sink_->set_paused(paused_);
+        log::line("ffmpeg: seek re-enabled the sound");
+    }
 }
 
 void FfmpegPlayer::set_paused(bool paused)

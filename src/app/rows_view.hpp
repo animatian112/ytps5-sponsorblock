@@ -52,6 +52,8 @@ class RowsView
     }
     // The focus is on one of the last rows: time to ask for more.
     bool near_end() const;
+    // The card the focus sits on, or nullptr.
+    const yt::FeedItem *focused_item() const;
     bool empty() const
     {
         return rows_.empty();

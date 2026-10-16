@@ -47,6 +47,10 @@ class SubscriptionsScreen final : public Screen
         return context_.service.signed_in() && subs_.wants_rail_focus();
     }
     void enter() override;
+    const yt::FeedItem *focused_item() const override
+    {
+        return subs_.focused_item();
+    }
     void update(const InputFrame &input, float dt, ui::Feedback &feedback) override;
     void draw(const Context &context, Frame &frame) const override;
     std::span<const TourStep> tour() const override;

@@ -631,6 +631,70 @@ float watched_share(yyjson_val *overlays)
     return -1.0f;
 }
 
+// The card's menu, wherever this layout keeps it (tile menus, lockup
+// listItemViewModels, menuRenderer items): the first channel browse id and the
+// feedback tokens, told apart by the label of the menu entry around them.
+// Bounded: a card is small and the walk stops at a fixed depth.
+std::string menu_label(yyjson_val *obj)
+{
+    for (const char *key : {"text", "title"})
+    {
+        yyjson_val *value = yyjson_obj_get(obj, key);
+        if (yyjson_is_str(value))
+            return yyjson_get_str(value);
+        if (!yyjson_is_obj(value))
+            continue;
+        std::string text = string_field(value, "content");
+        if (text.empty())
+            text = renderer_text(value);
+        if (!text.empty())
+            return text;
+    }
+    return {};
+}
+
+void scan_card_menu(yyjson_val *value, const std::string &label, FeedItem *item, int depth)
+{
+    if (depth > 24 || value == nullptr)
+        return;
+    if (yyjson_is_arr(value))
+    {
+        yyjson_val *child = nullptr;
+        yyjson_arr_iter iter;
+        yyjson_arr_iter_init(value, &iter);
+        while ((child = yyjson_arr_iter_next(&iter)) != nullptr)
+            scan_card_menu(child, label, item, depth + 1);
+        return;
+    }
+    if (!yyjson_is_obj(value))
+        return;
+    std::string here = menu_label(value);
+    const std::string &current = here.empty() ? label : here;
+    const std::string token = string_field(value, "feedbackToken");
+    if (!token.empty())
+    {
+        if (contains_text(current.c_str(), "interested") && item->not_interested_token.empty())
+            item->not_interested_token = token;
+        else if (contains_text(current.c_str(), "recommend") && item->dont_recommend_token.empty())
+            item->dont_recommend_token = token;
+    }
+    if (item->channel_id.empty())
+    {
+        const std::string browse = string_field(value, "browseId");
+        if (browse.size() == 24 && browse.rfind("UC", 0) == 0)
+            item->channel_id = browse;
+    }
+    yyjson_obj_iter iter;
+    yyjson_obj_iter_init(value, &iter);
+    yyjson_val *key = nullptr;
+    while ((key = yyjson_obj_iter_next(&iter)) != nullptr)
+    {
+        yyjson_val *child = yyjson_obj_iter_get_val(key);
+        if (yyjson_is_obj(child) || yyjson_is_arr(child))
+            scan_card_menu(child, current, item, depth + 1);
+    }
+}
+
 // A lockupViewModel video: contentId (11-char video id), title, thumbnail,
 // duration badge and author line. Playlists, channels and Shorts are skipped.
 void collect_lockup(yyjson_val *obj, FeedPage *page)
@@ -677,6 +741,7 @@ void collect_lockup(yyjson_val *obj, FeedPage *page)
     item.live = contains_text(content_type.c_str(), "live");
     item.length_s = lockup_length(yyjson_obj_get(content_image, "thumbnailViewModel"), &item.live);
     item.shelf = page->current_shelf;
+    scan_card_menu(lockup, {}, &item, 0);
     page->items.push_back(std::move(item));
 }
 
@@ -763,6 +828,7 @@ void collect_tile(yyjson_val *tile, FeedPage *page)
             item.length_s = parse_clock(length.c_str());
     }
     item.watched = watched_share(overlays);
+    scan_card_menu(tile, {}, &item, 0);
     page->items.push_back(std::move(item));
 }
 
@@ -806,6 +872,7 @@ void collect_item(yyjson_val *obj, FeedPage *page)
     }
     item.shelf = page->current_shelf;
     item.watched = watched_share(yyjson_obj_get(obj, "thumbnailOverlays"));
+    scan_card_menu(obj, {}, &item, 0);
     page->items.push_back(std::move(item));
 }
 
@@ -2467,6 +2534,23 @@ bool InnerTube::rate(const std::string &video_id, const std::string &rating)
     // like/like, like/dislike, like/removelike with the video as the target.
     const std::string endpoint = "like/" + rating;
     return action(endpoint.c_str(), "\"target\":{" + field_string("videoId", video_id) + "}");
+}
+
+bool InnerTube::send_feedback(const std::string &token)
+{
+    std::string extra = "\"feedbackTokens\":[";
+    append_json_string(extra, token);
+    extra += "],\"isFeedbackTokenUnencrypted\":false,\"shouldMerge\":false";
+    return action("feedback", extra);
+}
+
+bool InnerTube::add_to_playlist(const std::string &playlist_id, const std::string &video_id)
+{
+    std::string extra = field_string("playlistId", playlist_id);
+    extra += ",\"actions\":[{";
+    extra += field_string("addedVideoId", video_id);
+    extra += ",\"action\":\"ACTION_ADD_VIDEO\"}]";
+    return action("browse/edit_playlist", extra);
 }
 
 bool InnerTube::subscribe(const std::string &channel_id, bool on)

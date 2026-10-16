@@ -133,6 +133,14 @@ class Service
     // view's like_status / subscribed follow once YouTube accepted them.
     void rate_video(std::string video_id, std::string rating);
     void set_subscribed(std::string channel_id, bool on);
+    // Card menu actions (signed in). `done` is the line to show once YouTube
+    // took it; action_revision() moves when one finished either way.
+    void send_feedback(std::string token, std::string done);
+    void add_to_playlist(std::string playlist_id, std::string video_id, std::string done);
+    std::uint64_t action_revision() const;
+    std::pair<bool, std::string> action_result() const; // ok, message
+    // Drops a card from every loaded feed ("Not interested").
+    void hide_item(const std::string &video_id);
     // Starts the device flow and then polls until it is answered.
     void request_sign_in();
     void cancel_sign_in();

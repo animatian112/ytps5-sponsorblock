@@ -303,7 +303,7 @@ PlayerChrome::Command PlayerChrome::handle_panel(const InputFrame &input, ui::Fe
             panel_focus_ = next;
             feedback.play(audio::Cue::focus);
         }
-        else
+        else if (panel_ != Panel::info) // reading the text: the end is no mistake
             feedback.play(audio::Cue::error);
         return Command::none;
     }

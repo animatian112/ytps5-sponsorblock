@@ -132,7 +132,20 @@ struct Service::Impl
         bool subscribe = false;
         std::string subscribe_channel;
         bool subscribe_on = false;
+        // Card menu actions, in the order asked: "feedback" (a token) or
+        // "playlist" (playlist id, video id); `done` is the toast on success.
+        struct Action
+        {
+            std::string kind;
+            std::string first;
+            std::string second;
+            std::string done;
+        };
+        std::vector<Action> actions;
     } job;
+    std::uint64_t action_revision = 0;
+    std::string action_message;
+    bool action_ok = false;
 
     // Results.
     FeedView home;
@@ -1285,6 +1298,16 @@ struct Service::Impl
                     video.revision++;
                 }
             }
+            for (const Job::Action &action : taken.actions)
+            {
+                const bool done = action.kind == "feedback"
+                                      ? tube.send_feedback(action.first)
+                                      : tube.add_to_playlist(action.first, action.second);
+                std::lock_guard<std::mutex> lock(mutex);
+                action_ok = done;
+                action_message = done ? action.done : std::string("That didn't go through");
+                action_revision++;
+            }
             if (taken.video)
                 do_video(taken.video_id, taken.choice, taken.video_generation);
             if (taken.sign_in)
@@ -1297,7 +1320,7 @@ struct Service::Impl
         return job.home || job.subscriptions || job.history || job.topic || job.library ||
                job.more || job.search || job.channel || job.channel_tab || job.video ||
                job.close_video || job.sign_in || job.cancel_sign_in || job.sign_out ||
-               job.refresh || job.import_token || job.rate || job.subscribe;
+               job.refresh || job.import_token || job.rate || job.subscribe || !job.actions.empty();
     }
 };
 
@@ -1365,6 +1388,50 @@ void Service::rate_video(std::string video_id, std::string rating)
     impl_->job.rate_video = std::move(video_id);
     impl_->job.rating = std::move(rating);
     impl_->wake.notify_all();
+}
+
+void Service::send_feedback(std::string token, std::string done)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.actions.push_back({"feedback", std::move(token), {}, std::move(done)});
+    impl_->wake.notify_all();
+}
+
+void Service::add_to_playlist(std::string playlist_id, std::string video_id, std::string done)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.actions.push_back(
+        {"playlist", std::move(playlist_id), std::move(video_id), std::move(done)});
+    impl_->wake.notify_all();
+}
+
+std::uint64_t Service::action_revision() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->action_revision;
+}
+
+std::pair<bool, std::string> Service::action_result() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return {impl_->action_ok, impl_->action_message};
+}
+
+void Service::hide_item(const std::string &video_id)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    for (FeedKind kind : {FeedKind::home, FeedKind::subscriptions, FeedKind::history,
+                          FeedKind::topic, FeedKind::related, FeedKind::search})
+    {
+        FeedView &view = *impl_->slot(kind);
+        const auto before = view.items.size();
+        view.items.erase(std::remove_if(view.items.begin(), view.items.end(),
+                                        [&](const FeedItem &item)
+                                        { return item.video_id == video_id; }),
+                         view.items.end());
+        if (view.items.size() != before)
+            view.revision++;
+    }
 }
 
 void Service::set_subscribed(std::string channel_id, bool on)

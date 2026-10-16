@@ -151,6 +151,12 @@ struct FeedItem
     std::string shelf;
     // 0..1 of it already watched (YouTube's red bar), -1 for none.
     float watched = -1.0f;
+    // From the card's own long-press menu, when the feed carries one: the
+    // channel ("UC..."), and the tokens YouTube's "Not interested" and
+    // "Don't recommend channel" send back (feedback endpoint).
+    std::string channel_id;
+    std::string not_interested_token;
+    std::string dont_recommend_token;
 
     bool is_playlist() const
     {

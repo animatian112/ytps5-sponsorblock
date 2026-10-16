@@ -42,6 +42,15 @@ class PlayerScreen final : public Screen
     }
     void enter() override;
     void leave() override;
+    const yt::FeedItem *focused_item() const override
+    {
+        if (!in_related_)
+            return nullptr;
+        const int index = related_.focus();
+        if (index < 0 || index >= static_cast<int>(related_items_.size()))
+            return nullptr;
+        return &related_items_[static_cast<std::size_t>(index)];
+    }
     void update(const InputFrame &input, float ui_feedback, ui::Feedback &feedback) override;
     void draw(const Context &context, Frame &frame) const override;
     std::span<const TourStep> tour() const override;

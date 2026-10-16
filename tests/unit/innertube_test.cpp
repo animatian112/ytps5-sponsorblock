@@ -427,3 +427,26 @@ TEST(InnerTube, ShelvesNameTheirItemsAndTheWatchedShareIsRead)
     EXPECT_TRUE(page.subscribed);
     EXPECT_EQ(page.channel_id, "UCabc");
 }
+
+TEST(InnerTube, ReadsTheCardMenuOfATile)
+{
+    // The tile's long-press menu: "Go to channel", "Not interested" and
+    // "Don't recommend channel", each a labelled entry around its endpoint.
+    const char *json = R"({"contents":[{"tileRenderer":{"contentType":"TILE_CONTENT_TYPE_VIDEO",
+      "metadata":{"tileMetadataRenderer":{"title":{"simpleText":"Menu video"}}},
+      "onSelectCommand":{"watchEndpoint":{"videoId":"ccccccccccc"}},
+      "onLongPressCommand":{"showMenuCommand":{"menu":{"menuRenderer":{"items":[
+        {"menuNavigationItemRenderer":{"text":{"runs":[{"text":"Go to channel"}]},
+          "navigationEndpoint":{"browseEndpoint":{"browseId":"UCabcdefghijklmnopqrstuv"}}}},
+        {"menuServiceItemRenderer":{"text":{"runs":[{"text":"Not interested"}]},
+          "serviceEndpoint":{"feedbackEndpoint":{"feedbackToken":"tok-ni"}}}},
+        {"menuServiceItemRenderer":{"text":{"simpleText":"Don't recommend channel"},
+          "serviceEndpoint":{"feedbackEndpoint":{"feedbackToken":"tok-dr"}}}}
+      ]}}}}}}]})";
+    yt::FeedPage page;
+    ASSERT_TRUE(yt::parse_feed_page(json, &page));
+    ASSERT_EQ(page.items.size(), 1u);
+    EXPECT_EQ(page.items[0].channel_id, "UCabcdefghijklmnopqrstuv");
+    EXPECT_EQ(page.items[0].not_interested_token, "tok-ni");
+    EXPECT_EQ(page.items[0].dont_recommend_token, "tok-dr");
+}

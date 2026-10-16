@@ -46,6 +46,10 @@ class InnerTube
     // rating: "like", "dislike" or "removelike".
     bool rate(const std::string &video_id, const std::string &rating);
     bool subscribe(const std::string &channel_id, bool on);
+    // "Not interested" / "Don't recommend channel": one token from a card.
+    bool send_feedback(const std::string &token);
+    // Adds a video to one of the account's playlists ("WL" = Watch later).
+    bool add_to_playlist(const std::string &playlist_id, const std::string &video_id);
     bool search(const std::string &query, FeedPage *page, const std::string &continuation = {});
     bool player(const std::string &video_id, VideoInfo *info);
     // Like player(), but keeps every client's answer instead of the first one:

@@ -64,6 +64,12 @@ class Screen
     {
         return false;
     }
+    // The video card the focus sits on, for the card menu (hold Cross or
+    // press Square); nullptr when the focus is elsewhere.
+    virtual const yt::FeedItem *focused_item() const
+    {
+        return nullptr;
+    }
     virtual void update(const InputFrame &input, float dt, ui::Feedback &feedback) = 0;
     // Must not change state: the app may draw a screen more than once per
     // frame (glass pass, transitions).

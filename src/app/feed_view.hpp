@@ -54,6 +54,14 @@ class FeedView
     }
     // True when the focused cell is in the last row: time to ask for more.
     bool at_last_row() const;
+    // The card the focus sits on, or nullptr.
+    const yt::FeedItem *focused_item() const
+    {
+        const int index = focus_index();
+        if (index < 0 || index >= static_cast<int>(items_.size()))
+            return nullptr;
+        return &items_[static_cast<std::size_t>(index)];
+    }
     // True after the frame in which the player pushed left past the first
     // column: the app moves the focus into the rail.
     bool wants_rail_focus() const;

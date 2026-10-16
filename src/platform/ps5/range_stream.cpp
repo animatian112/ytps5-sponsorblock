@@ -229,7 +229,7 @@ void *worker(void *argument)
     (void)curl_easy_setopt(easy, CURLOPT_MAXREDIRS, 5L);
     (void)curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 10L);
     (void)curl_easy_setopt(easy, CURLOPT_LOW_SPEED_LIMIT, 1L);
-    (void)curl_easy_setopt(easy, CURLOPT_LOW_SPEED_TIME, 15L);
+    (void)curl_easy_setopt(easy, CURLOPT_LOW_SPEED_TIME, 5L); // a stuck transfer resumes sooner
     (void)curl_easy_setopt(easy, CURLOPT_USERAGENT, kUserAgent);
     (void)curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, on_write);
     (void)curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, on_header);
@@ -240,6 +240,8 @@ void *worker(void *argument)
     int forbidden = 0;
     int transient = 0;
     bool logged_first = false;
+    bool failed = false;
+    std::uint64_t last_generation = 0;
 
     for (;;)
     {
@@ -267,6 +269,15 @@ void *worker(void *argument)
                                });
             if (state.stop)
                 break;
+            if (failed || state.generation != last_generation)
+            {
+                // A seek cleared the failure or moved the stream: a fresh
+                // budget of retries for the new attempt.
+                forbidden = 0;
+                transient = 0;
+                failed = false;
+                last_generation = state.generation;
+            }
             transfer.generation = state.generation;
             from = state.fetch_offset();
             std::int64_t want = chunk;
@@ -306,12 +317,13 @@ void *worker(void *argument)
             {
                 fail(state, AVERROR_HTTP_FORBIDDEN,
                      "Server returned 403 Forbidden (access denied)");
+                failed = true;
                 continue;
             }
             yt::log::line("range: %s HTTP %ld for %s, retry %d", state.label.c_str(), status, range,
                           forbidden);
             lock.unlock();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            std::this_thread::sleep_for(std::chrono::milliseconds(600));
             continue;
         }
         if (status == 416)
@@ -349,6 +361,7 @@ void *worker(void *argument)
                 fail(state, status >= 500 ? AVERROR_HTTP_SERVER_ERROR : AVERROR(EIO),
                      status >= 400 ? "Server returned HTTP " + std::to_string(status)
                                    : std::string(curl_easy_strerror(result)));
+                failed = true;
                 continue;
             }
             yt::log::line("range: %s %s (HTTP %ld), retry %d", state.label.c_str(),
@@ -475,6 +488,12 @@ std::int64_t RangeStream::seek(std::int64_t offset, int whence)
     if (target >= state.position && target <= state.fetch_offset())
     {
         state.drop(static_cast<std::size_t>(target - state.position)); // already fetched
+        // A seek is how the player asks for the sound again after it stopped:
+        // a failure recorded at the fetch offset must not outlive it, or a
+        // stream that once gave up (three 403s, a dead connection) stays
+        // silent for the rest of the video.
+        state.error = 0;
+        state.error_text.clear();
     }
     else
     {

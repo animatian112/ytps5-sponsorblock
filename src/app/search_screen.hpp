@@ -43,6 +43,10 @@ class SearchScreen final : public Screen
                            : "Circle back   Left: menu   Options quit";
     }
     void enter() override;
+    const yt::FeedItem *focused_item() const override
+    {
+        return spot_ == Spot::results ? results_.focused_item() : nullptr;
+    }
     void update(const InputFrame &input, float dt, ui::Feedback &feedback) override;
     void draw(const Context &context, Frame &frame) const override;
     std::span<const TourStep> tour() const override;

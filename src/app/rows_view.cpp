@@ -193,6 +193,17 @@ bool RowsView::handle(const InputFrame &input, ui::Feedback &feedback)
     return event != ui::Event::none;
 }
 
+const yt::FeedItem *RowsView::focused_item() const
+{
+    if (focus_row_ < 0 || focus_row_ >= static_cast<int>(rows_.size()))
+        return nullptr;
+    const Row &row = *rows_[static_cast<std::size_t>(focus_row_)];
+    const int index = row.shelf.focus();
+    if (index < 0 || index >= static_cast<int>(row.items.size()))
+        return nullptr;
+    return &row.items[static_cast<std::size_t>(index)];
+}
+
 bool RowsView::near_end() const
 {
     return !rows_.empty() && focus_row_ >= static_cast<int>(rows_.size()) - 2;

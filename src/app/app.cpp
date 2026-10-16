@@ -513,6 +513,189 @@ void App::on_update_action(int id, int action)
     }
 }
 
+namespace
+{
+
+enum CardPick
+{
+    kPickChannel = 1,
+    kPickWatchLater,
+    kPickPlaylist,
+    kPickNotInterested,
+    kPickDontRecommend,
+    kPickRefresh,
+    kPickOpen,
+    kPickPlaylistBase = 1000, // + the index into menu_playlists_
+};
+// How long Cross is held before the card menu opens instead of the video.
+constexpr float kHoldSeconds = 0.45f;
+
+} // namespace
+
+void App::filter_card_hold(InputFrame &input, float dt)
+{
+    const std::uint32_t bit = action_bit(Action::confirm);
+    const yt::FeedItem *item = screens_[current_]->focused_item();
+    if (hold_active_)
+    {
+        if (input.nav != Direction::none)
+        {
+            hold_active_ = false; // moved away while holding: neither tap nor menu
+            input.pressed &= ~bit;
+        }
+        else if (!input.is_held(Action::confirm))
+        {
+            hold_active_ = false;
+            input.pressed |= bit; // let go early: the ordinary press
+        }
+        else
+        {
+            input.pressed &= ~bit;
+            hold_time_ += dt;
+            if (hold_time_ >= kHoldSeconds)
+            {
+                hold_active_ = false;
+                feedback_.rumble(0.25f, 0.05f);
+                open_card_menu(menu_item_);
+            }
+        }
+        return;
+    }
+    if (item == nullptr)
+        return;
+    if (input.is_pressed(Action::confirm) && input.is_held(Action::confirm))
+    {
+        // Wait for the release (a press) or the hold (the menu).
+        hold_active_ = true;
+        hold_time_ = 0.0f;
+        menu_item_ = *item;
+        input.pressed &= ~bit;
+    }
+    else if (input.is_pressed(Action::west))
+    {
+        menu_item_ = *item;
+        open_card_menu(menu_item_);
+        input.pressed &= ~action_bit(Action::west);
+    }
+}
+
+void App::open_card_menu(const yt::FeedItem &item)
+{
+    menu_item_ = item;
+    std::vector<CardMenu::Entry> entries;
+    const bool signed_in = service_.signed_in();
+    if (item.is_playlist())
+        entries.push_back({"Open playlist", kPickOpen});
+    else
+        entries.push_back({"Play video", kPickOpen});
+    if (!item.channel_id.empty())
+        entries.push_back(
+            {"Open channel" + (item.author.empty() ? std::string() : ": " + item.author),
+             kPickChannel});
+    if (signed_in && !item.is_playlist())
+    {
+        entries.push_back({"Save to Watch later", kPickWatchLater});
+        entries.push_back({"Save to playlist...", kPickPlaylist});
+    }
+    if (signed_in && !item.not_interested_token.empty())
+        entries.push_back({"Not interested", kPickNotInterested});
+    if (signed_in && !item.dont_recommend_token.empty())
+        entries.push_back({"Don't recommend channel", kPickDontRecommend});
+    if (current_ == kHomeScreen)
+        entries.push_back({"Refresh Home", kPickRefresh});
+    card_menu_.open(item.title, std::move(entries));
+}
+
+void App::open_playlist_menu()
+{
+    menu_playlists_.clear();
+    std::vector<CardMenu::Entry> entries;
+    for (const yt::FeedItem &list : service_.feed(yt::FeedKind::library).items)
+    {
+        // Watch later has its own entry; Liked videos is filled by the like button.
+        if (!list.is_playlist() || list.video_id == "VLWL" || list.video_id == "VLLL")
+            continue;
+        entries.push_back(
+            {list.title, kPickPlaylistBase + static_cast<int>(menu_playlists_.size())});
+        menu_playlists_.push_back(list);
+        if (menu_playlists_.size() >= 50)
+            break;
+    }
+    if (entries.empty())
+    {
+        toasts_.push(ui::StatusKind::info, "No playlists of your own yet",
+                     "Make one on your phone, then it shows up here", 3.5f);
+        return;
+    }
+    card_menu_.open("Save to playlist", std::move(entries));
+}
+
+void App::refresh_home()
+{
+    service_.request_home(true);
+    if (service_.signed_in())
+    {
+        service_.request_history();
+        service_.request_subscriptions(true);
+    }
+    toasts_.push(ui::StatusKind::info, "Refreshing Home", {}, 1.5f);
+}
+
+void App::apply_card_pick(int pick)
+{
+    const yt::FeedItem &item = menu_item_;
+    if (pick >= kPickPlaylistBase)
+    {
+        const std::size_t index = static_cast<std::size_t>(pick - kPickPlaylistBase);
+        if (index < menu_playlists_.size())
+            service_.add_to_playlist(menu_playlists_[index].video_id.substr(2), item.video_id,
+                                     "Saved to " + menu_playlists_[index].title);
+        return;
+    }
+    switch (pick)
+    {
+    case kPickOpen:
+        context_.nav.open_video = true;
+        context_.nav.video_id = item.video_id;
+        break;
+    case kPickChannel:
+        pending_channel_ = {item.channel_id, item.author, {}, {}};
+        context_.nav.open_channel = true;
+        break;
+    case kPickWatchLater:
+        service_.add_to_playlist("WL", item.video_id, "Saved to Watch later");
+        break;
+    case kPickPlaylist:
+    {
+        const yt::FeedView library = service_.feed(yt::FeedKind::library);
+        if (library.state == yt::Load::ready && !library.items.empty())
+            open_playlist_menu();
+        else
+        {
+            waiting_playlists_ = true;
+            if (library.state != yt::Load::loading)
+                service_.request_library();
+        }
+        break;
+    }
+    case kPickNotInterested:
+        service_.send_feedback(item.not_interested_token,
+                               "Got it. You'll see fewer videos like this");
+        service_.hide_item(item.video_id);
+        break;
+    case kPickDontRecommend:
+        service_.send_feedback(item.dont_recommend_token,
+                               "Got it. This channel won't be recommended");
+        service_.hide_item(item.video_id);
+        break;
+    case kPickRefresh:
+        refresh_home();
+        break;
+    default:
+        break;
+    }
+}
+
 void App::handle_global(const InputFrame &input, float dt)
 {
     (void)dt;
@@ -584,10 +767,39 @@ void App::update(const InputFrame &input, float dt)
     }
 
     InputFrame screen_input = input;
-    if (rail_focused_ || update_held)
+    if (rail_focused_ || update_held || card_menu_.active())
     {
+        if (card_menu_.active() && !update_held)
+        {
+            const int pick = card_menu_.handle(input, feedback_);
+            if (pick >= 0)
+                apply_card_pick(pick);
+        }
+        hold_active_ = false;
         screen_input = InputFrame{};
         screen_input.connected = input.connected;
+    }
+    else
+        filter_card_hold(screen_input, dt);
+    card_menu_.update(dt);
+    // "Save to playlist" before the account's playlists had loaded: the list
+    // opens once they are in.
+    if (waiting_playlists_)
+    {
+        const yt::FeedView library = service_.feed(yt::FeedKind::library);
+        if (library.state == yt::Load::ready || library.state == yt::Load::failed)
+        {
+            waiting_playlists_ = false;
+            open_playlist_menu();
+        }
+    }
+    // A card action came back from YouTube.
+    if (service_.action_revision() != seen_action_revision_)
+    {
+        seen_action_revision_ = service_.action_revision();
+        const std::pair<bool, std::string> result = service_.action_result();
+        toasts_.push(result.first ? ui::StatusKind::success : ui::StatusKind::warning,
+                     result.second, {}, 2.5f);
     }
     screens_[current_]->update(screen_input, dt, feedback_);
     thumbs_->pump();
@@ -765,6 +977,7 @@ void App::draw_chrome(Frame &frame)
     }
     toasts_.set_bounds({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight});
     updates_.draw(overlay);
+    card_menu_.draw(overlay, fonts_);
     toasts_.draw(overlay);
 }
 
