@@ -2990,6 +2990,18 @@ bool InnerTube::account(std::string *name, std::string *photo, std::string *chan
     if (doc == nullptr)
         return false;
     yyjson_val *item = find_object(yyjson_doc_get_root(doc), "accountItem");
+    {
+        // Which fields the account answer carries (for "My videos").
+        std::string keys;
+        yyjson_obj_iter iter;
+        if (yyjson_is_obj(item) && yyjson_obj_iter_init(item, &iter))
+        {
+            yyjson_val *key = nullptr;
+            while ((key = yyjson_obj_iter_next(&iter)) != nullptr)
+                keys += std::string(keys.empty() ? "" : ",") + yyjson_get_str(key);
+        }
+        log::line("account: item fields %s", keys.empty() ? "(none)" : keys.c_str());
+    }
     *name = text_of(yyjson_obj_get(item, "accountName"));
     yyjson_val *photo_obj = yyjson_obj_get(item, "accountPhoto");
     *photo = largest_thumbnail(yyjson_obj_get(photo_obj, "thumbnails"));

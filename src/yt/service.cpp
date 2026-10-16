@@ -21,6 +21,7 @@
 #include <pthread.h>
 
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -1547,7 +1548,33 @@ struct Service::Impl
                 std::string name;
                 std::string photo;
                 std::string channel;
-                if (tube.account(&name, &photo, &channel))
+                const bool found = tube.account(&name, &photo, &channel);
+                if (found && channel.empty() && !name.empty())
+                {
+                    // Last resort: the channel named like the account, from a
+                    // search for that name.
+                    FeedPage page;
+                    if (tube.search(name, &page))
+                    {
+                        const auto lower = [](std::string text)
+                        {
+                            for (char &c : text)
+                                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                            return text;
+                        };
+                        for (const ChannelItem &candidate : page.channels)
+                        {
+                            if (lower(candidate.name) == lower(name))
+                            {
+                                channel = candidate.channel_id;
+                                break;
+                            }
+                        }
+                    }
+                    log::line("account: search for \"%s\" -> %s", name.c_str(),
+                              channel.empty() ? "(no channel of that name)" : channel.c_str());
+                }
+                if (found)
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     account_name = name;

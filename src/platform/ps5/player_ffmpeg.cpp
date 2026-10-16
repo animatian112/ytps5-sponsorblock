@@ -385,6 +385,19 @@ class FfmpegPlayer final : public Player
     bool paused_ = false;
     bool ended_ = false;
     bool audio_active_ = false;
+    // Priming: after an open or a seek the sound is held (and with it the
+    // clock) until both paths have a cushion, so the first seconds do not
+    // stutter while the decoders and the range readers warm up.
+    bool priming_ = false;
+    std::chrono::steady_clock::time_point priming_since_{};
+    void start_priming()
+    {
+        if (sink_ == nullptr || !audio_active_)
+            return;
+        priming_ = true;
+        priming_since_ = std::chrono::steady_clock::now();
+        sink_->set_paused(true);
+    }
     std::string error_;
     std::string quality_;
 
@@ -677,6 +690,7 @@ bool FfmpegPlayer::open(const std::string &video_url, const std::string &audio_u
 
     open_deadline_us_.store(0);
     running_ = true;
+    start_priming();
     return true;
 }
 
@@ -955,6 +969,23 @@ void FfmpegPlayer::update()
                 wall_last_ = std::chrono::steady_clock::now();
             }
             log::line("ffmpeg: audio ended, clock on the wall clock");
+        }
+        if (priming_)
+        {
+            const bool ready =
+                sink_ != nullptr &&
+                sink_->buffered() >= static_cast<std::size_t>(kOutputRate * 6 / 10) &&
+                (video_queue_.size() >= 4 || video_.drained);
+            const double waited =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - priming_since_)
+                    .count();
+            if (ready || waited > 2.5 || !audio_active_)
+            {
+                priming_ = false;
+                if (sink_ != nullptr)
+                    sink_->set_paused(paused_);
+                log::line("ffmpeg: primed in %.2fs (%s)", waited, ready ? "ready" : "timeout");
+            }
         }
         update_clock();
     }
@@ -2134,6 +2165,7 @@ void FfmpegPlayer::seek(double seconds)
         sink_->set_paused(paused_);
         log::line("ffmpeg: seek re-enabled the sound");
     }
+    start_priming(); // the cut sound refills before the clock moves on
 }
 
 void FfmpegPlayer::set_paused(bool paused)
@@ -2146,7 +2178,7 @@ void FfmpegPlayer::set_paused(bool paused)
     // The sink holds its buffered second of sound while paused; without this
     // it played on after the picture stopped and resumed out of sync.
     if (sink_ != nullptr && audio_active_)
-        sink_->set_paused(paused_);
+        sink_->set_paused(paused_ || priming_);
     if (!paused_)
     {
         wall_last_ = std::chrono::steady_clock::now();
@@ -2257,6 +2289,7 @@ void FfmpegPlayer::release()
     sink_ = nullptr;
     running_ = false;
     paused_ = false;
+    priming_ = false;
     ended_ = false;
     audio_active_ = false;
     quality_.clear();

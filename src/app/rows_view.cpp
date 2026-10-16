@@ -224,12 +224,24 @@ bool RowsView::handle(const InputFrame &input, ui::Feedback &feedback)
             feedback.play(audio::Cue::error);
             return false;
         }
-        // The new row takes the card under the old one's column, as Leanback does.
-        const int column = row.shelf.focus();
+        // The new row takes the card that is on screen under (or over) the
+        // focused one, as Leanback does: rows scroll apart, so the same index
+        // can sit a card to the left or right.
+        const float x = row.shelf.item_rect(row.shelf.focus()).cx();
         focus_row_ = next;
         Row &target = *rows_[static_cast<std::size_t>(next)];
-        target.shelf.set_focus(
-            std::min(column, std::max(0, static_cast<int>(target.items.size()) - 1)), false);
+        int pick = 0;
+        float best = 1e9f;
+        for (int i = 0; i < static_cast<int>(target.items.size()); ++i)
+        {
+            const float distance = std::fabs(target.shelf.item_rect(i).cx() - x);
+            if (distance < best)
+            {
+                best = distance;
+                pick = i;
+            }
+        }
+        target.shelf.set_focus(pick, false);
         feedback.play(audio::Cue::focus);
         for (std::size_t i = 0; i < rows_.size(); ++i)
             rows_[i]->shelf.set_active(active_ && static_cast<int>(i) == focus_row_);
