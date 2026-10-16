@@ -65,6 +65,7 @@ class SearchScreen final : public Screen
     void refresh_channel();
     void refresh_channel_feed();
     void open_channel(std::size_t index);
+    void open_channel_item(const yt::ChannelItem &channel);
     void back_to_results();
     // Remembers the cell the results grid is left on when the focus moves up
     // to the channel's tab bar; the grid comes back to it on the way down.

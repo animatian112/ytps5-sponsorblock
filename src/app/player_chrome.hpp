@@ -42,6 +42,7 @@ class PlayerChrome
         like,
         dislike,
         subscribe,
+        channel,
         pick, // a panel choice: panel() and picked()
     };
     enum class Panel
@@ -67,6 +68,11 @@ class PlayerChrome
     // The account buttons (signed in only): like, dislike and subscribe, lit
     // for the standing YouTube reports.
     void set_account(bool signed_in, bool liked, bool disliked, bool subscribed);
+    // The channel button opens the video's channel page.
+    void set_has_channel(bool has_channel)
+    {
+        has_channel_ = has_channel;
+    }
 
     // Reads the frame. `back` is consumed (closes the panel, then hides the
     // controls) when they are on screen; the screen leaves on the next Circle.
@@ -130,6 +136,7 @@ class PlayerChrome
         like,
         dislike,
         subscribe,
+        channel,
     };
     enum class Zone
     {
@@ -165,6 +172,7 @@ class PlayerChrome
     bool liked_ = false;
     bool disliked_ = false;
     bool subscribed_ = false;
+    bool has_channel_ = false;
 
     bool shown_ = true;
     float visibility_ = 1.0f;

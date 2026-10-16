@@ -126,6 +126,8 @@ std::vector<PlayerChrome::Button> PlayerChrome::buttons() const
         out.push_back(Button::next);
     if (!segment_.empty())
         out.push_back(Button::skip);
+    if (has_channel_)
+        out.push_back(Button::channel);
     if (signed_in_)
     {
         out.push_back(Button::like);
@@ -144,7 +146,7 @@ bool PlayerChrome::right_side(Button button)
 {
     return button == Button::skip || button == Button::captions || button == Button::speed ||
            button == Button::quality || button == Button::audio || button == Button::like ||
-           button == Button::dislike || button == Button::subscribe;
+           button == Button::dislike || button == Button::subscribe || button == Button::channel;
 }
 
 std::string PlayerChrome::button_label(Button button) const
@@ -167,6 +169,8 @@ std::string PlayerChrome::button_label(Button button) const
         return disliked_ ? "Disliked" : "Dislike";
     case Button::subscribe:
         return subscribed_ ? "Subscribed" : "Subscribe";
+    case Button::channel:
+        return "Channel";
     default:
         return {};
     }
@@ -248,6 +252,8 @@ PlayerChrome::Command PlayerChrome::press(Button button)
         return Command::dislike;
     case Button::subscribe:
         return Command::subscribe;
+    case Button::channel:
+        return Command::channel;
     }
     return Command::none;
 }

@@ -51,6 +51,11 @@ class HomeScreen final : public Screen
     RowsView rows_;
     bool use_rows_ = false;
     std::uint64_t seen_revision_ = 0;
+    // Home's rows also draw on these feeds (SmartTube's Home: recommended,
+    // continue watching, subscriptions).
+    std::uint64_t seen_subscriptions_ = 0;
+    std::uint64_t seen_history_ = 0;
+    bool extras_requested_ = false;
     bool more_requested_ = false;
     float clock_ = 0.0f;
 };

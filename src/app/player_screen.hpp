@@ -100,6 +100,13 @@ class PlayerScreen final : public Screen
     std::string captions_for_;     // the video it was chosen for
     std::string caption_text_;
 
+    // Autoplay: when the video ends, the next suggestion starts after a
+    // countdown (X now, Circle cancels), as in SmartTube.
+    float autoplay_left_ = -1.0f; // seconds; negative when not counting
+    bool autoplay_cancelled_ = false;
+    const yt::FeedItem *next_suggestion() const;
+    void play_next();
+
     // SponsorBlock: the segments of playing_id_, the seek-bar ranges drawn from
     // them, and the segment under the playhead (for the Triangle hint).
     yt::sponsorblock::Skipper sponsor_;

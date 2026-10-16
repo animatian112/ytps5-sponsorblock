@@ -138,6 +138,7 @@ class App
     std::unique_ptr<ThumbCache> thumbs_;
     std::string active_video_;
     ResumeStore resume_;
+    yt::ChannelItem pending_channel_;
     Context context_;
     std::vector<std::unique_ptr<Screen>> screens_;
     std::vector<std::unique_ptr<Screen>>::size_type current_ = kHomeScreen;

@@ -121,6 +121,14 @@ SearchScreen::SearchScreen(Context &context) : context_(context)
 
 void SearchScreen::enter()
 {
+    if (!context_.pending_channel.channel_id.empty())
+    {
+        // Sent here by the player's Channel button: open that page directly.
+        const yt::ChannelItem channel = context_.pending_channel;
+        context_.pending_channel = {};
+        open_channel_item(channel);
+        return;
+    }
     // A fresh visit starts on the query answer, whatever the last one opened.
     in_channel_ = false;
     spot_ = Spot::field;
@@ -221,8 +229,11 @@ void SearchScreen::open_channel(std::size_t index)
 {
     if (index >= channel_items_.size())
         return;
-    const yt::ChannelItem &channel = channel_items_[index];
+    open_channel_item(channel_items_[index]);
+}
 
+void SearchScreen::open_channel_item(const yt::ChannelItem &channel)
+{
     in_channel_ = true;
     spot_ = Spot::results;
     more_requested_ = false;

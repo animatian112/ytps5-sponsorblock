@@ -9,6 +9,7 @@
 #include "app/telemetry.hpp"
 #include "core/settings.hpp"
 #include "ui/fonts.hpp"
+#include "yt/types.hpp"
 
 #include <string>
 
@@ -36,7 +37,8 @@ class ThumbCache;
 // What a screen asks the app to do; the app clears it after every update.
 struct Nav
 {
-    bool open_video = false; // start playing video_id on the player screen
+    bool open_video = false;   // start playing video_id on the player screen
+    bool open_channel = false; // show context.pending_channel on the search screen
     std::string video_id;
     bool leave_player = false; // close the player and go back to the tab
     bool go_to = false;        // switch to `screen`
@@ -70,6 +72,9 @@ struct Context
     std::string &active_video;
     // Where each video was left (the player continues there).
     ResumeStore &resume;
+    // A channel to show (the player's Channel button): the search screen opens
+    // its page when it enters, then clears it.
+    yt::ChannelItem &pending_channel;
 };
 
 } // namespace hui::app

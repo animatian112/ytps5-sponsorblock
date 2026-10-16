@@ -51,15 +51,56 @@ void HomeScreen::enter()
     feed_.enter();
     feed_.set_active(true);
     refresh_from_service();
+    // The rows from the account: asked for on each visit, so "Continue
+    // watching" and the subscriptions stay current.
+    if (context_.service.signed_in())
+    {
+        context_.service.request_history();
+        if (context_.service.feed(yt::FeedKind::subscriptions).state == yt::Load::idle)
+            context_.service.request_subscriptions();
+        extras_requested_ = true;
+    }
 }
 
 void HomeScreen::refresh_from_service()
 {
     const yt::FeedView view = context_.service.feed(yt::FeedKind::home);
     feed_.set_items(view.items, context_);
-    use_rows_ = RowsView::shelf_count(view.items) >= 2;
+
+    // SmartTube's Home is rows: Home's own shelves (or one "Recommended"),
+    // then "Continue watching" (history, started but not finished) and the
+    // newest from the subscriptions.
+    std::vector<yt::FeedItem> rows = view.items;
+    const bool shelved = RowsView::shelf_count(rows) >= 1;
+    for (yt::FeedItem &item : rows)
+    {
+        if (!shelved || item.shelf.empty())
+            item.shelf = item.shelf.empty() && !shelved ? "Recommended" : item.shelf;
+    }
+    if (context_.service.signed_in())
+    {
+        std::size_t added = 0;
+        for (yt::FeedItem item : context_.service.feed(yt::FeedKind::history).items)
+        {
+            if (item.watched < 0.03f || item.watched > 0.95f || added >= 20)
+                continue;
+            item.shelf = "Continue watching";
+            rows.push_back(std::move(item));
+            ++added;
+        }
+        added = 0;
+        for (yt::FeedItem item : context_.service.feed(yt::FeedKind::subscriptions).items)
+        {
+            if (added >= 30)
+                break;
+            item.shelf = "Subscriptions";
+            rows.push_back(std::move(item));
+            ++added;
+        }
+    }
+    use_rows_ = !view.items.empty() && RowsView::shelf_count(rows) >= 2;
     if (use_rows_)
-        rows_.set_items(view.items, context_);
+        rows_.set_items(rows, context_);
     if (context_.service.signed_in())
     {
         feed_.set_empty_text(kSignedInEmpty);
@@ -78,10 +119,23 @@ void HomeScreen::refresh_from_service()
 void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedback)
 {
     clock_ += dt;
+    // The account can arrive after Home opened (the saved token loads in the
+    // background): ask for its rows then.
+    if (!extras_requested_ && context_.service.signed_in())
+    {
+        extras_requested_ = true;
+        context_.service.request_history();
+        context_.service.request_subscriptions();
+    }
     const std::uint64_t revision = context_.service.revision(yt::FeedKind::home);
-    if (revision != seen_revision_)
+    const std::uint64_t subscriptions = context_.service.revision(yt::FeedKind::subscriptions);
+    const std::uint64_t history = context_.service.revision(yt::FeedKind::history);
+    if (revision != seen_revision_ || subscriptions != seen_subscriptions_ ||
+        history != seen_history_)
     {
         seen_revision_ = revision;
+        seen_subscriptions_ = subscriptions;
+        seen_history_ = history;
         refresh_from_service();
     }
 

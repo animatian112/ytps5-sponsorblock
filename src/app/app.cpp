@@ -84,7 +84,7 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
       thumbs_(std::make_unique<ThumbCache>(batch, &delete_texture, 192)),
       resume_(data_root_.empty() ? std::string() : data_root_ + "/resume.txt"),
       context_{fonts_,   telemetry_, settings_, false,         *thumbs_, batch,
-               service_, toasts_,    nav_,      active_video_, resume_}
+               service_, toasts_,    nav_,      active_video_, resume_,  pending_channel_}
 {
     toasts_.style.theme = youtube_theme();
     toasts_.style.anchor = ui::ToastAnchor::top_right;
@@ -603,6 +603,13 @@ void App::update(const InputFrame &input, float dt)
         const std::size_t player = kPlayerScreen;
         if (current_ != player)
             show(player); // the player screen reads the id when it enters
+    }
+    if (ask.open_channel && !pending_channel_.channel_id.empty())
+    {
+        // The player's Channel button: the search screen shows the page.
+        active_video_.clear();
+        service_.request_close_video();
+        show(kSearchScreen);
     }
     if (ask.leave_player && current_ == kPlayerScreen)
     {

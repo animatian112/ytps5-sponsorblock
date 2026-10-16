@@ -454,6 +454,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         chrome_.set_badges(!caption_language_.empty() && !caption_url_.empty(), speed, quality,
                            yt::audio_tracks(view.info.formats).size() > 1);
     }
+    chrome_.set_has_channel(!view.info.channel_id.empty());
     chrome_.set_account(context_.service.signed_in() && view.state == yt::Load::ready,
                         view.like_status == "LIKE", view.like_status == "DISLIKE", view.subscribed);
     // Say once whether YouTube took the video into the account's history.
@@ -494,22 +495,8 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
                 player_->seek(0.0);
             break;
         case PlayerChrome::Command::next:
-        {
-            // The first suggestion that is not this video: the list YouTube
-            // answers can start with the one playing, which only restarted it.
-            const std::string current = playing_id_.empty() ? requested_id_ : playing_id_;
-            for (const yt::FeedItem &item : related_items_)
-            {
-                if (!item.video_id.empty() && item.video_id != current)
-                {
-                    yt::log::line("player: next -> %s", item.video_id.c_str());
-                    request_video(item.video_id);
-                    chrome_.show();
-                    break;
-                }
-            }
+            play_next();
             break;
-        }
         case PlayerChrome::Command::skip_segment:
             skip_segment_now(feedback);
             break;
@@ -542,6 +529,13 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             context_.service.rate_video(id, lit ? "removelike" : (like ? "like" : "dislike"));
             break;
         }
+        case PlayerChrome::Command::channel:
+            if (!view.info.channel_id.empty())
+            {
+                context_.pending_channel = {view.info.channel_id, view.info.author, {}, {}};
+                context_.nav.open_channel = true;
+            }
+            break;
         case PlayerChrome::Command::subscribe:
             if (!view.info.channel_id.empty())
             {
@@ -591,6 +585,31 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     }
     related_.set_active(in_related_);
 
+    // Autoplay at the end of the video.
+    if (ended_ && !in_related_ && !autoplay_cancelled_ && next_suggestion() != nullptr)
+    {
+        if (autoplay_left_ < 0.0f)
+            autoplay_left_ = 5.0f;
+        autoplay_left_ -= dt;
+        if (input.is_pressed(Action::back))
+        {
+            autoplay_cancelled_ = true;
+            autoplay_left_ = -1.0f;
+            back_used = true;
+        }
+        else if (autoplay_left_ <= 0.0f || (input.is_pressed(Action::confirm) && !chrome_.shown()))
+        {
+            autoplay_left_ = -1.0f;
+            play_next();
+            return;
+        }
+    }
+    else if (!ended_)
+    {
+        autoplay_left_ = -1.0f;
+        autoplay_cancelled_ = false;
+    }
+
     if (input.is_pressed(Action::back) && !back_used)
         context_.nav.leave_player = true;
 
@@ -599,6 +618,32 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     related_.set_bounds({96.0f, 1080.0f - 330.0f * lift + 10.0f, 1728.0f, 290.0f});
     chrome_.update(dt);
     related_.update(dt);
+}
+
+const yt::FeedItem *PlayerScreen::next_suggestion() const
+{
+    // The first suggestion that is not this video: the list YouTube answers
+    // can start with the one playing.
+    const std::string current = playing_id_.empty() ? requested_id_ : playing_id_;
+    for (const yt::FeedItem &item : related_items_)
+    {
+        if (!item.video_id.empty() && item.video_id != current)
+            return &item;
+    }
+    return nullptr;
+}
+
+void PlayerScreen::play_next()
+{
+    const yt::FeedItem *next = next_suggestion();
+    if (next == nullptr)
+        return;
+    const std::string id = next->video_id;
+    yt::log::line("player: next -> %s", id.c_str());
+    autoplay_left_ = -1.0f;
+    autoplay_cancelled_ = false;
+    request_video(id);
+    chrome_.show();
 }
 
 void PlayerScreen::reopen()
@@ -934,7 +979,30 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
         canvas.list.pop_opacity();
     }
 
-    if (player_ != nullptr && ended_)
+    if (player_ != nullptr && ended_ && autoplay_left_ >= 0.0f)
+    {
+        // "Up next" card, top right: the next video and the countdown.
+        const yt::FeedItem *next = next_suggestion();
+        if (next != nullptr)
+        {
+            const gfx::Rect card{1300.0f, 80.0f, 540.0f, 400.0f};
+            canvas.list.rounded_rect(card, 14.0f, gfx::Color::rgb(0x111111, 0.92f));
+            const gfx::Rect art{card.x + 20.0f, card.y + 60.0f, 500.0f, 281.0f};
+            const std::uint32_t texture = context.thumbs.texture(card_thumbnail(*next));
+            if (texture != 0)
+                canvas.list.image(texture, art, gfx::kFullUv, gfx::Color::rgb(0xffffff), 8.0f);
+            else
+                canvas.list.rounded_rect(art, 8.0f, gfx::Color::rgb(0x2a2a2a));
+            const int seconds = static_cast<int>(autoplay_left_ + 0.999f);
+            ui::text(canvas.list, context.fonts.semibold, "Up next in " + std::to_string(seconds),
+                     card.x + 20.0f, card.y + 42.0f, 28.0f, gfx::Color::rgb(0xffffff));
+            if (context.fonts.regular.font != nullptr)
+                ui::text(canvas.list, context.fonts.regular,
+                         context.fonts.regular.font->fit(next->title, 24.0f, 500.0f),
+                         card.x + 20.0f, card.y + 378.0f, 24.0f, gfx::Color::rgb(0xdddddd));
+        }
+    }
+    else if (player_ != nullptr && ended_)
         ui::text(canvas.list, context.fonts.semibold, "Ended", gfx::kVirtualWidth * 0.5f, 500.0f,
                  30.0f, gfx::Color::rgb(0xf5a524), gfx::Align::center);
 
