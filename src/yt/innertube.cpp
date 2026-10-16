@@ -1855,6 +1855,82 @@ std::string describe_format(const Format *format)
 // player JS is megabytes, and <regex> would walk it again with no gain. Like
 // the regex it is unanchored, so a longer digit run still yields its first
 // five digits, and the earliest of the two keys wins.
+namespace
+{
+
+// "/s/player/<hash>/....js" paths in a page or bundle (JSON-escaped slashes
+// too), TV player files first.
+void player_js_urls(const std::string &text, std::vector<std::string> *out)
+{
+    std::string plain = text;
+    for (std::size_t at = plain.find("\\/"); at != std::string::npos; at = plain.find("\\/", at))
+        plain.erase(at, 1);
+    std::vector<std::string> found;
+    for (std::size_t at = plain.find("/s/player/"); at != std::string::npos;
+         at = plain.find("/s/player/", at + 1))
+    {
+        const std::size_t end = plain.find(".js", at);
+        if (end == std::string::npos || end - at > 160)
+            continue;
+        const std::string path = plain.substr(at, end + 3 - at);
+        if (path.find_first_of("\"' <>") != std::string::npos)
+            continue;
+        const std::string url = "https://www.youtube.com" + path;
+        if (std::find(found.begin(), found.end(), url) == found.end())
+            found.push_back(url);
+    }
+    std::stable_partition(found.begin(), found.end(), [](const std::string &url)
+                          { return url.find("tv-player") != std::string::npos; });
+    for (const std::string &url : found)
+        if (url.find("tv-player") != std::string::npos)
+            out->push_back(url);
+}
+
+// The <script src> addresses of a page (the TV app's bundle among them).
+std::vector<std::string> script_urls(const std::string &page)
+{
+    std::vector<std::string> out;
+    for (std::size_t at = page.find("<script"); at != std::string::npos;
+         at = page.find("<script", at + 1))
+    {
+        const std::size_t close = page.find('>', at);
+        const std::size_t src = page.find("src=\"", at);
+        if (src == std::string::npos || close == std::string::npos || src > close)
+            continue;
+        const std::size_t end = page.find('"', src + 5);
+        if (end == std::string::npos)
+            continue;
+        std::string url = page.substr(src + 5, end - src - 5);
+        if (url.rfind("//", 0) == 0)
+            url = "https:" + url;
+        else if (url.rfind("/", 0) == 0)
+            url = "https://www.youtube.com" + url;
+        if (url.rfind("https://", 0) == 0)
+            out.push_back(url);
+    }
+    return out;
+}
+
+// The 8-hex player hash in the iframe API ("s\/player\/<hash>\/").
+std::string player_hash(const std::string &text)
+{
+    for (const char *marker : {"s\\/player\\/", "s/player/"})
+    {
+        const std::size_t at = text.find(marker);
+        if (at == std::string::npos)
+            continue;
+        const std::size_t from = at + std::strlen(marker);
+        std::size_t end = from;
+        while (end < text.size() && std::isxdigit(static_cast<unsigned char>(text[end])) != 0)
+            ++end;
+        if (end - from >= 8)
+            return text.substr(from, end - from);
+    }
+    return {};
+}
+
+} // namespace
+
 std::string signature_timestamp(std::string_view js)
 {
     std::size_t best = std::string_view::npos;
@@ -2087,18 +2163,76 @@ struct InnerTube::Impl
     // client sends, plus the signature timestamp once it is known. Built per
     // client so an sts read from the first answer already reaches the rest of
     // the chain.
-    std::string player_extra(const std::string &video_id) const
+    std::string player_extra(const std::string &video_id, bool tv = false) const
     {
+        // The TV client answers "The page needs to be reloaded" without the
+        // signature timestamp of its own player JS (tv-player-ias), which
+        // differs from the web base.js one.
+        const std::string &stamp = tv && !tv_sts.empty() ? tv_sts : sts;
         std::string out = field_string("videoId", video_id);
         out += ",\"playbackContext\":{\"contentPlaybackContext\":{\"html5Preference\":";
         out += "\"HTML5_PREF_WANTS\"";
-        if (!sts.empty())
+        if (!stamp.empty())
         {
             out += ",\"signatureTimestamp\":";
-            out += sts;
+            out += stamp;
         }
         out += "}}";
         return out;
+    }
+
+    // The TV player JS's signature timestamp, looked up once per run: the TV
+    // page, its script bundle, then the iframe API's player hash with the TV
+    // player's file names.
+    std::string tv_sts;
+    bool tv_sts_tried = false;
+
+    std::string fetch_text(const std::string &url, std::size_t max_bytes)
+    {
+        http::Request request;
+        request.url = url;
+        request.headers = {{"User-Agent", kTvUserAgent}};
+        request.timeout_s = timeout_s;
+        request.max_bytes = max_bytes;
+        const http::Response response = http::perform(request);
+        return response.error.empty() && response.http_ok() ? response.body : std::string();
+    }
+
+    void ensure_tv_sts()
+    {
+        if (tv_sts_tried)
+            return;
+        tv_sts_tried = true;
+        std::vector<std::string> candidates;
+        const std::string page = fetch_text("https://www.youtube.com/tv", 2u << 20);
+        player_js_urls(page, &candidates);
+        for (const std::string &bundle : script_urls(page))
+        {
+            if (!candidates.empty())
+                break;
+            player_js_urls(fetch_text(bundle, kMaxPlayerJsBytes), &candidates);
+        }
+        const std::string hash =
+            player_hash(fetch_text("https://www.youtube.com/iframe_api", 256u << 10));
+        if (!hash.empty())
+        {
+            const std::string base = "https://www.youtube.com/s/player/" + hash + "/";
+            candidates.push_back(base + "tv-player-ias-tcl.vflset/tv-player-ias-tcl.js");
+            candidates.push_back(base + "tv-player-ias.vflset/tv-player-ias.js");
+            candidates.push_back(base + "tv-player-es6.vflset/tv-player-es6.js");
+        }
+        for (const std::string &url : candidates)
+        {
+            const std::string value = signature_timestamp(fetch_text(url, kMaxPlayerJsBytes));
+            log::line("sts: tv player %s -> %s", url.c_str(),
+                      value.empty() ? "none" : value.c_str());
+            if (!value.empty())
+            {
+                tv_sts = value;
+                return;
+            }
+        }
+        log::line("sts: no TV player JS found (%zu candidates)", candidates.size());
     }
 
     // The signature timestamp the answer's player JS carries, read through the
@@ -2513,7 +2647,9 @@ bool InnerTube::tracking(const std::string &video_id, std::string *playback, std
 {
     // The TV client with the account's token: its tracking URLs are the ones
     // YouTube credits to the account (a token-less client's are anonymous).
-    Impl::Attempt attempt = impl_->post_once("player", impl_->player_extra(video_id), kTvClient);
+    impl_->ensure_tv_sts();
+    Impl::Attempt attempt =
+        impl_->post_once("player", impl_->player_extra(video_id, true), kTvClient);
     if (!attempt.transport_ok || !attempt.http_ok)
     {
         log::line("history: TV player answer %ld %s", attempt.status, attempt.error.c_str());
@@ -2658,7 +2794,11 @@ bool InnerTube::player_variants(const std::string &video_id, std::vector<VideoIn
 
     for (const Client &client : kPlayerClients)
     {
-        Impl::Attempt attempt = impl_->post_once("player", impl_->player_extra(video_id), client);
+        const bool tv = std::strcmp(client.name, kTvClientName) == 0;
+        if (tv)
+            impl_->ensure_tv_sts();
+        Impl::Attempt attempt =
+            impl_->post_once("player", impl_->player_extra(video_id, tv), client);
 
         int itag = 0;
         std::string reason;
