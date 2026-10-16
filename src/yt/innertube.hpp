@@ -37,7 +37,7 @@ class InnerTube
     // The account's watch history (browseId FEhistory), newest first.
     bool history(FeedPage *page, const std::string &continuation = {});
     // The signed-in account's display name and avatar URL.
-    bool account(std::string *name, std::string *photo);
+    bool account(std::string *name, std::string *photo, std::string *channel_id = nullptr);
     // One signed-in action ("like/like", "subscription/subscribe", ...) with
     // `extra` the request fields after the context. True on a 2xx answer.
     bool action(const char *endpoint, const std::string &extra);
@@ -50,6 +50,8 @@ class InnerTube
     bool send_feedback(const std::string &token);
     // Adds a video to one of the account's playlists ("WL" = Watch later).
     bool add_to_playlist(const std::string &playlist_id, const std::string &video_id);
+    // A new private playlist named `title`, holding the video.
+    bool create_playlist(const std::string &title, const std::string &video_id);
     bool search(const std::string &query, FeedPage *page, const std::string &continuation = {});
     bool player(const std::string &video_id, VideoInfo *info);
     // Like player(), but keeps every client's answer instead of the first one:

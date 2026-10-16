@@ -146,7 +146,18 @@ struct Service::Impl
         bool add_account = false;
         bool switch_account = false;
         int switch_index = 0;
+        // A card's channel looked up from its watch page (TV Home tiles
+        // carry none): purpose 0 opens it, 1 subscribes to it.
+        bool resolve = false;
+        std::string resolve_video;
+        std::string resolve_name;
+        int resolve_purpose = 0;
     } job;
+    std::vector<ChannelItem> blocked; // <token file>.blocked: id TAB name
+    std::string account_channel;
+    std::uint64_t resolved_revision = 0;
+    ChannelItem resolved_channel;
+    int resolved_purpose = 0;
 
     // ---- the remembered accounts (up to kMaxAccounts) ----
     // One line per account in <token file>.accounts: refresh token, name and
@@ -235,6 +246,71 @@ struct Service::Impl
         : install_root(std::move(install_root_path)), auth(std::move(token_path)), audio(sink)
     {
         load_accounts();
+        load_blocked();
+    }
+
+    std::string blocked_path() const
+    {
+        return auth.token_path().empty() ? std::string() : auth.token_path() + ".blocked";
+    }
+
+    void load_blocked()
+    {
+        blocked.clear();
+        std::string data;
+        if (blocked_path().empty() || !hui::save::read_file(blocked_path(), &data, 64u << 10))
+            return;
+        std::size_t at = 0;
+        while (at < data.size())
+        {
+            std::size_t end = data.find('\n', at);
+            if (end == std::string::npos)
+                end = data.size();
+            const std::string line = data.substr(at, end - at);
+            at = end + 1;
+            const std::size_t tab = line.find('\t');
+            ChannelItem channel;
+            channel.channel_id = line.substr(0, tab);
+            if (tab != std::string::npos)
+                channel.name = line.substr(tab + 1);
+            if (!channel.channel_id.empty() || !channel.name.empty())
+                blocked.push_back(std::move(channel));
+        }
+    }
+
+    void save_blocked() const
+    {
+        if (blocked_path().empty())
+            return;
+        std::string data;
+        for (const ChannelItem &channel : blocked)
+            data += channel.channel_id + '\t' + clean_field(channel.name) + '\n';
+        (void)hui::save::write_atomic(blocked_path(), data);
+    }
+
+    // Callers hold the mutex.
+    bool is_blocked(const FeedItem &item) const
+    {
+        for (const ChannelItem &channel : blocked)
+        {
+            if (!channel.channel_id.empty() &&
+                (item.channel_id == channel.channel_id || item.video_id == channel.channel_id))
+                return true;
+            if (!channel.name.empty() && item.author == channel.name)
+                return true;
+        }
+        return false;
+    }
+
+    FeedView filtered(const FeedView &view) const
+    {
+        FeedView out = view;
+        if (blocked.empty())
+            return out;
+        out.items.erase(std::remove_if(out.items.begin(), out.items.end(),
+                                       [&](const FeedItem &item) { return is_blocked(item); }),
+                        out.items.end());
+        return out;
     }
 
     std::string bundled_token_path() const
@@ -466,6 +542,7 @@ struct Service::Impl
         library.revision++;
         account_name.clear();
         account_photo.clear();
+        account_channel.clear();
         account_fetched = false;
     }
 
@@ -686,8 +763,21 @@ struct Service::Impl
                 return;
             }
         }
+        if (more && kind == FeedKind::home)
+        {
+            // A later Home page whose items name no shelf still is a row of
+            // its own, not more of the first one.
+            for (FeedItem &item : page.items)
+                if (item.shelf.empty())
+                    item.shelf = "More recommendations";
+        }
         items.insert(items.end(), page.items.begin(), page.items.end());
         publish(kind, Load::ready, std::move(items), page.continuation, {});
+        if (kind == FeedKind::history && !more)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            history.clear_history_token = page.clear_history_token;
+        }
         if (!page.channels.empty())
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -1456,11 +1546,13 @@ struct Service::Impl
                 account_fetched = true;
                 std::string name;
                 std::string photo;
-                if (tube.account(&name, &photo))
+                std::string channel;
+                if (tube.account(&name, &photo, &channel))
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     account_name = name;
                     account_photo = photo;
+                    account_channel = channel;
                     remember_current();
                 }
             }
@@ -1500,10 +1592,27 @@ struct Service::Impl
                     video.revision++;
                 }
             }
+            if (taken.resolve)
+            {
+                FeedPage page;
+                const bool ok = tube.related(taken.resolve_video, &page);
+                std::lock_guard<std::mutex> lock(mutex);
+                resolved_channel = ChannelItem{};
+                if (ok)
+                    resolved_channel.channel_id = page.channel_id;
+                resolved_channel.name = taken.resolve_name;
+                resolved_purpose = taken.resolve_purpose;
+                resolved_revision++;
+                log::line("channel: %s belongs to %s", taken.resolve_video.c_str(),
+                          resolved_channel.channel_id.empty()
+                              ? "(unknown)"
+                              : resolved_channel.channel_id.c_str());
+            }
             for (const Job::Action &action : taken.actions)
             {
-                const bool done = action.kind == "feedback"
-                                      ? tube.send_feedback(action.first)
+                const bool done = action.kind == "feedback" ? tube.send_feedback(action.first)
+                                  : action.kind == "create"
+                                      ? tube.create_playlist(action.first, action.second)
                                       : tube.add_to_playlist(action.first, action.second);
                 std::lock_guard<std::mutex> lock(mutex);
                 action_ok = done;
@@ -1535,7 +1644,8 @@ struct Service::Impl
                job.more || job.search || job.channel || job.channel_tab || job.video ||
                job.close_video || job.sign_in || job.cancel_sign_in || job.sign_out ||
                job.refresh || job.import_token || job.rate || job.subscribe ||
-               !job.actions.empty() || job.add_account || job.switch_account || restore_previous;
+               !job.actions.empty() || job.add_account || job.switch_account || restore_previous ||
+               job.resolve;
     }
 };
 
@@ -1617,6 +1727,80 @@ void Service::add_to_playlist(std::string playlist_id, std::string video_id, std
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->job.actions.push_back(
         {"playlist", std::move(playlist_id), std::move(video_id), std::move(done)});
+    impl_->wake.notify_all();
+}
+
+void Service::block_channel(ChannelItem channel)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    for (const ChannelItem &known : impl_->blocked)
+    {
+        if ((!channel.channel_id.empty() && known.channel_id == channel.channel_id) ||
+            (!channel.name.empty() && known.name == channel.name))
+            return;
+    }
+    impl_->blocked.push_back(std::move(channel));
+    impl_->save_blocked();
+    // Every feed's screen rebuilds without the channel's cards.
+    for (FeedKind kind :
+         {FeedKind::home, FeedKind::subscriptions, FeedKind::history, FeedKind::topic,
+          FeedKind::related, FeedKind::search, FeedKind::library, FeedKind::channel})
+        impl_->slot(kind)->revision++;
+}
+
+void Service::unblock_channel(std::size_t index)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (index >= impl_->blocked.size())
+        return;
+    impl_->blocked.erase(impl_->blocked.begin() + static_cast<std::ptrdiff_t>(index));
+    impl_->save_blocked();
+    for (FeedKind kind :
+         {FeedKind::home, FeedKind::subscriptions, FeedKind::history, FeedKind::topic,
+          FeedKind::related, FeedKind::search, FeedKind::library, FeedKind::channel})
+        impl_->slot(kind)->revision++;
+}
+
+std::vector<ChannelItem> Service::blocked_channels() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->blocked;
+}
+
+std::string Service::account_channel() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->account_channel;
+}
+
+void Service::resolve_channel(std::string video_id, std::string name, int purpose)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.resolve = true;
+    impl_->job.resolve_video = std::move(video_id);
+    impl_->job.resolve_name = std::move(name);
+    impl_->job.resolve_purpose = purpose;
+    impl_->wake.notify_all();
+}
+
+std::uint64_t Service::resolved_revision() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->resolved_revision;
+}
+
+std::pair<ChannelItem, int> Service::resolved_channel() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return {impl_->resolved_channel, impl_->resolved_purpose};
+}
+
+void Service::create_playlist(std::string title, std::string video_id, std::string done)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.actions.push_back(
+        {"create", std::move(title), std::move(video_id), std::move(done)});
+    impl_->job.library = true; // the new list shows up in the pickers
     impl_->wake.notify_all();
 }
 
@@ -2034,21 +2218,21 @@ FeedView Service::feed(FeedKind kind) const
     switch (kind)
     {
     case FeedKind::home:
-        return impl_->home;
+        return impl_->filtered(impl_->home);
     case FeedKind::subscriptions:
-        return impl_->subscriptions;
+        return impl_->filtered(impl_->subscriptions);
     case FeedKind::related:
-        return impl_->related;
+        return impl_->filtered(impl_->related);
     case FeedKind::channel:
         return impl_->channel_feed;
     case FeedKind::history:
-        return impl_->history;
+        return impl_->filtered(impl_->history);
     case FeedKind::topic:
-        return impl_->topic;
+        return impl_->filtered(impl_->topic);
     case FeedKind::library:
-        return impl_->library;
+        return impl_->filtered(impl_->library);
     default:
-        return impl_->search;
+        return impl_->filtered(impl_->search);
     }
 }
 
@@ -2061,7 +2245,7 @@ std::uint64_t Service::search_revision() const
 FeedView Service::search_feed() const
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    return impl_->search;
+    return impl_->filtered(impl_->search);
 }
 
 std::string Service::search_query() const

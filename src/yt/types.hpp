@@ -219,6 +219,8 @@ struct FeedPage
     std::string channel_id;
     bool subscribed = false;
     std::string like_status;
+    // History's "Clear all watch history" (feedback token), when offered.
+    std::string clear_history_token;
     bool ok() const
     {
         return error.empty();

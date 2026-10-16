@@ -23,6 +23,15 @@ namespace hui::app
 {
 namespace
 {
+// Rail entries that are not screens (NavEntry::tag): My videos, Blocked
+// Channels, and the pinned channels from kRailPinBase down.
+constexpr int kRailMyVideos = -1;
+constexpr int kRailBlocked = -2;
+constexpr int kRailPinBase = -100;
+} // namespace
+
+namespace
+{
 
 constexpr float kIntroSeconds = 1.4f;
 constexpr float kOutroSeconds = 0.4f;
@@ -110,37 +119,101 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     rail_.style.panel = false; // set each frame: only the open rail has its panel
     rail_.style.current_plate = true;
     rail_.style.icon_size = 34.0f;
-    rail_.set_entries({{"Search", {}, {}, false, false, false, 0},
-                       {"Home", {}, {}, false, false, false, 1},
-                       {"Subscriptions", {}, {}, false, false, false, 2},
-                       {"History", {}, {}, false, false, false, 3},
-                       {"Playlists", {}, {}, false, false, false, 4},
-                       {"Music", {}, {}, false, false, false, 5},
-                       {"Gaming", {}, {}, false, false, false, 6},
-                       {"News", {}, {}, false, false, false, 7},
-                       {"Live", {}, {}, false, false, false, 8},
-                       {"Sports", {}, {}, false, false, false, 9},
-                       {"Settings", {}, {}, false, false, false, 10}});
-    rail_.icon = [](ui::Canvas &canvas, const gfx::Rect &box, const ui::NavEntry &, int index,
-                    float, gfx::Color ink)
+    load_pins();
+    rebuild_rail();
+    // The name prompt's keyboard (Add to new playlist).
+    prompt_keys_.style.theme = youtube_theme();
+    prompt_keys_.style.bindings = ui::KeyboardBindings::standard();
+    prompt_keys_.set_layouts({ui::KeyboardLayout::letters(), ui::KeyboardLayout::numeric()});
+    prompt_keys_.set_bounds({560.0f, 470.0f, 1080.0f, 520.0f});
+    prompt_keys_.on_text = [this](std::string_view text)
     {
-        const gfx::Color page = youtube_theme().page;
+        if (prompt_text_.size() < 120)
+            prompt_text_ += text;
+        prompt_keys_.set_length(static_cast<int>(prompt_text_.size()));
+    };
+    prompt_keys_.on_backspace = [this]
+    {
+        // One whole UTF-8 character.
+        while (!prompt_text_.empty())
+        {
+            const unsigned char last = static_cast<unsigned char>(prompt_text_.back());
+            prompt_text_.pop_back();
+            if ((last & 0xC0) != 0x80)
+                break;
+        }
+        prompt_keys_.set_length(static_cast<int>(prompt_text_.size()));
+    };
+    prompt_keys_.on_done = [this]
+    {
+        prompt_active_ = false;
+        if (prompt_text_.empty())
+            return;
+        service_.create_playlist(prompt_text_, prompt_video_, "Created " + prompt_text_);
+    };
+    rail_.icon = [](ui::Canvas &canvas, const gfx::Rect &box, const ui::NavEntry &entry, int, float,
+                    gfx::Color ink)
+    {
+        // Entries carry their target in `tag`: a screen index, or a negative
+        // action (My videos, Blocked Channels, a pinned channel).
+        const gfx::Color page = gfx::Color::rgb(0x2b3d52);
         const float centre_x = box.cx();
         const float centre_y = box.cy();
         const float s = box.w * 0.5f;
-        switch (index)
+        const int tag = entry.tag;
+        if (tag <= kRailPinBase)
         {
-        case 1: // home
+            // A pinned channel: its initial in a circle.
+            canvas.list.circle(centre_x, centre_y, s * 0.95f, ink);
+            if (canvas.fonts.semibold.font != nullptr && !entry.label.empty())
+                ui::text(canvas.list, canvas.fonts.semibold, entry.label.substr(0, 1), centre_x,
+                         centre_y + s * 0.4f, s * 1.1f, page, gfx::Align::center);
+            return;
+        }
+        switch (tag)
+        {
+        case static_cast<int>(kHomeScreen):
             canvas.list.triangle({centre_x - s, centre_y - s * 0.92f, s * 1.7f, s * 0.9f}, ink);
             canvas.list.rounded_rect(
                 {centre_x - s * 0.62f, centre_y - s * 0.16f, s * 1.24f, s * 0.96f}, 2.0f, ink);
             break;
-        case 0: // search
+        case static_cast<int>(kSearchScreen):
             canvas.list.ring(centre_x - s * 0.16f, centre_y - s * 0.16f, s * 0.56f, s * 0.16f, ink);
             canvas.list.line(centre_x + s * 0.24f, centre_y + s * 0.24f, centre_x + s * 0.84f,
                              centre_y + s * 0.84f, s * 0.17f, ink);
             break;
-        case 2: // subscriptions: a stack of lines, like YouTube's list
+        case static_cast<int>(kShortsScreen): // a tall rounded card with a play mark
+            canvas.list.rounded_rect(
+                {centre_x - s * 0.55f, centre_y - s * 0.9f, s * 1.1f, s * 1.8f}, s * 0.35f, ink);
+            canvas.list.triangle({centre_x - s * 0.2f, centre_y - s * 0.3f, s * 0.55f, s * 0.6f},
+                                 page, 0.0f, 1.5708f);
+            break;
+        case static_cast<int>(kChannelsScreen): // a person on a card
+        case kRailMyVideos:
+            canvas.list.rounded_rect(
+                {centre_x - s * 0.85f, centre_y - s * 0.75f, s * 1.7f, s * 1.5f}, 3.0f, ink);
+            if (tag == kRailMyVideos)
+                canvas.list.triangle(
+                    {centre_x - s * 0.25f, centre_y - s * 0.35f, s * 0.7f, s * 0.7f}, page, 0.0f,
+                    1.5708f);
+            else
+            {
+                canvas.list.circle(centre_x, centre_y - s * 0.2f, s * 0.28f, page);
+                canvas.list.rounded_rect(
+                    {centre_x - s * 0.5f, centre_y + s * 0.15f, s * 1.0f, s * 0.42f}, s * 0.2f,
+                    page);
+            }
+            break;
+        case kRailBlocked: // a person and a cross
+            canvas.list.circle(centre_x - s * 0.25f, centre_y - s * 0.35f, s * 0.35f, ink);
+            canvas.list.rounded_rect(
+                {centre_x - s * 0.85f, centre_y + s * 0.1f, s * 1.2f, s * 0.6f}, s * 0.3f, ink);
+            canvas.list.line(centre_x + s * 0.45f, centre_y - s * 0.2f, centre_x + s * 0.9f,
+                             centre_y + s * 0.25f, s * 0.14f, ink);
+            canvas.list.line(centre_x + s * 0.9f, centre_y - s * 0.2f, centre_x + s * 0.45f,
+                             centre_y + s * 0.25f, s * 0.14f, ink);
+            break;
+        case static_cast<int>(kSubscriptionsScreen): // a stack of lines
             for (int row = 0; row < 4; ++row)
             {
                 const float y = centre_y - s * 0.62f + static_cast<float>(row) * s * 0.42f;
@@ -148,17 +221,14 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
                 canvas.list.rounded_rect({centre_x - s * 0.85f, y - s * 0.09f, length, s * 0.18f},
                                          2.0f, ink);
             }
-            canvas.list.circle(centre_x + s * 0.32f, centre_y + s * 0.6f, s * 0.26f, page);
-            canvas.list.triangle({centre_x + s * 0.24f, centre_y + s * 0.45f, s * 0.34f, s * 0.3f},
-                                 ink, 0.0f, 1.5708f);
             break;
-        case 3: // history: a clock
+        case static_cast<int>(kHistoryScreen): // a clock
             canvas.list.ring(centre_x, centre_y, s * 0.82f, s * 0.15f, ink);
             canvas.list.line(centre_x, centre_y, centre_x, centre_y - s * 0.5f, s * 0.14f, ink);
             canvas.list.line(centre_x, centre_y, centre_x + s * 0.38f, centre_y + s * 0.1f,
                              s * 0.14f, ink);
             break;
-        case 4: // playlists: lines and a play mark
+        case static_cast<int>(kPlaylistsScreen): // lines and a play mark
             for (int row = 0; row < 3; ++row)
                 canvas.list.rounded_rect({centre_x - s * 0.85f,
                                           centre_y - s * 0.6f + static_cast<float>(row) * s * 0.45f,
@@ -167,20 +237,20 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
             canvas.list.triangle({centre_x + s * 0.2f, centre_y + s * 0.1f, s * 0.6f, s * 0.6f},
                                  ink, 0.0f, 1.5708f);
             break;
-        case 5: // music: a note
+        case static_cast<int>(kMusicScreen): // a note
             canvas.list.circle(centre_x - s * 0.35f, centre_y + s * 0.5f, s * 0.3f, ink);
             canvas.list.line(centre_x - s * 0.08f, centre_y + s * 0.5f, centre_x - s * 0.08f,
                              centre_y - s * 0.75f, s * 0.14f, ink);
             canvas.list.line(centre_x - s * 0.08f, centre_y - s * 0.75f, centre_x + s * 0.55f,
                              centre_y - s * 0.45f, s * 0.14f, ink);
             break;
-        case 6: // gaming: a pad
+        case static_cast<int>(kGamingScreen): // a pad
             canvas.list.rounded_rect(
                 {centre_x - s * 0.9f, centre_y - s * 0.45f, s * 1.8f, s * 0.9f}, s * 0.4f, ink);
             canvas.list.circle(centre_x - s * 0.42f, centre_y, s * 0.16f, page);
             canvas.list.circle(centre_x + s * 0.42f, centre_y, s * 0.16f, page);
             break;
-        case 7: // news: a page with lines
+        case static_cast<int>(kNewsScreen): // a page with lines
             canvas.list.rounded_rect(
                 {centre_x - s * 0.75f, centre_y - s * 0.8f, s * 1.5f, s * 1.6f}, 3.0f, ink);
             for (int row = 0; row < 3; ++row)
@@ -189,17 +259,18 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
                                           s * 1.0f, s * 0.14f},
                                          1.0f, page);
             break;
-        case 8: // live: a dot in two rings
+        case static_cast<int>(kLiveScreen): // a dot in two rings
             canvas.list.circle(centre_x, centre_y, s * 0.25f, ink);
             canvas.list.ring(centre_x, centre_y, s * 0.55f, s * 0.12f, ink);
             canvas.list.ring(centre_x, centre_y, s * 0.88f, s * 0.12f, ink);
             break;
-        case 9: // sports: a ball
-            canvas.list.ring(centre_x, centre_y, s * 0.8f, s * 0.15f, ink);
-            canvas.list.line(centre_x - s * 0.8f, centre_y, centre_x + s * 0.8f, centre_y,
-                             s * 0.12f, ink);
-            canvas.list.line(centre_x, centre_y - s * 0.8f, centre_x, centre_y + s * 0.8f,
-                             s * 0.12f, ink);
+        case static_cast<int>(kSportsScreen): // a trophy
+            canvas.list.rounded_rect(
+                {centre_x - s * 0.6f, centre_y - s * 0.85f, s * 1.2f, s * 0.9f}, s * 0.45f, ink);
+            canvas.list.rounded_rect({centre_x - s * 0.12f, centre_y, s * 0.24f, s * 0.5f}, 1.0f,
+                                     ink);
+            canvas.list.rounded_rect({centre_x - s * 0.5f, centre_y + s * 0.5f, s * 1.0f, s * 0.3f},
+                                     2.0f, ink);
             break;
         default: // settings: sliders
             for (int row = 0; row < 3; ++row)
@@ -216,14 +287,16 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     // In the order of the kXxxScreen indices (screens.hpp).
     screens_.push_back(make_search_screen(context_));
     screens_.push_back(make_home_screen(context_));
+    screens_.push_back(make_topic_screen(context_, "shorts", "Shorts", "FEshorts"));
+    screens_.push_back(make_topic_screen(context_, "sports", "Sports", "UCEgdi0XIXXZ-qJOFPf4JSKw"));
+    screens_.push_back(make_topic_screen(context_, "live", "Live", "UC4R8DWoMoI7CAwX8_LjQHig"));
+    screens_.push_back(make_topic_screen(context_, "gaming", "Gaming", "UCOpNcN46UbXVtpKMrmU4Abg"));
+    screens_.push_back(make_topic_screen(context_, "news", "News", "UCYfdidRxbB8Qhf0Nx7ioOYw"));
+    screens_.push_back(make_topic_screen(context_, "music", "Music", "UC-9-kyTW8ZkZNDHQJ6FgpwQ"));
+    screens_.push_back(make_topic_screen(context_, "channels", "Channels", "FEchannels"));
     screens_.push_back(make_subscriptions_screen(context_));
     screens_.push_back(make_history_screen(context_));
     screens_.push_back(make_playlists_screen(context_));
-    screens_.push_back(make_topic_screen(context_, "music", "Music", "UC-9-kyTW8ZkZNDHQJ6FgpwQ"));
-    screens_.push_back(make_topic_screen(context_, "gaming", "Gaming", "UCOpNcN46UbXVtpKMrmU4Abg"));
-    screens_.push_back(make_topic_screen(context_, "news", "News", "UCYfdidRxbB8Qhf0Nx7ioOYw"));
-    screens_.push_back(make_topic_screen(context_, "live", "Live", "UC4R8DWoMoI7CAwX8_LjQHig"));
-    screens_.push_back(make_topic_screen(context_, "sports", "Sports", "UCEgdi0XIXXZ-qJOFPf4JSKw"));
     screens_.push_back(make_settings_screen(context_));
     screens_.push_back(make_login_screen(context_));
     screens_.push_back(make_player_screen(context_));
@@ -530,6 +603,14 @@ enum CardPick
     kPickRemoveHistory,
     kPickPlayNext,
     kPickSubscribe,
+    kPickBlock,
+    kPickPin,
+    kPickUnpin,
+    kPickClearHistory,
+    kPickClearConfirm,
+    kPickCancel,
+    kPickNewPlaylist,
+    kPickUnblockBase = 3000,  // + the index of a blocked channel
     kPickPlaylistBase = 1000, // + the index into menu_playlists_
     kPickAccountBase = 2000,  // + the index into the saved accounts
 };
@@ -595,17 +676,29 @@ void App::open_card_menu(const yt::FeedItem &item)
     if (signed_in && !item.remove_history_token.empty())
         entries.push_back({"Remove from history", kPickRemoveHistory});
     if (signed_in && video)
+    {
         entries.push_back({"Add/Remove from playlist", kPickPlaylist});
+        entries.push_back({"Add to new playlist", kPickNewPlaylist});
+    }
     if (signed_in && !item.not_interested_token.empty())
         entries.push_back({"Not interested", kPickNotInterested});
     if (signed_in && !item.dont_recommend_token.empty())
         entries.push_back({"Don't recommend channel", kPickDontRecommend});
     if (video)
         entries.push_back({"Play next", kPickPlayNext});
-    if (!item.channel_id.empty() || item.is_channel())
-        entries.push_back({"Open channel", kPickChannel});
-    if (signed_in && (!item.channel_id.empty() || item.is_channel()))
+    entries.push_back({"Open channel", kPickChannel});
+    if (signed_in)
         entries.push_back({"Subscribe to the channel", kPickSubscribe});
+    if (!item.author.empty() || item.is_channel() || !item.channel_id.empty())
+        entries.push_back({"Block the channel", kPickBlock});
+    const std::string channel = item.is_channel() ? item.video_id : item.channel_id;
+    if (pinned(channel))
+        entries.push_back({"Remove channel from the sidebar", kPickUnpin});
+    else
+        entries.push_back({"Add channel to the sidebar", kPickPin});
+    if (current_ == kHistoryScreen &&
+        !service_.feed(yt::FeedKind::history).clear_history_token.empty())
+        entries.push_back({"Clear history", kPickClearHistory});
     if (item.is_playlist())
         entries.push_back({"Open playlist", kPickOpen});
     if (current_ == kHomeScreen)
@@ -653,6 +746,223 @@ void App::open_account_menu()
     card_menu_.open("Accounts", std::move(entries));
 }
 
+void App::rebuild_rail()
+{
+    // SmartTube's sidebar order; Search is the orb above the list.
+    struct Item
+    {
+        const char *label;
+        int tag;
+    };
+    static const Item kItems[] = {
+        {"Search", static_cast<int>(kSearchScreen)},
+        {"Home", static_cast<int>(kHomeScreen)},
+        {"Shorts", static_cast<int>(kShortsScreen)},
+        {"Sports", static_cast<int>(kSportsScreen)},
+        {"LIVE", static_cast<int>(kLiveScreen)},
+        {"Gaming", static_cast<int>(kGamingScreen)},
+        {"News", static_cast<int>(kNewsScreen)},
+        {"Music", static_cast<int>(kMusicScreen)},
+        {"Channels", static_cast<int>(kChannelsScreen)},
+        {"Subscriptions", static_cast<int>(kSubscriptionsScreen)},
+        {"History", static_cast<int>(kHistoryScreen)},
+        {"Playlists", static_cast<int>(kPlaylistsScreen)},
+        {"My videos", kRailMyVideos},
+        {"Blocked Channels", kRailBlocked},
+    };
+    std::vector<ui::NavEntry> entries;
+    for (const Item &item : kItems)
+        entries.push_back({item.label, {}, {}, false, item.tag < 0, false, item.tag});
+    for (std::size_t i = 0; i < pins_.size(); ++i)
+        entries.push_back({pins_[i].name.empty() ? pins_[i].channel_id : pins_[i].name,
+                           {},
+                           {},
+                           false,
+                           true,
+                           false,
+                           kRailPinBase - static_cast<int>(i)});
+    entries.push_back({"Settings", {}, {}, false, false, false, static_cast<int>(kSettingsScreen)});
+    rail_.set_entries(std::move(entries));
+}
+
+int App::rail_position(std::size_t screen) const
+{
+    const auto &entries = rail_.entries();
+    for (std::size_t i = 0; i < entries.size(); ++i)
+    {
+        if (entries[i].tag == static_cast<int>(screen))
+            return static_cast<int>(i);
+    }
+    return 0;
+}
+
+void App::activate_rail(int position)
+{
+    const auto &entries = rail_.entries();
+    if (position < 0 || position >= static_cast<int>(entries.size()))
+        return;
+    const int tag = entries[static_cast<std::size_t>(position)].tag;
+    if (tag >= 0)
+    {
+        show(static_cast<std::size_t>(tag)); // the rail keeps the focus
+        return;
+    }
+    if (tag == kRailMyVideos)
+    {
+        const std::string mine = service_.account_channel();
+        if (mine.empty())
+            toasts_.push(ui::StatusKind::warning, "Your channel isn't known yet",
+                         service_.signed_in() ? "Try again in a moment" : "Sign in first", 2.5f);
+        else
+        {
+            pending_channel_ = {mine, service_.account().first, {}, {}};
+            context_.nav.open_channel = true;
+            rail_focused_ = false;
+        }
+        return;
+    }
+    if (tag == kRailBlocked)
+    {
+        open_blocked_menu();
+        return;
+    }
+    const std::size_t pin = static_cast<std::size_t>(kRailPinBase - tag);
+    if (pin < pins_.size())
+    {
+        pending_channel_ = pins_[pin];
+        context_.nav.open_channel = true;
+        rail_focused_ = false;
+    }
+}
+
+void App::load_pins()
+{
+    pins_.clear();
+    std::string data;
+    if (data_root_.empty() || !save::read_file(data_root_ + "/pins.txt", &data, 16u << 10))
+        return;
+    std::size_t at = 0;
+    while (at < data.size() && pins_.size() < kMaxPins)
+    {
+        std::size_t end = data.find('\n', at);
+        if (end == std::string::npos)
+            end = data.size();
+        const std::string line = data.substr(at, end - at);
+        at = end + 1;
+        const std::size_t tab = line.find('\t');
+        const std::string id = line.substr(0, tab);
+        if (id.size() == 24)
+            pins_.push_back(
+                {id, tab == std::string::npos ? std::string() : line.substr(tab + 1), {}, {}});
+    }
+}
+
+void App::save_pins() const
+{
+    if (data_root_.empty())
+        return;
+    std::string data;
+    for (const yt::ChannelItem &pin : pins_)
+    {
+        std::string name = pin.name;
+        for (char &c : name)
+            if (c == '\t' || c == '\n')
+                c = ' ';
+        data += pin.channel_id + '\t' + name + '\n';
+    }
+    (void)save::write_atomic(data_root_ + "/pins.txt", data);
+}
+
+void App::pin_channel(const yt::ChannelItem &channel)
+{
+    for (const yt::ChannelItem &pin : pins_)
+    {
+        if (pin.channel_id == channel.channel_id)
+        {
+            toasts_.push(ui::StatusKind::info, "Already in the sidebar", channel.name, 2.0f);
+            return;
+        }
+    }
+    if (pins_.size() >= kMaxPins)
+    {
+        toasts_.push(ui::StatusKind::warning, "The sidebar is full", "Remove a channel first",
+                     2.5f);
+        return;
+    }
+    pins_.push_back(channel);
+    save_pins();
+    rebuild_rail();
+    toasts_.push(ui::StatusKind::success, "Added to the sidebar", channel.name, 2.0f);
+}
+
+void App::unpin_channel(const std::string &channel_id)
+{
+    pins_.erase(std::remove_if(pins_.begin(), pins_.end(), [&](const yt::ChannelItem &pin)
+                               { return pin.channel_id == channel_id; }),
+                pins_.end());
+    save_pins();
+    rebuild_rail();
+    toasts_.push(ui::StatusKind::info, "Removed from the sidebar", {}, 2.0f);
+}
+
+bool App::pinned(const std::string &channel_id) const
+{
+    for (const yt::ChannelItem &pin : pins_)
+        if (!channel_id.empty() && pin.channel_id == channel_id)
+            return true;
+    return false;
+}
+
+void App::open_blocked_menu()
+{
+    const std::vector<yt::ChannelItem> blocked = service_.blocked_channels();
+    if (blocked.empty())
+    {
+        toasts_.push(ui::StatusKind::info, "No blocked channels",
+                     "Hold Cross on a video: Block the channel", 3.0f);
+        return;
+    }
+    std::vector<CardMenu::Entry> entries;
+    for (std::size_t i = 0; i < blocked.size(); ++i)
+        entries.push_back(
+            {"Unblock " + (blocked[i].name.empty() ? blocked[i].channel_id : blocked[i].name),
+             kPickUnblockBase + static_cast<int>(i)});
+    card_menu_.open("Blocked Channels", std::move(entries));
+}
+
+void App::open_name_prompt(const std::string &video_id)
+{
+    prompt_video_ = video_id;
+    prompt_text_.clear();
+    prompt_active_ = true;
+    prompt_keys_.set_length(0);
+    prompt_keys_.enter();
+    prompt_keys_.set_active(true);
+}
+
+void App::draw_prompt(ui::Canvas &canvas) const
+{
+    if (!prompt_active_)
+        return;
+    gfx::DrawList &list = canvas.list;
+    list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
+                      gfx::Color::rgb(0x000000, 0.75f));
+    ui::text(list, fonts_.semibold, "New playlist name", 560.0f, 300.0f, 40.0f,
+             gfx::Color::rgb(0xffffff));
+    const gfx::Rect field{560.0f, 340.0f, 1080.0f, 84.0f};
+    list.rounded_rect(field, 12.0f, gfx::Color::rgb(0x2f4156));
+    const bool blink = static_cast<int>(clock_ * 2.0f) % 2 == 0;
+    ui::text(
+        list, fonts_.regular,
+        fonts_.regular.font != nullptr
+            ? fonts_.regular.font->fit(prompt_text_ + (blink ? "|" : " "), 34.0f, field.w - 48.0f)
+            : prompt_text_,
+        field.x + 24.0f, field.cy() + 12.0f, 34.0f, gfx::Color::rgb(0xffffff));
+    prompt_keys_.draw(canvas);
+    ui::text(list, fonts_.regular, "Done creates the playlist   Circle cancels", 560.0f, 1030.0f,
+             22.0f, gfx::Color::rgb(0x9e9e9e));
+}
+
 void App::refresh_home()
 {
     service_.request_home(true);
@@ -666,6 +976,20 @@ void App::refresh_home()
 
 void App::apply_card_pick(int pick)
 {
+    if (pick >= kPickUnblockBase)
+    {
+        const auto blocked = service_.blocked_channels();
+        const std::size_t index = static_cast<std::size_t>(pick - kPickUnblockBase);
+        if (index < blocked.size())
+        {
+            service_.unblock_channel(index);
+            toasts_.push(ui::StatusKind::info, "Unblocked",
+                         blocked[index].name.empty() ? blocked[index].channel_id
+                                                     : blocked[index].name,
+                         2.0f);
+        }
+        return;
+    }
     if (pick >= kPickAccountBase)
     {
         const int index = pick - kPickAccountBase;
@@ -712,12 +1036,56 @@ void App::apply_card_pick(int pick)
         context_.nav.video_id = item.video_id;
         break;
     case kPickChannel:
-        pending_channel_ = {item.is_channel() ? item.video_id : item.channel_id,
-                            item.is_channel() ? item.title : item.author,
-                            {},
-                            {}};
-        context_.nav.open_channel = true;
+        if (item.is_channel() || !item.channel_id.empty())
+        {
+            pending_channel_ = {item.is_channel() ? item.video_id : item.channel_id,
+                                item.is_channel() ? item.title : item.author,
+                                {},
+                                {}};
+            context_.nav.open_channel = true;
+        }
+        else
+            service_.resolve_channel(item.video_id, item.author, 0); // opened when it answers
         break;
+    case kPickBlock:
+    {
+        yt::ChannelItem channel;
+        channel.channel_id = item.is_channel() ? item.video_id : item.channel_id;
+        channel.name = item.is_channel() ? item.title : item.author;
+        service_.block_channel(channel);
+        toasts_.push(ui::StatusKind::info, "Channel blocked",
+                     channel.name + " (Blocked Channels in the sidebar undoes it)", 3.0f);
+        break;
+    }
+    case kPickPin:
+        if (item.is_channel() || !item.channel_id.empty())
+            pin_channel({item.is_channel() ? item.video_id : item.channel_id,
+                         item.is_channel() ? item.title : item.author,
+                         {},
+                         {}});
+        else
+            service_.resolve_channel(item.video_id, item.author, 2); // pinned when it answers
+        break;
+    case kPickUnpin:
+        unpin_channel(item.is_channel() ? item.video_id : item.channel_id);
+        break;
+    case kPickNewPlaylist:
+        open_name_prompt(item.video_id);
+        break;
+    case kPickClearHistory:
+        card_menu_.open("Clear all watch history?",
+                        {{"Clear history", kPickClearConfirm}, {"Cancel", kPickCancel}});
+        break;
+    case kPickClearConfirm:
+    {
+        const std::string token = service_.feed(yt::FeedKind::history).clear_history_token;
+        if (!token.empty())
+        {
+            service_.send_feedback(token, "Watch history cleared");
+            service_.request_history();
+        }
+        break;
+    }
     case kPickRemoveHistory:
         service_.send_feedback(item.remove_history_token, "Removed from history");
         service_.hide_item(item.video_id);
@@ -727,9 +1095,14 @@ void App::apply_card_pick(int pick)
         toasts_.push(ui::StatusKind::info, "Plays next", item.title, 2.0f);
         break;
     case kPickSubscribe:
-        service_.set_subscribed(item.is_channel() ? item.video_id : item.channel_id, true);
-        toasts_.push(ui::StatusKind::success, "Subscribed",
-                     item.is_channel() ? item.title : item.author, 2.0f);
+        if (item.is_channel() || !item.channel_id.empty())
+        {
+            service_.set_subscribed(item.is_channel() ? item.video_id : item.channel_id, true);
+            toasts_.push(ui::StatusKind::success, "Subscribed",
+                         item.is_channel() ? item.title : item.author, 2.0f);
+        }
+        else
+            service_.resolve_channel(item.video_id, item.author, 1);
         break;
     case kPickWatchLater:
         service_.add_to_playlist("WL", item.video_id, "Added to Watch later");
@@ -848,7 +1221,7 @@ void App::update(const InputFrame &input, float dt)
             }
             const ui::Event event = rail_.handle(input, feedback_);
             if (event == ui::Event::activated)
-                show(static_cast<std::size_t>(rail_.current())); // the rail keeps the focus
+                activate_rail(rail_.focus()); // a section keeps the rail; actions act
             else if (event == ui::Event::cancelled || input.nav == Direction::right)
             {
                 // Back to the content; the rail stays open one more frame so
@@ -860,7 +1233,17 @@ void App::update(const InputFrame &input, float dt)
     }
 
     InputFrame screen_input = input;
-    if (rail_focused_ || update_held || card_menu_.active())
+    if (prompt_active_)
+    {
+        // The name prompt holds every input until it is done or cancelled.
+        if (prompt_keys_.handle(input, feedback_) == ui::Event::cancelled ||
+            input.is_pressed(Action::back))
+            prompt_active_ = false;
+        prompt_keys_.update(dt);
+        screen_input = InputFrame{};
+        screen_input.connected = input.connected;
+    }
+    else if (rail_focused_ || update_held || card_menu_.active())
     {
         if (menu_was_active && !update_held)
         {
@@ -886,6 +1269,26 @@ void App::update(const InputFrame &input, float dt)
             open_playlist_menu();
         }
     }
+    // A card's channel was looked up: open it or subscribe to it.
+    if (service_.resolved_revision() != seen_resolved_revision_)
+    {
+        seen_resolved_revision_ = service_.resolved_revision();
+        const auto [channel, purpose] = service_.resolved_channel();
+        if (channel.channel_id.empty())
+            toasts_.push(ui::StatusKind::warning, "Channel not found", channel.name, 2.5f);
+        else if (purpose == 1)
+        {
+            service_.set_subscribed(channel.channel_id, true);
+            toasts_.push(ui::StatusKind::success, "Subscribed", channel.name, 2.0f);
+        }
+        else if (purpose == 2)
+            pin_channel(channel);
+        else
+        {
+            pending_channel_ = channel;
+            context_.nav.open_channel = true;
+        }
+    }
     // A card action came back from YouTube.
     if (service_.action_revision() != seen_action_revision_)
     {
@@ -907,7 +1310,7 @@ void App::update(const InputFrame &input, float dt)
 
     rail_.set_focused(rail_focused_);
     rail_.set_expanded(rail_focused_ || rail_pinned_ || rail_keep_expanded);
-    rail_.set_current(static_cast<int>(current_ < kTabCount ? current_ : previous_tab()), false);
+    rail_.set_current(rail_position(current_ < kTabCount ? current_ : previous_tab()), false);
     rail_.update(dt);
     // Collapsed, the rail is bare icons; its panel comes with the labels.
     rail_.style.panel = rail_.expansion() > 0.05f;
@@ -1091,10 +1494,17 @@ void App::draw_sidebar(ui::Canvas &canvas)
     const int current = rail_.current();
     const float top = mix(210.0f, 250.0f);
     const float pitch = mix(72.0f, 76.0f);
-    for (std::size_t i = 1; i < entries.size(); ++i)
+    // More entries than fit: the list scrolls to keep the focus (or the
+    // current section) in view, as SmartTube's does.
+    const int rows = static_cast<int>(entries.size()) - 1;
+    const int visible = std::max(1, static_cast<int>((1050.0f - top) / pitch));
+    const int anchor = (focus >= 1 ? focus : current) - 1;
+    const int offset = std::clamp(anchor - (visible - 2), 0, std::max(0, rows - visible));
+    for (std::size_t i = 1 + static_cast<std::size_t>(offset);
+         i < entries.size() && static_cast<int>(i) <= offset + visible; ++i)
     {
         const int index = static_cast<int>(i);
-        const float y = top + static_cast<float>(i - 1) * pitch;
+        const float y = top + static_cast<float>(index - 1 - offset) * pitch;
         const bool lit = index == focus || (focus < 0 && index == current);
         const bool chosen = index == current;
         const gfx::Color ink = lit || (open < 0.5f && chosen) ? white : grey;
@@ -1178,6 +1588,7 @@ void App::draw_chrome(Frame &frame)
     toasts_.set_bounds({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight});
     updates_.draw(overlay);
     card_menu_.draw(overlay, fonts_);
+    draw_prompt(overlay);
     toasts_.draw(overlay);
 }
 

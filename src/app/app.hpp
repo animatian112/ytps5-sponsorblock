@@ -170,10 +170,31 @@ class App
     bool hold_active_ = false;
     bool avatar_focus_ = false; // the sidebar's account picture has the focus
     void open_account_menu();
+    // The sidebar: SmartTube's sections, My videos, Blocked Channels, the
+    // pinned channels and Settings; each entry's tag names its target.
+    void rebuild_rail();
+    int rail_position(std::size_t screen) const;
+    void activate_rail(int position);
+    void load_pins();
+    void save_pins() const;
+    void pin_channel(const yt::ChannelItem &channel);
+    void unpin_channel(const std::string &channel_id);
+    bool pinned(const std::string &channel_id) const;
+    void open_blocked_menu();
+    std::vector<yt::ChannelItem> pins_;
+    // "Add to new playlist": the name typed on the on-screen keyboard.
+    ui::Keyboard prompt_keys_;
+    bool prompt_active_ = false;
+    std::string prompt_text_;
+    std::string prompt_video_;
+    void open_name_prompt(const std::string &video_id);
+    void draw_prompt(ui::Canvas &canvas) const;
+    static constexpr std::size_t kMaxPins = 8;
     float hold_time_ = 0.0f;
     bool waiting_playlists_ = false; // "Save to playlist" asked before the list loaded
     std::vector<yt::FeedItem> menu_playlists_;
     std::uint64_t seen_action_revision_ = 0;
+    std::uint64_t seen_resolved_revision_ = 0;
     Frame frame_;
     std::string version_;
     bool quit_ = false;

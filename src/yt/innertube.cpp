@@ -980,6 +980,121 @@ void collect_playlist(yyjson_val *obj, FeedPage *page)
     page->items.push_back(std::move(item));
 }
 
+// Every kind of shelf the clients send: shelfRenderer, richShelfRenderer,
+// reelShelfRenderer (Shorts), the TV's own shelves and the view models.
+bool is_shelf_key(const char *name)
+{
+    const std::size_t length = std::strlen(name);
+    const auto ends_with = [&](const char *tail)
+    {
+        const std::size_t n = std::strlen(tail);
+        return length >= n && std::strcmp(name + length - n, tail) == 0;
+    };
+    return std::strcmp(name, "shelfRenderer") == 0 || ends_with("ShelfRenderer") ||
+           std::strcmp(name, "shelfViewModel") == 0 || ends_with("ShelfViewModel");
+}
+
+// The first "title" (or view-model "content") text inside a header, a few
+// levels deep at most.
+std::string header_text(yyjson_val *value, int depth)
+{
+    if (value == nullptr || depth > 6)
+        return {};
+    if (yyjson_is_obj(value))
+    {
+        for (const char *key : {"title", "headerText", "text"})
+        {
+            yyjson_val *field = yyjson_obj_get(value, key);
+            std::string text = text_of(field);
+            if (text.empty())
+                text = string_field(field, "content");
+            if (text.empty() && yyjson_is_str(field))
+                text = yyjson_get_str(field);
+            if (!text.empty())
+                return text;
+        }
+        yyjson_obj_iter iter;
+        yyjson_obj_iter_init(value, &iter);
+        yyjson_val *key = nullptr;
+        while ((key = yyjson_obj_iter_next(&iter)) != nullptr)
+        {
+            std::string text = header_text(yyjson_obj_iter_get_val(key), depth + 1);
+            if (!text.empty())
+                return text;
+        }
+    }
+    else if (yyjson_is_arr(value))
+    {
+        yyjson_val *child = nullptr;
+        yyjson_arr_iter iter;
+        yyjson_arr_iter_init(value, &iter);
+        while ((child = yyjson_arr_iter_next(&iter)) != nullptr)
+        {
+            std::string text = header_text(child, depth + 1);
+            if (!text.empty())
+                return text;
+        }
+    }
+    return {};
+}
+
+std::string shelf_title(yyjson_val *shelf)
+{
+    std::string title = text_of(yyjson_obj_get(shelf, "title"));
+    if (title.empty())
+        title = string_field(yyjson_obj_get(shelf, "title"), "content");
+    for (const char *key : {"headerRenderer", "header"})
+    {
+        if (!title.empty())
+            break;
+        title = header_text(yyjson_obj_get(shelf, key), 0);
+    }
+    if (title.empty())
+    {
+        yyjson_val *header = find_object(shelf, "shelfHeaderRenderer");
+        title = text_of(yyjson_obj_get(header, "title"));
+    }
+    return title;
+}
+
+// A Short in the newer layout: shortsLockupViewModel (entityId names the
+// video, onTap a reelWatchEndpoint).
+void collect_short(yyjson_val *obj, FeedPage *page)
+{
+    if (!yyjson_is_obj(obj) || page->items.size() >= kMaxItems)
+        return;
+    yyjson_val *reel = find_object(obj, "reelWatchEndpoint");
+    std::string video_id = string_field(reel, "videoId");
+    if (video_id.empty())
+    {
+        const std::string entity = string_field(obj, "entityId");
+        const std::size_t dash = entity.rfind('-');
+        if (dash != std::string::npos && entity.size() - dash - 1 == 11)
+            video_id = entity.substr(dash + 1);
+    }
+    if (video_id.size() != 11)
+        return;
+    for (const FeedItem &existing : page->items)
+    {
+        if (existing.video_id == video_id)
+            return;
+    }
+    FeedItem item;
+    item.video_id = video_id;
+    yyjson_val *overlay = yyjson_obj_get(obj, "overlayMetadata");
+    item.title = string_field(yyjson_obj_get(overlay, "primaryText"), "content");
+    item.detail = string_field(yyjson_obj_get(overlay, "secondaryText"), "content");
+    if (item.title.empty())
+        item.title = string_field(obj, "accessibilityText");
+    yyjson_val *sources = yyjson_obj_get(yyjson_obj_get(obj, "thumbnail"), "sources");
+    item.thumbnail_url = string_field(yyjson_arr_get_first(sources), "url");
+    if (item.thumbnail_url.empty())
+        item.thumbnail_url = "https://i.ytimg.com/vi/" + video_id + "/hqdefault.jpg";
+    item.shelf = page->current_shelf.empty() ? std::string("Shorts") : page->current_shelf;
+    scan_card_menu(obj, {}, &item, 0);
+    page->items.push_back(std::move(item));
+}
+
 void walk_feed(yyjson_val *value, FeedPage *page, std::string *continuation)
 {
     if (yyjson_is_obj(value))
@@ -1006,17 +1121,13 @@ void walk_feed(yyjson_val *value, FeedPage *page, std::string *continuation)
                 std::strcmp(name, "playlistRenderer") == 0 ||
                 std::strcmp(name, "compactPlaylistRenderer") == 0)
                 collect_playlist(child, page);
-            if (std::strcmp(name, "shelfRenderer") == 0 ||
-                std::strcmp(name, "richShelfRenderer") == 0)
+            if (std::strcmp(name, "shortsLockupViewModel") == 0)
+                collect_short(child, page);
+            if (is_shelf_key(name))
             {
                 // A shelf: its items carry its title, so the screen can show
                 // the feed as rows the way SmartTube does.
-                std::string title = text_of(yyjson_obj_get(child, "title"));
-                if (title.empty())
-                {
-                    yyjson_val *header = find_object(child, "shelfHeaderRenderer");
-                    title = text_of(yyjson_obj_get(header, "title"));
-                }
+                const std::string title = shelf_title(child);
                 const std::string outer = page->current_shelf;
                 if (!title.empty())
                     page->current_shelf = title;
@@ -1648,6 +1759,52 @@ void read_preroll(yyjson_val *root, VideoInfo *info)
 
 // ---- the parsers (the unit-test seam) -------------------------------------------------------
 
+namespace
+{
+
+// The first feedbackToken under a label that contains `word`.
+std::string labelled_token(yyjson_val *value, const char *word, const std::string &label, int depth)
+{
+    if (value == nullptr || depth > 40)
+        return {};
+    if (yyjson_is_arr(value))
+    {
+        yyjson_val *child = nullptr;
+        yyjson_arr_iter iter;
+        yyjson_arr_iter_init(value, &iter);
+        while ((child = yyjson_arr_iter_next(&iter)) != nullptr)
+        {
+            std::string token = labelled_token(child, word, label, depth + 1);
+            if (!token.empty())
+                return token;
+        }
+        return {};
+    }
+    if (!yyjson_is_obj(value))
+        return {};
+    const std::string here = menu_label(value);
+    const std::string &current = here.empty() ? label : here;
+    const std::string token = string_field(value, "feedbackToken");
+    if (!token.empty() && contains_text(current.c_str(), word))
+        return token;
+    yyjson_obj_iter iter;
+    yyjson_obj_iter_init(value, &iter);
+    yyjson_val *key = nullptr;
+    while ((key = yyjson_obj_iter_next(&iter)) != nullptr)
+    {
+        yyjson_val *child = yyjson_obj_iter_get_val(key);
+        if (yyjson_is_obj(child) || yyjson_is_arr(child))
+        {
+            std::string found = labelled_token(child, word, current, depth + 1);
+            if (!found.empty())
+                return found;
+        }
+    }
+    return {};
+}
+
+} // namespace
+
 bool parse_feed_page(std::string_view json, FeedPage *page)
 {
     if (page == nullptr)
@@ -1696,12 +1853,33 @@ bool parse_feed_page(std::string_view json, FeedPage *page)
         }
     }
 
+    // History's "Clear all watch history" button: a feedback token under a
+    // label naming "clear".
+    page->clear_history_token = labelled_token(root, "clear", {}, 0);
+
+    // The video's channel when no subscribe button names it: the owner line's
+    // browse endpoint (web) or a subscribe endpoint's first channel (TV).
+    if (page->channel_id.empty())
+    {
+        yyjson_val *owner = find_object(root, "videoOwnerRenderer");
+        std::string id = string_field(find_object(owner, "browseEndpoint"), "browseId");
+        if (id.rfind("UC", 0) != 0)
+        {
+            yyjson_val *ids = yyjson_obj_get(find_object(root, "subscribeEndpoint"), "channelIds");
+            yyjson_val *first = yyjson_arr_get_first(ids);
+            id = yyjson_is_str(first) ? yyjson_get_str(first) : "";
+        }
+        if (id.size() == 24 && id.rfind("UC", 0) == 0)
+            page->channel_id = id;
+    }
+
     // The account's standing toward the video (a /next answer).
     yyjson_val *subscribe = find_object(root, "subscribeButtonRenderer");
     if (subscribe != nullptr)
     {
         page->meta_known = true;
-        page->channel_id = string_field(subscribe, "channelId");
+        if (const std::string id = string_field(subscribe, "channelId"); !id.empty())
+            page->channel_id = id;
         yyjson_val *subscribed = yyjson_obj_get(subscribe, "subscribed");
         page->subscribed = yyjson_is_bool(subscribed) && yyjson_get_bool(subscribed);
     }
@@ -2499,6 +2677,30 @@ struct InnerTube::Impl
         Attempt attempt = post_once(endpoint, extra, primary);
         bool parsed = attempt.http_ok && parse_feed_page(attempt.body, page);
         log_line(endpoint, target, attempt, page->items.size());
+        {
+            // The rows a page named, and the first Home answers kept next to
+            // yt.log: what a mis-grouped Home is diagnosed from.
+            std::vector<std::string> shelves;
+            for (const FeedItem &item : page->items)
+                if (std::find(shelves.begin(), shelves.end(), item.shelf) == shelves.end())
+                    shelves.push_back(item.shelf);
+            std::string names;
+            for (const std::string &shelf : shelves)
+                names += (names.empty() ? "" : " | ") + (shelf.empty() ? "(none)" : shelf);
+            log::line("feed: %s rows: %s", target.c_str(), names.c_str());
+            static int dumps = 0;
+            if ((target == "FEwhat_to_watch" || target == "continuation") && dumps < 4 &&
+                attempt.http_ok)
+            {
+                const std::string path =
+                    "/download0/hui/dev/feed-" + std::to_string(dumps++) + ".json";
+                if (std::FILE *file = std::fopen(path.c_str(), "wb"))
+                {
+                    std::fwrite(attempt.body.data(), 1, attempt.body.size(), file);
+                    std::fclose(file);
+                }
+            }
+        }
 
         if (attempt.transport_ok && attempt.http_ok && parsed &&
             (!signed_in_client || !page->items.empty()))
@@ -2701,6 +2903,15 @@ bool InnerTube::send_feedback(const std::string &token)
     return action("feedback", extra);
 }
 
+bool InnerTube::create_playlist(const std::string &title, const std::string &video_id)
+{
+    std::string extra = field_string("title", title);
+    extra += ",\"privacyStatus\":\"PRIVATE\",\"videoIds\":[";
+    append_json_string(extra, video_id);
+    extra += ']';
+    return action("playlist/create", extra);
+}
+
 bool InnerTube::add_to_playlist(const std::string &playlist_id, const std::string &video_id)
 {
     std::string extra = field_string("playlistId", playlist_id);
@@ -2733,7 +2944,7 @@ bool InnerTube::browse(const std::string &browse_id, FeedPage *page,
     return parsed;
 }
 
-bool InnerTube::account(std::string *name, std::string *photo)
+bool InnerTube::account(std::string *name, std::string *photo, std::string *channel_id)
 {
     Impl::Attempt attempt = impl_->post_once("account/accounts_list", "", kTvClient);
     if (!attempt.transport_ok || !attempt.http_ok)
@@ -2748,6 +2959,13 @@ bool InnerTube::account(std::string *name, std::string *photo)
     *name = text_of(yyjson_obj_get(item, "accountName"));
     yyjson_val *photo_obj = yyjson_obj_get(item, "accountPhoto");
     *photo = largest_thumbnail(yyjson_obj_get(photo_obj, "thumbnails"));
+    if (channel_id != nullptr)
+    {
+        // The account's own channel, where the answer links it.
+        const std::string id = string_field(find_object(item, "browseEndpoint"), "browseId");
+        if (id.size() == 24 && id.rfind("UC", 0) == 0)
+            *channel_id = id;
+    }
     yyjson_doc_free(doc);
     log::line("account: %s", name->empty() ? "(no name)" : "found");
     return !name->empty() || !photo->empty();

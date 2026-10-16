@@ -41,6 +41,7 @@ struct FeedView
     std::vector<ChannelItem> channels; // search answers only
     std::string continuation;
     std::string error;
+    std::string clear_history_token; // History only: "Clear all watch history"
     std::uint64_t revision = 0;
 };
 
@@ -137,8 +138,23 @@ class Service
     // took it; action_revision() moves when one finished either way.
     void send_feedback(std::string token, std::string done);
     void add_to_playlist(std::string playlist_id, std::string video_id, std::string done);
+    void create_playlist(std::string title, std::string video_id, std::string done);
     std::uint64_t action_revision() const;
     std::pair<bool, std::string> action_result() const; // ok, message
+    // The channel of a video whose card names none: looked up in the
+    // background; resolved_channel() then answers it with the purpose
+    // (0 open, 1 subscribe) and resolved_revision() moves.
+    void resolve_channel(std::string video_id, std::string name, int purpose);
+    std::uint64_t resolved_revision() const;
+    std::pair<ChannelItem, int> resolved_channel() const;
+    // SmartTube's "Block the channel": kept on this console; feed() leaves
+    // out every card of a blocked channel (by id, or by name when the card
+    // names no id).
+    void block_channel(ChannelItem channel);
+    void unblock_channel(std::size_t index);
+    std::vector<ChannelItem> blocked_channels() const;
+    // The signed-in account's own channel ("My videos"), once known.
+    std::string account_channel() const;
     // Drops a card from every loaded feed ("Not interested").
     void hide_item(const std::string &video_id);
     // Starts the device flow and then polls until it is answered.
