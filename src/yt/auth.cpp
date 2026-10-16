@@ -518,6 +518,11 @@ void Auth::sign_out()
     impl_->error.clear();
 }
 
+const std::string &Auth::refresh_token() const
+{
+    return impl_->refresh_token;
+}
+
 const std::string &Auth::token_path() const
 {
     return impl_->token_path;

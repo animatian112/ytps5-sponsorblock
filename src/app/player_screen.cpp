@@ -213,7 +213,10 @@ yt::CodecChoice PlayerScreen::codec_choice() const
     choice.max_height = context_.settings.max_height;
     choice.decode = context_.settings.decode_mode;
     if (quality_override_ > 0)
+    {
         choice.max_height = quality_override_;
+        choice.exact_height = quality_override_;
+    }
     choice.audio_track = audio_track_;
     return choice;
 }
@@ -746,12 +749,33 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
                 menu_heights_.push_back(format.height);
         }
         std::sort(menu_heights_.rbegin(), menu_heights_.rend());
-        std::vector<std::string> options{
-            "Auto (Settings: " + std::to_string(context_.settings.max_height) + "p)"};
+        std::vector<std::string> options{"Auto (up to " +
+                                         std::to_string(context_.settings.max_height) + "p)"};
         int selected = 0;
         for (std::size_t i = 0; i < menu_heights_.size(); ++i)
         {
-            options.push_back(std::to_string(menu_heights_[i]) + "p");
+            // SmartTube's line: "1080p, 30fps, 5.02Mbps, avc", from the
+            // format that height would play.
+            yt::CodecChoice exact = choice;
+            exact.exact_height = menu_heights_[i];
+            exact.max_height = menu_heights_[i];
+            const yt::Format *format = yt::select_video_format(view.info.formats, exact);
+            std::string line = std::to_string(menu_heights_[i]) + "p";
+            if (format != nullptr && format->height == menu_heights_[i])
+            {
+                char extra[64];
+                std::snprintf(extra, sizeof(extra), ", %dfps, %.2fMbps, %s",
+                              static_cast<int>(format->fps + 0.5),
+                              static_cast<double>(format->bitrate) / 1e6,
+                              yt::codec_label(format->codec));
+                line += extra;
+                yt::CodecChoice ceiling = choice;
+                ceiling.max_height = 0;
+                const int limit = yt::codec_height_ceiling(format->codec, ceiling);
+                if (limit > 0 && format->height > limit)
+                    line += "  (may stutter)";
+            }
+            options.push_back(line);
             if (menu_heights_[i] == quality_override_)
                 selected = static_cast<int>(i) + 1;
         }

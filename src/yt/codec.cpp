@@ -111,6 +111,29 @@ const Format *select_video_format(const std::vector<Format> &formats, const Code
     // only when none does the best ciphered format under the caps take over -
     // a refused ciphered URL still beats no stream, and the caller retries
     // past it. The lowest over-ceiling plain format stays the last resort.
+    if (choice.exact_height > 0)
+    {
+        // The quality menu's pick: the best format at exactly that height,
+        // plain URLs before ciphered ones.
+        const Format *exact = nullptr;
+        for (const Format &format : formats)
+        {
+            if (!is_video_codec(format.codec) || !codec_enabled(choice, format.codec) ||
+                format.url.empty() || format.height != choice.exact_height)
+                continue;
+            if (choice.decode == DecodeMode::hardware && format.codec == Codec::av1)
+                continue;
+            if (exact == nullptr || (exact->ciphered && !format.ciphered) ||
+                (exact->ciphered == format.ciphered && beats_at_equal_height(format, *exact)))
+                exact = &format;
+        }
+        if (exact != nullptr)
+        {
+            log::line("video: selection %s (picked height)",
+                      describe_selection(exact, choice).c_str());
+            return exact;
+        }
+    }
     Pool plain;
     Pool ciphered;
     bool av1_skipped = false;

@@ -523,4 +523,30 @@ TEST(Codec, TheConsoleDecoderLiftsTheAvcAndVp9Ceilings)
     EXPECT_LE(picked->height, 1440);
 }
 
+TEST(Codec, APickedHeightPlaysPastTheSoftwareCeiling)
+{
+    // Software decoding caps VP9 at 720p; the quality menu's 1440p pick
+    // still plays 1440p, and a pick the video lacks falls back to the cap.
+    const std::vector<Format> formats{video(Codec::avc, 1080, 4000000),
+                                      video(Codec::vp9, 1440, 9000000),
+                                      video(Codec::avc, 480, 900000)};
+    CodecChoice choice;
+    choice.decode = DecodeMode::software;
+    choice.max_height = 1440;
+    choice.exact_height = 1440;
+    const Format *picked = yt::select_video_format(formats, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->height, 1440);
+    choice.max_height = 480;
+    choice.exact_height = 480;
+    picked = yt::select_video_format(formats, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->height, 480);
+    choice.max_height = 720;
+    choice.exact_height = 720;
+    picked = yt::select_video_format(formats, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->height, 480);
+}
+
 } // namespace

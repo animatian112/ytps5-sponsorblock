@@ -238,6 +238,9 @@ struct CodecChoice
     bool vp9 = true;
     bool av1 = true;
     int max_height = 1080;
+    // A height picked in the player's quality menu: that height is played if
+    // the video has it, past the software-decoding ceilings (the user asked).
+    int exact_height = 0;
     DecodeMode decode = DecodeMode::auto_detect;
     // audioTrack.id to play; empty picks the video's original track.
     std::string audio_track;

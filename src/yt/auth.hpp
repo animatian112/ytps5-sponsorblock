@@ -55,6 +55,9 @@ class Auth
     const std::string &token_path() const;
     bool signed_in() const;
     void sign_out();
+    // The saved refresh token (empty when signed out): the key the app's
+    // account list remembers each account by.
+    const std::string &refresh_token() const;
 
     // The saved refresh token as the JSON the app writes: {"v":1,
     // "refresh_token":"..."}. Empty when nobody is signed in. Used to keep a

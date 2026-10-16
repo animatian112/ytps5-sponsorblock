@@ -26,7 +26,7 @@ TEST(Watch, ThePlaybackPingKeepsTheTrackingFieldsAndDropsFexp)
         "https://s.youtube.com/api/stats/playback?cl=1&docid=abc&fexp=1,2,3&ei=xyz&ver=1";
     EXPECT_EQ(yt::watch::playback_ping(base, "CPNCPNCPNCPNCPN0"),
               "https://s.youtube.com/api/stats/playback?cl=1&docid=abc&ei=xyz&ver=2&cpn="
-              "CPNCPNCPNCPNCPN0");
+              "CPNCPNCPNCPNCPN0&cmt=0&el=detailpage");
 }
 
 TEST(Watch, AccountPingsGoToWwwAndNameTheTvClient)
@@ -45,7 +45,7 @@ TEST(Watch, TheWatchtimePingNamesTheSpan)
     const std::string url = yt::watch::watchtime_ping(
         "https://s.youtube.com/api/stats/watchtime?docid=abc", "N", 10.0, 70.5, 300.0);
     EXPECT_EQ(url, "https://s.youtube.com/api/stats/watchtime?docid=abc&ver=2&cpn=N&st=10.000&et="
-                   "70.500&cmt=70.500&len=300.000&state=playing");
+                   "70.500&cmt=70.500&len=300.000&el=detailpage&state=playing");
 }
 
 } // namespace

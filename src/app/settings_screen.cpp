@@ -103,7 +103,11 @@ enum : int
     kNetTest,
     kSignIn,
     kAbout,
+    kAddAccount,
+    kAccountBase = 100, // + the index of a remembered account
 };
+
+constexpr std::size_t kMaxAccounts = 3;
 
 constexpr int kColumns = 6;
 constexpr float kTileW = 236.0f;
@@ -227,14 +231,8 @@ ui::Form &SettingsScreen::add_tile(const char *label, Icon icon)
 
 SettingsScreen::SettingsScreen(Context &context) : context_(context)
 {
-    {
-        ui::Form &account = add_tile("Accounts", Icon::accounts);
-        account.add_action(kSignIn, "Sign in").description =
-            "Scan the code with your phone: the sign-in page opens with it filled in";
-        account.add_action(kSaveAccount, "Back up account").description =
-            "Write a token copy into the app folder";
-        account.add_action(kSignOut, "Sign out");
-    }
+    add_tile("Accounts", Icon::accounts);
+    rebuild_accounts();
     ui::Form &player = add_tile("Player", Icon::player);
     player.add_toggle(kCodecAvc, "AVC (H.264)", context_.settings.codec_avc);
     player.add_toggle(kCodecVp9, "VP9", context_.settings.codec_vp9);
@@ -296,6 +294,53 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     tiles_.push_back({"Network test", Icon::network, nullptr, kNetTest});
     tiles_.push_back({"Updates", Icon::updates, nullptr, kCheckUpdates});
     tiles_.push_back({"About", Icon::about, nullptr, kAbout});
+}
+
+void SettingsScreen::rebuild_accounts()
+{
+    const std::vector<yt::Service::AccountInfo> accounts = context_.service.saved_accounts();
+    std::string key = context_.service.signed_in() ? "in" : "out";
+    for (const auto &account : accounts)
+        key += "|" + account.name + (account.active ? "*" : "");
+    if (key == accounts_key_ && tiles_[0].form != nullptr)
+        return;
+    accounts_key_ = key;
+    auto form = std::make_unique<ui::Form>();
+    form->style.theme = youtube_theme();
+    form->set_bounds({480.0f, 220.0f, 960.0f, 740.0f});
+    form->add_header("Accounts on this console");
+    for (std::size_t i = 0; i < accounts.size(); ++i)
+    {
+        const auto &account = accounts[i];
+        const std::string name =
+            account.name.empty() ? "Account " + std::to_string(i + 1) : account.name;
+        ui::FormRow &row = form->add_action(kAccountBase + static_cast<int>(i),
+                                            account.active ? name + "  (current)" : name);
+        row.description = account.active ? "Signed in now" : "Switch to this account";
+    }
+    if (!context_.service.signed_in() && accounts.empty())
+        form->add_action(kSignIn, "Sign in").description =
+            "Scan the code with your phone: the sign-in page opens with it filled in";
+    else
+    {
+        ui::FormRow &add = form->add_action(kAddAccount, "Add account");
+        add.description = accounts.size() >= kMaxAccounts
+                              ? "Up to 3 accounts: sign one out first"
+                              : "Sign in one more account; switch between them here";
+        add.disabled = accounts.size() >= kMaxAccounts;
+    }
+    form->add_action(kSaveAccount, "Back up account").description =
+        "Write a token copy into the app folder";
+    form->add_action(kSignOut, "Sign out").description =
+        accounts.size() > 1 ? "Remove the current account; the next one takes over"
+                            : "Remove the account from this console";
+    const bool showing = open_ == 0;
+    tiles_[0].form = std::move(form);
+    if (showing)
+    {
+        tiles_[0].form->enter();
+        tiles_[0].form->set_active(true);
+    }
 }
 
 void SettingsScreen::enter()
@@ -373,6 +418,23 @@ void SettingsScreen::apply(int id, ui::Feedback &feedback)
 
 void SettingsScreen::activate(int id)
 {
+    if (id >= kAccountBase)
+    {
+        const int index = id - kAccountBase;
+        const auto accounts = context_.service.saved_accounts();
+        if (index >= 0 && index < static_cast<int>(accounts.size()) &&
+            !accounts[static_cast<std::size_t>(index)].active)
+            context_.nav.switch_account = index;
+        return;
+    }
+    if (id == kAddAccount)
+    {
+        if (context_.service.saved_accounts().size() >= kMaxAccounts)
+            context_.toasts.push(ui::StatusKind::warning, "Up to 3 accounts", "Sign one out first");
+        else
+            context_.nav.add_account = true;
+        return;
+    }
     if (id == kSignIn)
     {
         if (context_.service.signed_in())
@@ -472,6 +534,8 @@ void SettingsScreen::update_grid(const InputFrame &input, ui::Feedback &feedback
         return;
     }
     open_ = focus_;
+    if (tile.icon == Icon::accounts)
+        rebuild_accounts();
     form().enter();
     form().set_active(true);
 }
@@ -480,6 +544,8 @@ void SettingsScreen::update(const InputFrame &input, float dt, ui::Feedback &fee
 {
     clock_ += dt;
     wants_rail_ = false;
+    if (open_ == 0)
+        rebuild_accounts(); // a switch or a new sign-in changes the list
     if (open_ < 0)
         update_grid(input, feedback);
     else

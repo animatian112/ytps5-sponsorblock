@@ -72,6 +72,10 @@ class SettingsScreen final : public Screen
         return *tiles_[static_cast<std::size_t>(open_)].form;
     }
     ui::Form &add_tile(const char *label, Icon icon);
+    // The Accounts page lists the remembered accounts; it is rebuilt each
+    // time it opens and when the list changes.
+    void rebuild_accounts();
+    std::string accounts_key_;
     void apply(int id, ui::Feedback &feedback);
     void activate(int id);
     void update_grid(const InputFrame &input, ui::Feedback &feedback);

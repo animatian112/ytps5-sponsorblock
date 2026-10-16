@@ -37,6 +37,7 @@ namespace
 
 constexpr std::size_t kWorkerStack = 1u << 20; // 1 MiB
 constexpr int kLoginPollMs = 200;
+constexpr std::size_t kMaxAccounts = 3; // accounts remembered for switching
 // Formats of one client answer that may be tried before the next client is
 // asked. A format that cannot be opened (no decoder for its codec in this
 // build, a URL YouTube refuses) is skipped and the next-best format from the
@@ -142,7 +143,24 @@ struct Service::Impl
             std::string done;
         };
         std::vector<Action> actions;
+        bool add_account = false;
+        bool switch_account = false;
+        int switch_index = 0;
     } job;
+
+    // ---- the remembered accounts (up to kMaxAccounts) ----
+    // One line per account in <token file>.accounts: refresh token, name and
+    // picture URL, tab-separated. The signed-in account is the one whose token
+    // the Auth object holds.
+    struct SavedAccount
+    {
+        std::string token;
+        std::string name;
+        std::string photo;
+    };
+    std::vector<SavedAccount> saved;
+    std::string previous_token; // the account an "Add account" left; back to it on cancel
+    bool restore_previous = false;
     std::uint64_t action_revision = 0;
     std::string action_message;
     bool action_ok = false;
@@ -216,6 +234,7 @@ struct Service::Impl
     Impl(std::string token_path, std::string install_root_path, AudioSink *sink)
         : install_root(std::move(install_root_path)), auth(std::move(token_path)), audio(sink)
     {
+        load_accounts();
     }
 
     std::string bundled_token_path() const
@@ -226,6 +245,118 @@ struct Service::Impl
     std::string sandbox_backup_path() const
     {
         return auth.token_path() + ".backup";
+    }
+
+    std::string accounts_path() const
+    {
+        return auth.token_path().empty() ? std::string() : auth.token_path() + ".accounts";
+    }
+
+    static std::string clean_field(std::string text)
+    {
+        for (char &c : text)
+            if (c == '\t' || c == '\n' || c == '\r')
+                c = ' ';
+        return text;
+    }
+
+    // Callers hold the mutex.
+    void load_accounts()
+    {
+        saved.clear();
+        std::string data;
+        if (accounts_path().empty() || !hui::save::read_file(accounts_path(), &data, 64u << 10))
+            return;
+        std::size_t at = 0;
+        while (at < data.size() && saved.size() < kMaxAccounts)
+        {
+            std::size_t end = data.find('\n', at);
+            if (end == std::string::npos)
+                end = data.size();
+            const std::string line = data.substr(at, end - at);
+            at = end + 1;
+            const std::size_t a = line.find('\t');
+            const std::size_t b = a == std::string::npos ? a : line.find('\t', a + 1);
+            SavedAccount account;
+            account.token = line.substr(0, a);
+            if (a != std::string::npos)
+                account.name = line.substr(a + 1, b == std::string::npos ? b : b - a - 1);
+            if (b != std::string::npos)
+                account.photo = line.substr(b + 1);
+            if (!account.token.empty())
+                saved.push_back(std::move(account));
+        }
+    }
+
+    void save_accounts() const
+    {
+        if (accounts_path().empty())
+            return;
+        std::string data;
+        for (const SavedAccount &account : saved)
+            data += account.token + '\t' + clean_field(account.name) + '\t' +
+                    clean_field(account.photo) + '\n';
+        (void)hui::save::write_atomic(accounts_path(), data);
+    }
+
+    // Puts the signed-in account in the list (or refreshes its name and
+    // picture). Callers hold the mutex.
+    void remember_current()
+    {
+        const std::string &token = auth.refresh_token();
+        if (token.empty())
+            return;
+        for (SavedAccount &account : saved)
+        {
+            if (account.token == token)
+            {
+                if (!account_name.empty())
+                    account.name = account_name;
+                if (!account_photo.empty())
+                    account.photo = account_photo;
+                save_accounts();
+                return;
+            }
+        }
+        if (saved.size() >= kMaxAccounts)
+            return;
+        saved.push_back({token, account_name, account_photo});
+        save_accounts();
+    }
+
+    // Signs in with a remembered token; true when the server took it.
+    bool use_token(const std::string &token)
+    {
+        std::string json = "{\"v\":1,\"refresh_token\":";
+        json += '"' + token + "\"}"; // refresh tokens are URL-safe: nothing to escape
+        std::string error;
+        if (!auth.adopt_token_json(json, &error))
+            return false;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            reset_account_feeds();
+        }
+        if (!refresh_token_locked())
+            return false;
+        std::lock_guard<std::mutex> lock(mutex);
+        job.home = true;
+        job.subscriptions = true;
+        job.history = true;
+        login.revision++;
+        return true;
+    }
+
+    // Leaves the signed-in account on this console only (the list keeps it).
+    void sign_out_locally()
+    {
+        auth.sign_out();
+        tube.set_access_token({});
+        std::lock_guard<std::mutex> lock(mutex);
+        signed_in = false;
+        token_restored = false;
+        login = LoginView{};
+        login.revision++;
+        reset_account_feeds();
     }
 
     void do_import_token()
@@ -1085,9 +1216,17 @@ struct Service::Impl
         const std::string cpn = watch::make_cpn(static_cast<std::uint64_t>(
             std::chrono::steady_clock::now().time_since_epoch().count()));
         const std::string token = auth.access_token();
+        // The ping goes to the stats host the answer names and to www (where
+        // a web session's history is kept); the shared cpn makes them one view.
+        const std::string ping = watch::playback_ping(playback, cpn, tv_watch_client());
+        if (watch::account_host(ping) != ping)
+        {
+            const http::Response stats = http::get(ping, watch_headers(token), 8);
+            log::line("history: playback ping (stats host) -> %ld %s", stats.status,
+                      stats.error.c_str());
+        }
         const http::Response response =
-            http::get(watch::account_host(watch::playback_ping(playback, cpn, tv_watch_client())),
-                      watch_headers(token), 8);
+            http::get(watch::account_host(ping), watch_headers(token), 8);
         log::line("history: playback ping (%s) -> %ld %s", source.c_str(), response.status,
                   response.error.c_str());
         set_history_status(response.ok() && response.status >= 200 && response.status < 300
@@ -1164,6 +1303,7 @@ struct Service::Impl
                     std::lock_guard<std::mutex> lock(mutex);
                     if (login_cancel)
                     {
+                        restore_previous = !previous_token.empty();
                         login_cancel = false;
                         login_running = false;
                         login.state = Load::idle;
@@ -1189,7 +1329,11 @@ struct Service::Impl
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 if (poll == Poll::done)
+                {
                     signed_in = true;
+                    previous_token.clear();
+                    remember_current();
+                }
             }
             log::line("login: poll -> %d (%s)", static_cast<int>(poll), error.c_str());
             finish_login(poll == Poll::done ? Load::ready : Load::failed,
@@ -1214,14 +1358,55 @@ struct Service::Impl
 
             if (taken.sign_out)
             {
-                auth.sign_out();
-                tube.set_access_token({});
-                std::lock_guard<std::mutex> lock(mutex);
-                signed_in = false;
-                token_restored = false;
-                login = LoginView{};
-                login.revision++;
-                reset_account_feeds();
+                // The signed-in account leaves the list too; the next
+                // remembered one takes over.
+                std::string next;
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    const std::string token = auth.refresh_token();
+                    saved.erase(std::remove_if(saved.begin(), saved.end(),
+                                               [&](const SavedAccount &account)
+                                               { return account.token == token; }),
+                                saved.end());
+                    save_accounts();
+                    if (!saved.empty())
+                        next = saved.front().token;
+                }
+                sign_out_locally();
+                if (!next.empty() && !use_token(next))
+                    log::line("accounts: the next account was refused");
+            }
+            if (taken.add_account)
+            {
+                // The current account stays in the list; the console signs
+                // it out and runs the sign-in for the new one. A cancel
+                // brings the old one back.
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    remember_current();
+                    previous_token = auth.refresh_token();
+                }
+                sign_out_locally();
+                taken.sign_in = true;
+            }
+            if (taken.switch_account)
+            {
+                std::string token;
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    remember_current();
+                    if (taken.switch_index >= 0 &&
+                        taken.switch_index < static_cast<int>(saved.size()))
+                        token = saved[static_cast<std::size_t>(taken.switch_index)].token;
+                }
+                if (!token.empty() && token != auth.refresh_token())
+                {
+                    if (!use_token(token))
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        last_error = "That account's sign-in has expired";
+                    }
+                }
             }
             if (taken.cancel_sign_in)
             {
@@ -1260,6 +1445,7 @@ struct Service::Impl
                     std::lock_guard<std::mutex> lock(mutex);
                     account_name = name;
                     account_photo = photo;
+                    remember_current();
                 }
             }
             if (taken.channel)
@@ -1312,6 +1498,18 @@ struct Service::Impl
                 do_video(taken.video_id, taken.choice, taken.video_generation);
             if (taken.sign_in)
                 do_login();
+            bool restore = false;
+            std::string back;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                restore = restore_previous && !auth.signed_in();
+                restore_previous = false;
+                back = previous_token;
+                if (restore)
+                    previous_token.clear();
+            }
+            if (restore && !back.empty() && !use_token(back))
+                log::line("accounts: could not return to the previous account");
         }
     }
 
@@ -1320,7 +1518,8 @@ struct Service::Impl
         return job.home || job.subscriptions || job.history || job.topic || job.library ||
                job.more || job.search || job.channel || job.channel_tab || job.video ||
                job.close_video || job.sign_in || job.cancel_sign_in || job.sign_out ||
-               job.refresh || job.import_token || job.rate || job.subscribe || !job.actions.empty();
+               job.refresh || job.import_token || job.rate || job.subscribe ||
+               !job.actions.empty() || job.add_account || job.switch_account || restore_previous;
     }
 };
 
@@ -1599,15 +1798,18 @@ namespace
 
 struct DetachedGet
 {
-    std::string url;
+    std::vector<std::string> urls;
     std::vector<http::Header> headers;
 };
 
 void *run_detached_get(void *argument)
 {
     std::unique_ptr<DetachedGet> job(static_cast<DetachedGet *>(argument));
-    const http::Response response = http::get(job->url, job->headers, 8);
-    log::line("history: watchtime ping -> %ld %s", response.status, response.error.c_str());
+    for (const std::string &url : job->urls)
+    {
+        const http::Response response = http::get(url, job->headers, 8);
+        log::line("history: watchtime ping -> %ld %s", response.status, response.error.c_str());
+    }
     return nullptr;
 }
 
@@ -1624,10 +1826,13 @@ void Service::report_watch_progress(double position_s)
             return;
         const double elapsed =
             std::chrono::duration<double>(std::chrono::steady_clock::now() - watch.started).count();
-        job = new DetachedGet{watch::account_host(watch::watchtime_ping(
-                                  watch.watchtime_url, watch.cpn, watch.reported_s, position_s,
-                                  watch.length_s, Impl::tv_watch_client(), elapsed)),
-                              Impl::watch_headers(watch.token)};
+        const std::string ping =
+            watch::watchtime_ping(watch.watchtime_url, watch.cpn, watch.reported_s, position_s,
+                                  watch.length_s, Impl::tv_watch_client(), elapsed);
+        job = new DetachedGet{{}, Impl::watch_headers(watch.token)};
+        if (watch::account_host(ping) != ping)
+            job->urls.push_back(ping); // the stats host the answer named
+        job->urls.push_back(watch::account_host(ping));
         watch.reported_s = position_s;
     }
     // Off the frame thread: the request may take a second.
@@ -1672,6 +1877,12 @@ void Service::cancel_sign_in()
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->login_cancel = true;
+    if (!impl_->login_running && !impl_->previous_token.empty())
+    {
+        // "Add account" left before its sign-in started: back to the old one.
+        impl_->restore_previous = true;
+        impl_->wake.notify_all();
+    }
     if (!impl_->login_running && impl_->login.state != Load::idle)
     {
         // Nothing in flight: answer the frame right away.
@@ -1680,6 +1891,37 @@ void Service::cancel_sign_in()
         impl_->login.revision++;
     }
     log::line("login: cancelled (running=%d)", impl_->login_running ? 1 : 0);
+    impl_->wake.notify_all();
+}
+
+std::vector<Service::AccountInfo> Service::saved_accounts() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    std::vector<AccountInfo> out;
+    const std::string &current = impl_->auth.refresh_token();
+    for (const Impl::SavedAccount &account : impl_->saved)
+        out.push_back({account.name, account.photo, account.token == current});
+    return out;
+}
+
+void Service::add_account()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.add_account = true;
+    impl_->login_cancel = false;
+    // The login screen must not ask for a second sign-in of its own while the
+    // worker is still signing the current account out.
+    impl_->login.state = Load::loading;
+    impl_->login.user_code.clear();
+    impl_->login.revision++;
+    impl_->wake.notify_all();
+}
+
+void Service::switch_account(int index)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.switch_account = true;
+    impl_->job.switch_index = index;
     impl_->wake.notify_all();
 }
 

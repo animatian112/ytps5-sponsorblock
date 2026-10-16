@@ -145,6 +145,18 @@ class Service
     void request_sign_in();
     void cancel_sign_in();
     void sign_out();
+    // Up to three remembered accounts: the signed-in one is `active`.
+    struct AccountInfo
+    {
+        std::string name;
+        std::string photo;
+        bool active = false;
+    };
+    std::vector<AccountInfo> saved_accounts() const;
+    // Keeps the current account and signs in another one (the login screen
+    // shows its code); cancelling returns to the current one.
+    void add_account();
+    void switch_account(int index);
     // Reads a token the user put in the install folder (yt-token.json) when
     // nothing is signed in yet. Runs on the worker like every other request.
     void import_token_file();

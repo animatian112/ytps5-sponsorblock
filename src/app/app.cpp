@@ -862,6 +862,17 @@ void App::update(const InputFrame &input, float dt)
         login_return_ = current_ == kLoginScreen ? previous_tab() : current_;
         show(kLoginScreen);
     }
+    if (ask.add_account)
+    {
+        service_.add_account();
+        login_return_ = current_ == kLoginScreen ? previous_tab() : current_;
+        show(kLoginScreen);
+    }
+    if (ask.switch_account >= 0)
+    {
+        service_.switch_account(ask.switch_account);
+        toasts_.push(ui::StatusKind::info, "Switching account", {}, 2.0f);
+    }
     if (ask.cancel_login)
         service_.cancel_sign_in();
     if (ask.sign_out)

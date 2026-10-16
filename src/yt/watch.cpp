@@ -104,7 +104,10 @@ void add_client(std::vector<std::pair<std::string, std::string>> *fields, const 
 std::string playback_ping(const std::string &playback_url, const std::string &cpn,
                           const Client &client)
 {
-    std::vector<std::pair<std::string, std::string>> fields{{"ver", "2"}, {"cpn", cpn}};
+    // el=detailpage: without it YouTube files the view as a Short, and it
+    // never shows in the watch history (yt-dlp's --mark-watched sends it).
+    std::vector<std::pair<std::string, std::string>> fields{
+        {"ver", "2"}, {"cpn", cpn}, {"cmt", "0"}, {"el", "detailpage"}};
     add_client(&fields, client);
     if (!client.name.empty())
     {
@@ -125,6 +128,7 @@ std::string watchtime_ping(const std::string &watchtime_url, const std::string &
                                                             {"et", seconds_text(to_s)},
                                                             {"cmt", seconds_text(to_s)},
                                                             {"len", seconds_text(length_s)},
+                                                            {"el", "detailpage"},
                                                             {"state", "playing"}};
     add_client(&fields, client);
     if (elapsed_s >= 0.0)
