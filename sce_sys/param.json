@@ -15,7 +15,7 @@
   "conceptId": "98260",
   "contentBadgeType": 1,
   "contentId": "UP9000-PPSA98260_00-YOUTUBESPONSORBK",
-  "contentVersion": "01.000.136",
+  "contentVersion": "01.000.137",
   "downloadDataSize": 256,
   "gameIntent": {
     "permittedIntents": [
@@ -31,10 +31,10 @@
   "localizedParameters": {
     "defaultLanguage": "en-US",
     "en-US": {
-      "titleName": "TubeBlock"
+      "titleName": "SmartTube"
     },
     "de-DE": {
-      "titleName": "TubeBlock"
+      "titleName": "SmartTube"
     }
   },
   "masterVersion": "01.00",

@@ -4,6 +4,8 @@
 
 #include "app/settings_screen.hpp"
 
+#include "app/icons.hpp"
+
 #include "app/theme.hpp"
 #include "yt/http.hpp"
 #include "yt/log.hpp"
@@ -445,10 +447,11 @@ void SettingsScreen::activate(int id)
     }
     if (id == kAbout)
     {
-        context_.toasts.push(ui::StatusKind::info, "TubeBlock",
-                             "YouTube with SponsorBlock for PS5. Based on ytps5; segments from "
-                             "sponsor.ajay.app (CC BY-NC-SA 4.0).",
-                             8.0f);
+        context_.toasts.push(ui::StatusKind::info, "SmartTube for PS5",
+                             "Unofficial PS5 port in the style of SmartTube (MIT, (c) yuliskov), "
+                             "built on ytps5. SponsorBlock segments from sponsor.ajay.app "
+                             "(CC BY-NC-SA 4.0).",
+                             10.0f);
         return;
     }
     if (id == kSaveAccount)
@@ -623,6 +626,34 @@ void SettingsScreen::update(const InputFrame &input, float dt, ui::Feedback &fee
     }
 }
 
+namespace
+{
+
+// SmartTube's settings tiles (assets/icons, MIT, yuliskov).
+const char *icon_name(SettingsScreen::Icon icon)
+{
+    switch (icon)
+    {
+    case SettingsScreen::Icon::accounts:
+        return "set_account";
+    case SettingsScreen::Icon::player:
+        return "set_player";
+    case SettingsScreen::Icon::sponsorblock:
+        return "set_block";
+    case SettingsScreen::Icon::general:
+        return "set_general";
+    case SettingsScreen::Icon::network:
+        return "set_network";
+    case SettingsScreen::Icon::updates:
+        return "set_updates";
+    case SettingsScreen::Icon::about:
+        return "set_about";
+    }
+    return "set_general";
+}
+
+} // namespace
+
 void SettingsScreen::draw_icon(gfx::DrawList &list, Icon icon, const gfx::Rect &box) const
 {
     const gfx::Color ink = gfx::Color::rgb(0xffffff);
@@ -711,7 +742,9 @@ void SettingsScreen::draw(const Context &context, Frame &frame) const
         const bool focused = index == focus_;
         const gfx::Rect tile{x, y, kTileW, kTileH};
         list.rounded_rect(tile, 0.0f, gfx::Color::rgb(focused ? 0x2c2c2c : 0x1e1e1e));
-        draw_icon(list, tiles_[i].icon, {tile.cx() - 56.0f, y + 48.0f, 112.0f, 112.0f});
+        const gfx::Rect art{tile.cx() - 56.0f, y + 48.0f, 112.0f, 112.0f};
+        if (!app::draw_icon(list, icon_name(tiles_[i].icon), art, gfx::Color::rgb(0xffffff)))
+            draw_icon(list, tiles_[i].icon, art);
         const gfx::Rect strip{x, y + kTileH - 54.0f, kTileW, 54.0f};
         if (focused)
             list.rounded_rect(strip, 0.0f, gfx::Color::rgb(0xffffff));

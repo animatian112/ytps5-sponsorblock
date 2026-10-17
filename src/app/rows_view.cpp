@@ -42,7 +42,7 @@ void style_shelf(ui::Carousel &shelf)
     shelf.style.card.focus_scale = 1.1f; // Leanback's zoom on the focused card
     shelf.style.card.info_box = true;    // SmartTube's cards: the text in a box under the art
     shelf.style.card.title_lines = 2;
-    shelf.style.card.radius = 12.0f;
+    shelf.style.card.radius = 6.0f;
     shelf.style.card.ring = false;
     shelf.style.card.info_color = gfx::Color::rgb(0x1f1f1f);
     shelf.style.card.info_focus = gfx::Color::rgb(0xe3e3e3); // the focused card's box lights up

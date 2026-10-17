@@ -9,6 +9,7 @@
 // is never started, and the video screen draws a synthetic preview frame.
 
 #include "app/app.hpp"
+#include "app/icons.hpp"
 #include "app/screens.hpp"
 #include "app/theme.hpp"
 #include "audio/mixer.hpp"
@@ -383,6 +384,7 @@ int main(int argc, char **argv)
         service.inject_video(video, std::make_unique<PreviewPlayer>());
     }
 
+    hui::app::init_icons(renderer.batch(), assets + "/icons");
     hui::app::App app(fonts, hui::app::App::load_settings(data_root), data_root, renderer.batch(),
                       service);
     app.set_version("host");

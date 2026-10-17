@@ -16,6 +16,9 @@ ps5-homebrew-ui exists thanks to the maintainers and contributors of:
   PNG writing;
 - LLVM/Clang, Python, zlib and GoogleTest for build, packaging and validation
   tooling;
+- [SmartTube](https://github.com/yuliskov/SmartTube) (MIT, Copyright (c)
+  2020-present yuliskov) for the interface this port follows and the icons
+  and logo under `assets/icons` (see `assets/icons/LICENSE-SmartTube.txt`);
 - [yyjson](https://github.com/ibireme/yyjson) (MIT) for parsing the InnerTube
   responses on the console and on the PC;
 - [QR-Code-generator](https://github.com/nayuki/QR-Code-generator) (MIT) by

@@ -299,5 +299,5 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --generate-notes \
-              --title "TubeBlock $VERSION"
+              --title "SmartTube $VERSION"
           fi

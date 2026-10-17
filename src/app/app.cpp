@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "app/app.hpp"
+#include "app/icons.hpp"
 
 #include "app/screens.hpp"
 #include "app/theme.hpp"
@@ -156,7 +157,7 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     {
         // Entries carry their target in `tag`: a screen index, or a negative
         // action (My videos, Blocked Channels, a pinned channel).
-        const gfx::Color page = gfx::Color::rgb(0x2b3d52);
+        const gfx::Color page = gfx::Color::rgb(0x181818);
         const float centre_x = box.cx();
         const float centre_y = box.cy();
         const float s = box.w * 0.5f;
@@ -170,117 +171,56 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
                          centre_y + s * 0.4f, s * 1.1f, page, gfx::Align::center);
             return;
         }
+        // SmartTube's own icons (assets/icons, MIT, yuliskov).
+        const char *name = "settings";
         switch (tag)
         {
-        case static_cast<int>(kHomeScreen):
-            canvas.list.triangle({centre_x - s, centre_y - s * 0.92f, s * 1.7f, s * 0.9f}, ink);
-            canvas.list.rounded_rect(
-                {centre_x - s * 0.62f, centre_y - s * 0.16f, s * 1.24f, s * 0.96f}, 2.0f, ink);
-            break;
         case static_cast<int>(kSearchScreen):
-            canvas.list.ring(centre_x - s * 0.16f, centre_y - s * 0.16f, s * 0.56f, s * 0.16f, ink);
-            canvas.list.line(centre_x + s * 0.24f, centre_y + s * 0.24f, centre_x + s * 0.84f,
-                             centre_y + s * 0.84f, s * 0.17f, ink);
+            name = "search";
             break;
-        case static_cast<int>(kShortsScreen): // a tall rounded card with a play mark
-            canvas.list.rounded_rect(
-                {centre_x - s * 0.55f, centre_y - s * 0.9f, s * 1.1f, s * 1.8f}, s * 0.35f, ink);
-            canvas.list.triangle({centre_x - s * 0.2f, centre_y - s * 0.3f, s * 0.55f, s * 0.6f},
-                                 page, 0.0f, 1.5708f);
+        case static_cast<int>(kHomeScreen):
+            name = "home";
             break;
-        case static_cast<int>(kChannelsScreen): // a person on a card
+        case static_cast<int>(kShortsScreen):
+            name = "shorts";
+            break;
+        case static_cast<int>(kSportsScreen):
+            name = "sports";
+            break;
+        case static_cast<int>(kLiveScreen):
+            name = "live";
+            break;
+        case static_cast<int>(kGamingScreen):
+            name = "gaming";
+            break;
+        case static_cast<int>(kNewsScreen):
+            name = "news";
+            break;
+        case static_cast<int>(kMusicScreen):
+            name = "music";
+            break;
+        case static_cast<int>(kChannelsScreen):
+            name = "channels";
+            break;
         case kRailMyVideos:
-            canvas.list.rounded_rect(
-                {centre_x - s * 0.85f, centre_y - s * 0.75f, s * 1.7f, s * 1.5f}, 3.0f, ink);
-            if (tag == kRailMyVideos)
-                canvas.list.triangle(
-                    {centre_x - s * 0.25f, centre_y - s * 0.35f, s * 0.7f, s * 0.7f}, page, 0.0f,
-                    1.5708f);
-            else
-            {
-                canvas.list.circle(centre_x, centre_y - s * 0.2f, s * 0.28f, page);
-                canvas.list.rounded_rect(
-                    {centre_x - s * 0.5f, centre_y + s * 0.15f, s * 1.0f, s * 0.42f}, s * 0.2f,
-                    page);
-            }
+            name = "channel";
             break;
-        case kRailBlocked: // a person and a cross
-            canvas.list.circle(centre_x - s * 0.25f, centre_y - s * 0.35f, s * 0.35f, ink);
-            canvas.list.rounded_rect(
-                {centre_x - s * 0.85f, centre_y + s * 0.1f, s * 1.2f, s * 0.6f}, s * 0.3f, ink);
-            canvas.list.line(centre_x + s * 0.45f, centre_y - s * 0.2f, centre_x + s * 0.9f,
-                             centre_y + s * 0.25f, s * 0.14f, ink);
-            canvas.list.line(centre_x + s * 0.9f, centre_y - s * 0.2f, centre_x + s * 0.45f,
-                             centre_y + s * 0.25f, s * 0.14f, ink);
+        case kRailBlocked:
+            name = "blocked";
             break;
-        case static_cast<int>(kSubscriptionsScreen): // a stack of lines
-            for (int row = 0; row < 4; ++row)
-            {
-                const float y = centre_y - s * 0.62f + static_cast<float>(row) * s * 0.42f;
-                const float length = row % 2 == 0 ? s * 1.7f : s * 1.2f;
-                canvas.list.rounded_rect({centre_x - s * 0.85f, y - s * 0.09f, length, s * 0.18f},
-                                         2.0f, ink);
-            }
+        case static_cast<int>(kSubscriptionsScreen):
+            name = "subscriptions";
             break;
-        case static_cast<int>(kHistoryScreen): // a clock
-            canvas.list.ring(centre_x, centre_y, s * 0.82f, s * 0.15f, ink);
-            canvas.list.line(centre_x, centre_y, centre_x, centre_y - s * 0.5f, s * 0.14f, ink);
-            canvas.list.line(centre_x, centre_y, centre_x + s * 0.38f, centre_y + s * 0.1f,
-                             s * 0.14f, ink);
+        case static_cast<int>(kHistoryScreen):
+            name = "history";
             break;
-        case static_cast<int>(kPlaylistsScreen): // lines and a play mark
-            for (int row = 0; row < 3; ++row)
-                canvas.list.rounded_rect({centre_x - s * 0.85f,
-                                          centre_y - s * 0.6f + static_cast<float>(row) * s * 0.45f,
-                                          s * (row == 2 ? 0.8f : 1.3f), s * 0.16f},
-                                         2.0f, ink);
-            canvas.list.triangle({centre_x + s * 0.2f, centre_y + s * 0.1f, s * 0.6f, s * 0.6f},
-                                 ink, 0.0f, 1.5708f);
+        case static_cast<int>(kPlaylistsScreen):
+            name = "playlists";
             break;
-        case static_cast<int>(kMusicScreen): // a note
-            canvas.list.circle(centre_x - s * 0.35f, centre_y + s * 0.5f, s * 0.3f, ink);
-            canvas.list.line(centre_x - s * 0.08f, centre_y + s * 0.5f, centre_x - s * 0.08f,
-                             centre_y - s * 0.75f, s * 0.14f, ink);
-            canvas.list.line(centre_x - s * 0.08f, centre_y - s * 0.75f, centre_x + s * 0.55f,
-                             centre_y - s * 0.45f, s * 0.14f, ink);
-            break;
-        case static_cast<int>(kGamingScreen): // a pad
-            canvas.list.rounded_rect(
-                {centre_x - s * 0.9f, centre_y - s * 0.45f, s * 1.8f, s * 0.9f}, s * 0.4f, ink);
-            canvas.list.circle(centre_x - s * 0.42f, centre_y, s * 0.16f, page);
-            canvas.list.circle(centre_x + s * 0.42f, centre_y, s * 0.16f, page);
-            break;
-        case static_cast<int>(kNewsScreen): // a page with lines
-            canvas.list.rounded_rect(
-                {centre_x - s * 0.75f, centre_y - s * 0.8f, s * 1.5f, s * 1.6f}, 3.0f, ink);
-            for (int row = 0; row < 3; ++row)
-                canvas.list.rounded_rect({centre_x - s * 0.5f,
-                                          centre_y - s * 0.45f + static_cast<float>(row) * s * 0.4f,
-                                          s * 1.0f, s * 0.14f},
-                                         1.0f, page);
-            break;
-        case static_cast<int>(kLiveScreen): // a dot in two rings
-            canvas.list.circle(centre_x, centre_y, s * 0.25f, ink);
-            canvas.list.ring(centre_x, centre_y, s * 0.55f, s * 0.12f, ink);
-            canvas.list.ring(centre_x, centre_y, s * 0.88f, s * 0.12f, ink);
-            break;
-        case static_cast<int>(kSportsScreen): // a trophy
-            canvas.list.rounded_rect(
-                {centre_x - s * 0.6f, centre_y - s * 0.85f, s * 1.2f, s * 0.9f}, s * 0.45f, ink);
-            canvas.list.rounded_rect({centre_x - s * 0.12f, centre_y, s * 0.24f, s * 0.5f}, 1.0f,
-                                     ink);
-            canvas.list.rounded_rect({centre_x - s * 0.5f, centre_y + s * 0.5f, s * 1.0f, s * 0.3f},
-                                     2.0f, ink);
-            break;
-        default: // settings: sliders
-            for (int row = 0; row < 3; ++row)
-            {
-                const float y = centre_y - s * 0.5f + static_cast<float>(row) * s * 0.5f;
-                canvas.list.line(centre_x - s * 0.9f, y, centre_x + s * 0.9f, y, s * 0.14f, ink);
-                canvas.list.circle(centre_x + (row == 1 ? s * 0.3f : -s * 0.3f), y, s * 0.2f, ink);
-            }
+        default:
             break;
         }
+        draw_icon(canvas.list, name, box, ink);
     };
     rail_.set_bounds({0.0f, 128.0f, 320.0f, 880.0f});
 
@@ -813,11 +753,20 @@ void App::activate_rail(int position)
         if (mine.empty())
             toasts_.push(ui::StatusKind::warning, "Your channel isn't known yet",
                          service_.signed_in() ? "Try again in a moment" : "Sign in first", 2.5f);
-        else
+        else if (mine.size() != 24 || mine.rfind("UC", 0) != 0)
         {
             pending_channel_ = {mine, service_.account().first, {}, {}};
             context_.nav.open_channel = true;
             rail_focused_ = false;
+        }
+        else
+        {
+            // The uploads playlist (UU + the id after "UC"): every video in
+            // upload order, newest first, without the channel page's
+            // featured shelf on top.
+            pending_browse_ = "VLUU" + mine.substr(2);
+            rail_focused_ = false;
+            show(kBrowseScreen);
         }
         return;
     }
@@ -950,7 +899,7 @@ void App::draw_prompt(ui::Canvas &canvas) const
     ui::text(list, fonts_.semibold, "New playlist name", 560.0f, 300.0f, 40.0f,
              gfx::Color::rgb(0xffffff));
     const gfx::Rect field{560.0f, 340.0f, 1080.0f, 84.0f};
-    list.rounded_rect(field, 12.0f, gfx::Color::rgb(0x2f4156));
+    list.rounded_rect(field, 12.0f, gfx::Color::rgb(0x262626));
     const bool blink = static_cast<int>(clock_ * 2.0f) % 2 == 0;
     ui::text(
         list, fonts_.regular,
@@ -1445,19 +1394,19 @@ void App::draw_sidebar(ui::Canvas &canvas)
     const float open = rail_.expansion();
     const auto mix = [open](float closed, float opened)
     { return closed + (opened - closed) * open; };
-    const gfx::Color grey = gfx::Color::rgb(0x9e9e9e);
+    const gfx::Color grey = gfx::Color::rgb(0x8b8b8b);
     const gfx::Color white = gfx::Color::rgb(0xffffff);
     if (open > 0.01f)
         list.rounded_rect(
             {0.0f, 0.0f, mix(104.0f, 540.0f), gfx::kVirtualHeight}, 0.0f,
-            gfx::Color::rgb(0x2b3d52, std::min(1.0f, open * 1.5f))); // SmartTube's slate
+            gfx::Color::rgb(0x181818, std::min(1.0f, open * 1.5f))); // SmartTube's Dark Grey
 
     // The search orb (entry 0) and the account's picture.
     const int focus = rail_focused_ ? rail_.focus() : -1;
     const float orb_y = mix(92.0f, 112.0f);
     const float orb_r = mix(30.0f, 50.0f);
     const float search_x = mix(52.0f, 160.0f);
-    list.circle(search_x, orb_y, orb_r, gfx::Color::rgb(0xe53935));
+    list.circle(search_x, orb_y, orb_r, gfx::Color::rgb(0xe52d27));
     if (focus == 0 && !avatar_focus_)
         list.ring(search_x, orb_y, orb_r + 7.0f, 4.0f, white);
     if (rail_.icon)
@@ -1537,7 +1486,7 @@ void App::draw_chrome(Frame &frame)
         int hour = 0;
         int minute = 0;
         bool twelve = true;
-        constexpr float kClockX = 1600.0f;
+        constexpr float kClockX = 1578.0f;
         if (sys::local_clock(&hour, &minute, &twelve))
         {
             char text[16];
@@ -1563,11 +1512,10 @@ void App::draw_chrome(Frame &frame)
             ui::text(overlay.list, fonts_.semibold, text, kClockX, 136.0f, 24.0f,
                      gfx::Color::rgb(0xffffff), gfx::Align::center);
         }
-        // The app's badge, where SmartTube shows its "S".
-        const gfx::Rect badge{1756.0f, 56.0f, 92.0f, 66.0f};
-        overlay.list.rounded_rect(badge, 10.0f, gfx::Color::rgb(0xe62117));
-        ui::text(overlay.list, fonts_.semibold, "T", badge.cx(), badge.cy() + 17.0f, 48.0f,
-                 gfx::Color::rgb(0xffffff), gfx::Align::center);
+        // SmartTube's logo: the red TV with its "S" (assets/icons/logo.png).
+        const gfx::Rect badge{1708.0f, 66.0f, 100.0f, 79.0f};
+        if (!draw_icon(overlay.list, "logo", badge, gfx::Color::rgb(0xffffff)))
+            overlay.list.rounded_rect(badge, 10.0f, gfx::Color::rgb(0xe52d27));
         if (!version_.empty())
         {
             // The running version, and the newer release once one is known.

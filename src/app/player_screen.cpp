@@ -1093,7 +1093,7 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
             start += grown * shrink;
         }
         canvas.list.arc(gfx::kVirtualWidth * 0.5f, gfx::kVirtualHeight * 0.5f, 52.0f, 7.0f, start,
-                        sweep, gfx::Color::rgb(0xff0033));
+                        sweep, gfx::Color::rgb(0xe52d27));
         // Only a long wait says more: what the app is waiting on.
         if (view.waiting_s >= 8.0f)
         {

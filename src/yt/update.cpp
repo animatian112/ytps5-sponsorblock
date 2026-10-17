@@ -49,7 +49,7 @@ namespace
 constexpr std::size_t kWorkerStack = 1u << 20; // 1 MiB
 constexpr int kPollMs = 250;                   // how often install() republishes progress
 constexpr char kTitleId[] = "PPSA98260";       // the app's own title ID (param.json)
-constexpr char kAppName[] = "TubeBlock";       // what the helper's notification names
+constexpr char kAppName[] = "SmartTube";       // what the helper's notification names
 
 enum class Job : unsigned char
 {

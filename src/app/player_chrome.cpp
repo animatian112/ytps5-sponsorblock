@@ -4,6 +4,8 @@
 
 #include "app/player_chrome.hpp"
 
+#include "app/icons.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -30,7 +32,7 @@ constexpr float kQuarter = 1.5707963f;
 
 const gfx::Color kInk = gfx::Color::rgb(0xffffff);
 const gfx::Color kMuted = gfx::Color::rgb(0xc8c8c8);
-const gfx::Color kRed = gfx::Color::rgb(0xff0033);
+const gfx::Color kRed = gfx::Color::rgb(0xe52d27);
 const gfx::Color kDark = gfx::Color::rgb(0x111111);
 
 std::string clock_text(double seconds)
@@ -472,6 +474,64 @@ void PlayerChrome::update(float dt)
 void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button button, float cx,
                              float cy, gfx::Color ink) const
 {
+    // SmartTube's own glyphs (assets/icons, MIT, yuliskov); the drawn
+    // shapes below stay as the fallback when a file is missing.
+    const char *name = nullptr;
+    switch (button)
+    {
+    case Button::restart:
+        name = "skip_previous";
+        break;
+    case Button::rewind:
+        name = "fast_rewind";
+        break;
+    case Button::play:
+        name = playing_ ? "pause" : "play";
+        break;
+    case Button::forward:
+        name = "fast_forward";
+        break;
+    case Button::next:
+        name = "skip_next";
+        break;
+    case Button::skip:
+        name = "skip_segment";
+        break;
+    case Button::speed:
+        name = "speed";
+        break;
+    case Button::captions:
+        name = "cc";
+        break;
+    case Button::quality:
+        name = "quality";
+        break;
+    case Button::audio:
+        name = "audio";
+        break;
+    case Button::like:
+        name = liked_ ? "thumb_up" : "thumb_up_outline";
+        break;
+    case Button::dislike:
+        name = disliked_ ? "thumb_down" : "thumb_down_outline";
+        break;
+    case Button::subscribe:
+        name = "subscribe";
+        break;
+    case Button::channel:
+        name = "channel";
+        break;
+    case Button::save:
+        name = "playlist_add";
+        break;
+    case Button::info:
+        name = "info";
+        break;
+    }
+    const float size = button == Button::play ? 52.0f : 44.0f;
+    if (name != nullptr &&
+        app::draw_icon(list, name, {cx - size * 0.5f, cy - size * 0.5f, size, size}, ink))
+        return;
     const gfx::Color hole = gfx::Color::rgb(0x161616);
     const auto boxed = [&](const char *label)
     {
@@ -548,7 +608,7 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
         break;
     case Button::channel: // the channel's initial in a round avatar
     {
-        list.circle(cx, cy, 22.0f, gfx::Color::rgb(0x5c6bc0));
+        list.circle(cx, cy, 22.0f, gfx::Color::rgb(0x3a3a3a));
         const std::string initial = subtitle_.empty() ? std::string("?") : subtitle_.substr(0, 1);
         if (fonts.semibold.font != nullptr)
             ui::text(list, fonts.semibold, initial, cx, cy + 8.0f, 24.0f, kInk, gfx::Align::center);

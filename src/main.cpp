@@ -8,6 +8,7 @@
 // logged for hardware runs.
 
 #include "app/app.hpp"
+#include "app/icons.hpp"
 #include "audio/cues.hpp"
 #include "audio/mixer.hpp"
 #include "audio/stream_ring.hpp"
@@ -232,6 +233,7 @@ int main()
     // The install folder (/app0) holds the token backup a user can carry over
     // a re-upload; the sandbox copy lives in /download0 and survives reboots.
     yt::Service service(std::string(kDataRoot) + "/auth.json", kInstallRoot, &sink);
+    app::init_icons(renderer.batch(), std::string(kAssets) + "/icons");
     app::App application(fonts, saved, kDataRoot, renderer.batch(), service);
     const std::string version = read_content_version("/app0/sce_sys/param.json");
     application.set_version(version.empty() ? std::string(yt::log::build_stamp())

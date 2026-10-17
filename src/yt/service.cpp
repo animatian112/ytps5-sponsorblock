@@ -727,25 +727,15 @@ struct Service::Impl
         }
         if (!ok)
         {
-            // The server rejects the account token even after a refresh: end
-            // in the sign-in state (the screens then name the cause) instead
-            // of passing the refusal off as an empty feed. Only a retry that
-            // ran and still came back with 401 says that: when the refresh
-            // itself failed the 401 never got a second chance, and the verdict
-            // refresh_token_locked() already made stands - a transport failure
-            // keeps the token and the session and names the network problem, a
-            // rejected grant was already signed out there with its reason.
+            // A 401 that survives a successful token refresh is this page
+            // refusing this account (some browse pages do for brand or second
+            // accounts), not a dead sign-in: the refresh just proved the
+            // token good. Signing out here dropped the access token while the
+            // refresh token stayed, so every screen said "signed out" until a
+            // restart. A rejected grant is handled in refresh_token_locked().
             if (retried && tube.last_status() == 401)
-            {
-                log::line("login: token rejected (%s)", tube.last_error().c_str());
-                const std::string why = tube.last_error();
-                tube.set_access_token({});
-                std::lock_guard<std::mutex> lock(mutex);
-                signed_in = false;
-                last_error = why;
-                login.revision++;
-                reset_account_feeds();
-            }
+                log::line("feed: 401 after a good refresh (%s); staying signed in",
+                          tube.last_error().c_str());
             publish_error(kind, tube.last_error());
             return;
         }
@@ -789,6 +779,7 @@ struct Service::Impl
     bool refresh_token_locked()
     {
         std::string error;
+        const std::string before = auth.refresh_token();
         if (!auth.refresh(&error))
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -810,6 +801,16 @@ struct Service::Impl
         tube.set_access_token(auth.access_token());
         std::lock_guard<std::mutex> lock(mutex);
         signed_in = true;
+        // A refresh may hand out a new refresh token: the remembered account
+        // follows it, or switching back later would offer a dead grant.
+        const std::string &after = auth.refresh_token();
+        if (!before.empty() && after != before)
+        {
+            for (SavedAccount &account : saved)
+                if (account.token == before)
+                    account.token = after;
+            save_accounts();
+        }
         return true;
     }
 

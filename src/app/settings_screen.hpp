@@ -46,7 +46,6 @@ class SettingsScreen final : public Screen
     void draw(const Context &context, Frame &frame) const override;
     std::span<const TourStep> tour() const override;
 
-  private:
     // SmartTube's settings: a grid of tiles, each opening its group of
     // options (or doing one thing, like the network test).
     enum class Icon
@@ -59,6 +58,8 @@ class SettingsScreen final : public Screen
         updates,
         about,
     };
+
+  private:
     struct Tile
     {
         std::string label;

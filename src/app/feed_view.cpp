@@ -61,7 +61,7 @@ FeedView::FeedView()
     grid_.style.card.focus_scale = 1.1f;
     grid_.style.card.info_box = true; // SmartTube's cards: the text in a box under the art
     grid_.style.card.title_lines = 2;
-    grid_.style.card.radius = 12.0f;
+    grid_.style.card.radius = 6.0f;
     grid_.style.card.ring = false;
     grid_.style.card.info_color = gfx::Color::rgb(0x1f1f1f);
     grid_.style.card.info_focus = gfx::Color::rgb(0xe3e3e3); // the focused card's box lights up
