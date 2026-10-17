@@ -195,6 +195,41 @@ SoundBank::Stats SoundBank::load(const std::string &root)
     return stats;
 }
 
+SoundBank::Stats SoundBank::load_overrides(const std::string &directory, SoundSet set)
+{
+    Stats stats;
+    if (set >= SoundSet::count)
+        return stats;
+    std::vector<std::string> names = save::list_files(directory);
+    std::sort(names.begin(), names.end());
+    bool cleared[kCueCount] = {};
+    for (const std::string &name : names)
+    {
+        Cue cue = Cue::count;
+        if (!parse_file_name(name, &cue))
+            continue;
+        std::string data;
+        if (!save::read_file(directory + "/" + name, &data, 16u << 20))
+            continue;
+        DecodedWav wav = decode_wav(data);
+        if (!wav.ok())
+        {
+            ++stats.rejected;
+            stats.errors.push_back(name + ": " + wav.error);
+            continue;
+        }
+        const std::size_t c = static_cast<std::size_t>(cue);
+        if (!cleared[c])
+        {
+            sets_[static_cast<std::size_t>(set)][c].sounds.clear();
+            cleared[c] = true;
+        }
+        add(set, cue, std::move(wav.samples), wav.frames);
+        ++stats.files;
+    }
+    return stats;
+}
+
 SoundBank::Variations *SoundBank::find(Cue cue, SoundSet set)
 {
     const std::size_t c = static_cast<std::size_t>(cue);

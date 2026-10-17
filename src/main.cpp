@@ -226,6 +226,11 @@ int main()
     audio::SoundBank sounds;
     const auto bank = sounds.load(std::string(kAssets) + "/audio/sfx");
     sys::log("[YTV] sounds files=%d rejected=%d", bank.files, bank.rejected);
+    // A sound pack of the user's own: WAVs named like the cues ("select_01.wav",
+    // "focus_01.wav", ...) in /download0/hui/sfx replace the packaged ones.
+    const auto own = sounds.load_overrides(std::string(kDataRoot) + "/sfx", audio::SoundSet::glass);
+    if (own.files > 0 || own.rejected > 0)
+        yt::log::line("app: own sounds %d (rejected %d)", own.files, own.rejected);
 
     yt::log::line("app: display %dx%d, audio %s", display.width(), display.height(),
                   audio_out.errors() == 0 ? "up" : "degraded");

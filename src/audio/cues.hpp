@@ -115,6 +115,9 @@ class SoundBank
 
     // Scans root/<set>/ for every sound set ("<cue>_NN.wav").
     Stats load(const std::string &root);
+    // WAVs named like the cues ("select_01.wav") in one folder replace the
+    // packaged sounds of those cues in `set` (a user's own sound pack).
+    Stats load_overrides(const std::string &directory, SoundSet set);
     // Adds one decoded sound (used by load and by tests).
     void add(SoundSet set, Cue cue, std::vector<float> samples, std::size_t frames);
 
