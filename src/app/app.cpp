@@ -1211,6 +1211,20 @@ void App::update(const InputFrame &input, float dt)
         rebuild_rail();
     card_menu_.set_scheme(settings_.color_scheme);
     service_.set_preferences(preferences());
+    // An account whose token is kept but did not refresh (no network yet,
+    // a hiccup at Google) is tried again every 20 s instead of looking
+    // signed out until the app restarts.
+    if (started_ && !service_.signed_in() && service_.has_token())
+    {
+        token_retry_s_ += dt;
+        if (token_retry_s_ >= 20.0f)
+        {
+            token_retry_s_ = 0.0f;
+            service_.refresh_token();
+        }
+    }
+    else
+        token_retry_s_ = 0.0f;
     context_.nav = Nav{};
 
     // The auto-update card is answered first: while it shows it holds the

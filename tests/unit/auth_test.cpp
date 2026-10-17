@@ -213,6 +213,59 @@ TEST(Auth, ARefusalThatNamesNoDeadGrantKeepsTheToken)
     std::remove(sandbox.c_str());
 }
 
+TEST(Auth, AGrantRefreshesWithTheClientItWasIssuedTo)
+{
+    // A second account linked before YouTube rotated its TV app: its token
+    // carries the old client, and the refresh must use that one first.
+    const std::string sandbox = temp_path("client");
+    yt::Auth auth(sandbox);
+    std::string error;
+    ASSERT_TRUE(auth.adopt_token_json(
+        R"({"v":1,"refresh_token":"second-refresh","client_id":"old-id","client_secret":"old-secret"})",
+        &error))
+        << error;
+    hui::testing::HttpStub::instance().set_handler(
+        [](const yt::http::Request &request) -> yt::http::Response
+        {
+            yt::http::Response response;
+            if (request.url.find("/token") == std::string::npos)
+                return response;
+            response.status = 200;
+            if (request.body.find("client_id=old-id") == std::string::npos)
+            {
+                response.status = 401;
+                response.body = R"({"error":"unauthorized_client"})";
+                return response;
+            }
+            response.body = R"({"access_token":"access-old"})";
+            return response;
+        });
+    EXPECT_TRUE(auth.refresh(&error)) << error;
+    EXPECT_EQ(auth.access_token(), "access-old");
+    yt::Auth reopened(sandbox);
+    EXPECT_NE(reopened.token_json().find("old-id"), std::string::npos) << reopened.token_json();
+
+    // A token without a recorded client: the next pair gets its turn after
+    // an unauthorized_client answer, and the token is kept either way.
+    ASSERT_TRUE(auth.adopt_token_json(R"({"v":1,"refresh_token":"bare-refresh"})", &error));
+    hui::testing::HttpStub::instance().set_handler(
+        [](const yt::http::Request &request) -> yt::http::Response
+        {
+            yt::http::Response response;
+            if (request.url.find("/token") == std::string::npos)
+                return response;
+            response.status = 400;
+            response.body = R"({"error":"unauthorized_client"})";
+            return response;
+        });
+    EXPECT_FALSE(auth.refresh(&error));
+    EXPECT_TRUE(auth.signed_in());
+
+    hui::testing::HttpStub::instance().clear();
+    std::remove(sandbox.c_str());
+    std::remove((sandbox + ".clients").c_str());
+}
+
 } // namespace
 
 TEST(Auth, PutsTheCodeIntoTheQrAddress)

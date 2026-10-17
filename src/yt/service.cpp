@@ -1532,12 +1532,18 @@ struct Service::Impl
                         taken.switch_index < static_cast<int>(saved.size()))
                         token = saved[static_cast<std::size_t>(taken.switch_index)].token;
                 }
-                if (!token.empty() && token != auth.refresh_token())
+                const std::string before = auth.refresh_token();
+                if (!token.empty() && token != before)
                 {
                     if (!use_token(token))
                     {
+                        // Back to the account that was working, rather than
+                        // half in the new one (its token, the old access).
+                        log::line("accounts: switch refused (%s); staying", last_error.c_str());
+                        if (!before.empty())
+                            (void)use_token(before);
                         std::lock_guard<std::mutex> lock(mutex);
-                        last_error = "That account's sign-in has expired";
+                        last_error = "Couldn't switch: that account's sign-in didn't refresh";
                     }
                 }
             }
@@ -2442,6 +2448,12 @@ std::unique_ptr<Player> Service::take_player()
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return std::move(impl_->player);
+}
+
+bool Service::has_token() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->auth.signed_in();
 }
 
 bool Service::signed_in() const

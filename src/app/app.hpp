@@ -171,6 +171,7 @@ class App
     bool rail_pinned_ = false;
     std::uint32_t rail_hidden_ = 0;  // the hidden sections the rail was built with
     float idle_s_ = 0.0f;            // seconds without input, for screen dimming
+    float token_retry_s_ = 0.0f;     // a kept token that did not refresh: try again
     float rail_settle_ = -1.0f;      // seconds the rail focus rested on a section; -1 idle
     std::size_t channel_return_ = 1; // where Circle on a channel page opened from elsewhere goes
     ui::Feedback feedback_;

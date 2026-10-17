@@ -204,9 +204,101 @@ struct Auth::Impl
     std::string token_path;
     std::string access_token;
     std::string refresh_token;
-    std::string client_id;
+    std::string client_id; // the pair this session signs in with (scraped)
     std::string client_secret;
+    // The pair the current refresh token was issued to. A grant only refreshes
+    // with the client it was issued to, and the scraped pair changes when
+    // YouTube rotates its TV app: an account linked in another session (the
+    // second or third one) failed every refresh after a rotation and looked
+    // signed out. Kept beside each token on disk.
+    std::string token_client_id;
+    std::string token_client_secret;
+    struct Known
+    {
+        std::string token;
+        std::string id;
+        std::string secret;
+    };
+    std::vector<Known> known; // <token file>.clients: token TAB id TAB secret
     bool identity_tried = false;
+
+    std::string clients_path() const
+    {
+        return token_path.empty() ? std::string() : token_path + ".clients";
+    }
+
+    void load_known()
+    {
+        known.clear();
+        std::string data;
+        if (clients_path().empty() || !hui::save::read_file(clients_path(), &data, 64u << 10))
+            return;
+        std::size_t at = 0;
+        while (at < data.size())
+        {
+            std::size_t end = data.find('\n', at);
+            if (end == std::string::npos)
+                end = data.size();
+            const std::string line = data.substr(at, end - at);
+            at = end + 1;
+            const std::size_t a = line.find('\t');
+            const std::size_t b = a == std::string::npos ? a : line.find('\t', a + 1);
+            if (b == std::string::npos)
+                continue;
+            known.push_back({line.substr(0, a), line.substr(a + 1, b - a - 1), line.substr(b + 1)});
+        }
+    }
+
+    void save_known() const
+    {
+        if (clients_path().empty())
+            return;
+        std::string data;
+        for (const Known &entry : known)
+            data += entry.token + '\t' + entry.id + '\t' + entry.secret + '\n';
+        (void)hui::save::write_atomic(clients_path(), data);
+    }
+
+    // Records which client the token belongs to (at most 8 tokens).
+    void remember_client(const std::string &token, const std::string &id, const std::string &secret)
+    {
+        if (token.empty() || id.empty())
+            return;
+        token_client_id = id;
+        token_client_secret = secret;
+        for (Known &entry : known)
+        {
+            if (entry.token == token)
+            {
+                if (entry.id == id && entry.secret == secret)
+                    return;
+                entry.id = id;
+                entry.secret = secret;
+                save_known();
+                return;
+            }
+        }
+        known.push_back({token, id, secret});
+        if (known.size() > 8)
+            known.erase(known.begin());
+        save_known();
+    }
+
+    // The recorded client of the current token, when the token file had none.
+    void lookup_client()
+    {
+        if (!token_client_id.empty())
+            return;
+        for (const Known &entry : known)
+        {
+            if (entry.token == refresh_token)
+            {
+                token_client_id = entry.id;
+                token_client_secret = entry.secret;
+                return;
+            }
+        }
+    }
 
     // Fetches the TV page and its bundle once; falls back to the last known
     // pair. Cached for the process lifetime.
@@ -239,6 +331,9 @@ struct Auth::Impl
     {
         access_token.clear();
         refresh_token.clear();
+        token_client_id.clear();
+        token_client_secret.clear();
+        load_known();
         std::string data;
         if (!hui::save::read_file(token_path, &data) || data.empty())
             return;
@@ -253,7 +348,10 @@ struct Auth::Impl
             if (text != nullptr)
                 refresh_token = text;
         }
+        token_client_id = string_field(root, "client_id");
+        token_client_secret = string_field(root, "client_secret");
         yyjson_doc_free(doc);
+        lookup_client();
     }
 
     std::string token_json() const
@@ -262,6 +360,13 @@ struct Auth::Impl
             return {};
         std::string json = "{\"v\":1,\"refresh_token\":";
         append_json_string(json, refresh_token);
+        if (!token_client_id.empty())
+        {
+            json += ",\"client_id\":";
+            append_json_string(json, token_client_id);
+            json += ",\"client_secret\":";
+            append_json_string(json, token_client_secret);
+        }
         json += '}';
         return json;
     }
@@ -399,6 +504,8 @@ Poll Auth::poll(const DeviceCode &code, std::string *error)
             const std::string refresh = string_field(root, "refresh_token");
             if (!refresh.empty())
                 impl_->refresh_token = refresh;
+            // This grant belongs to the client that asked for it.
+            impl_->remember_client(impl_->refresh_token, impl_->client_id, impl_->client_secret);
             impl_->error.clear();
             impl_->persist();
             clear_error(error);
@@ -430,43 +537,65 @@ bool Auth::refresh(std::string *error)
         return false;
     }
 
+    // The token's own client first, then this session's scraped pair, then
+    // the last known one: a grant issued before YouTube rotated its TV app
+    // still refreshes with the pair it was issued to.
     impl_->ensure_identity();
-    std::string body = "grant_type=refresh_token&refresh_token=";
-    body += url_encode_form(impl_->refresh_token);
-    body += "&client_id=";
-    body += impl_->client_id;
-    body += "&client_secret=";
-    body += impl_->client_secret;
-
-    http::Response response = http::post_json(kTokenUrl, form_headers(), body);
-    if (!response.error.empty())
+    std::vector<std::pair<std::string, std::string>> clients;
+    const auto add = [&](const std::string &id, const std::string &secret)
     {
-        impl_->error = response.error;
-        set_error(error, impl_->error);
-        return false;
-    }
+        if (id.empty())
+            return;
+        for (const auto &client : clients)
+            if (client.first == id)
+                return;
+        clients.emplace_back(id, secret);
+    };
+    add(impl_->token_client_id, impl_->token_client_secret);
+    add(impl_->client_id, impl_->client_secret);
+    add(kFallbackClientId, kFallbackClientSecret);
 
-    yyjson_doc *doc = yyjson_read(response.body.data(), response.body.size(), 0);
-    yyjson_val *root = doc != nullptr ? yyjson_doc_get_root(doc) : nullptr;
+    bool done = false;
+    bool every_grant_refused = true;
+    for (const auto &[id, secret] : clients)
+    {
+        std::string body = "grant_type=refresh_token&refresh_token=";
+        body += url_encode_form(impl_->refresh_token);
+        body += "&client_id=";
+        body += id;
+        body += "&client_secret=";
+        body += secret;
 
-    const std::string access = string_field(root, "access_token");
-    const bool done = response.status >= 200 && response.status < 300 && !access.empty();
-    if (done)
-    {
-        impl_->access_token = access;
-        const std::string refresh = string_field(root, "refresh_token");
-        if (!refresh.empty())
-            impl_->refresh_token = refresh;
-        impl_->error.clear();
-        // The server may hand out a new refresh token with the access one;
-        // leaving the old one on disk would sign the next launch (and the
-        // next restore) out with a grant the server no longer knows.
-        // poll() persists for the same reason.
-        impl_->persist();
-        clear_error(error);
-    }
-    else
-    {
+        http::Response response = http::post_json(kTokenUrl, form_headers(), body);
+        if (!response.error.empty())
+        {
+            // The network, not the grant: keep the token, try again later.
+            impl_->error = response.error;
+            set_error(error, impl_->error);
+            return false;
+        }
+
+        yyjson_doc *doc = yyjson_read(response.body.data(), response.body.size(), 0);
+        yyjson_val *root = doc != nullptr ? yyjson_doc_get_root(doc) : nullptr;
+        const std::string access = string_field(root, "access_token");
+        done = response.status >= 200 && response.status < 300 && !access.empty();
+        if (done)
+        {
+            impl_->access_token = access;
+            const std::string refresh = string_field(root, "refresh_token");
+            if (!refresh.empty())
+                impl_->refresh_token = refresh;
+            impl_->remember_client(impl_->refresh_token, id, secret);
+            impl_->error.clear();
+            // The server may hand out a new refresh token with the access one;
+            // leaving the old one on disk would sign the next launch (and the
+            // next restore) out with a grant the server no longer knows.
+            // poll() persists for the same reason.
+            impl_->persist();
+            clear_error(error);
+            yyjson_doc_free(doc);
+            break;
+        }
         const std::string code = string_field(root, "error");
         std::string detail = string_field(root, "error_description");
         if (detail.empty())
@@ -475,27 +604,29 @@ bool Auth::refresh(std::string *error)
             detail = access.empty() ? "no access token" : "http " + std::to_string(response.status);
         impl_->error = detail;
         set_error(error, detail);
-        // Only the grant the server names as dead ("invalid_grant") is beyond
-        // retry: the account is signed out - memory and file - and the app
-        // ends in the sign-in state instead of one that will never work again.
-        // Any other refusal keeps the token. RFC 6749 answers a dead grant as
-        // 400 + invalid_grant and reserves this endpoint's 401 for
-        // invalid_client (the client id/secret pair), so a 401 names the
-        // scraped TV bundle's pair going stale - or a captive portal or proxy
-        // answering 401 - and dropping the grant there would force a re-link
-        // on an account the server never rejected. A transport failure or a
-        // temporary refusal keeps the token too and only reports the error.
-        if (code == "invalid_grant")
-        {
-            if (!impl_->token_path.empty())
-                std::remove(impl_->token_path.c_str());
-            impl_->access_token.clear();
-            impl_->refresh_token.clear();
-        }
+        if (doc != nullptr)
+            yyjson_doc_free(doc);
+        // A refusal that names the client or the grant may be the wrong
+        // client for this grant: the next pair gets its turn. Anything else
+        // (a temporary refusal, a portal) keeps the token as it is.
+        if (code != "invalid_grant" && code != "unauthorized_client" && code != "invalid_client")
+            return false;
+        if (code != "invalid_grant")
+            every_grant_refused = false;
     }
 
-    if (doc != nullptr)
-        yyjson_doc_free(doc);
+    // Only a grant every client called dead ("invalid_grant") is beyond
+    // retry: the account is signed out - memory and file - and the app ends
+    // in the sign-in state instead of one that will never work again. A 401 /
+    // invalid_client names a stale client pair, not a dead grant, and keeps
+    // the token (RFC 6749 reserves it for the client).
+    if (!done && every_grant_refused)
+    {
+        if (!impl_->token_path.empty())
+            std::remove(impl_->token_path.c_str());
+        impl_->access_token.clear();
+        impl_->refresh_token.clear();
+    }
     return done;
 }
 
@@ -515,6 +646,8 @@ void Auth::sign_out()
         std::remove(impl_->token_path.c_str());
     impl_->access_token.clear();
     impl_->refresh_token.clear();
+    impl_->token_client_id.clear();
+    impl_->token_client_secret.clear();
     impl_->error.clear();
 }
 
@@ -547,7 +680,10 @@ bool Auth::adopt_token_json(std::string_view json, std::string *error)
         set_error(error, "token file is not JSON");
         return false;
     }
-    const std::string token = string_field(yyjson_doc_get_root(doc), "refresh_token");
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    const std::string token = string_field(root, "refresh_token");
+    const std::string id = string_field(root, "client_id");
+    const std::string secret = string_field(root, "client_secret");
     yyjson_doc_free(doc);
     if (token.empty())
     {
@@ -556,6 +692,9 @@ bool Auth::adopt_token_json(std::string_view json, std::string *error)
     }
     impl_->refresh_token = token;
     impl_->access_token.clear();
+    impl_->token_client_id = id;
+    impl_->token_client_secret = secret;
+    impl_->lookup_client(); // a remembered account: the client it was linked with
     impl_->persist();
     return true;
 }

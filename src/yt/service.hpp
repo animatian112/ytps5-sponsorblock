@@ -208,6 +208,9 @@ class Service
     std::unique_ptr<Player> take_player();
 
     bool signed_in() const;
+    // A remembered account's token is on hand, whether or not its last
+    // refresh worked (signed_in() says that).
+    bool has_token() const;
     // Loads the saved token once at startup and refreshes it in the background.
     void refresh_token();
     std::string last_error() const;
