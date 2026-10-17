@@ -28,6 +28,8 @@ class FeedView
     void set_state(yt::Load state, const std::string &error);
     // Empty-state text ("Noch nichts geladen", "No results", ...).
     void set_empty_text(std::string text);
+    // Shorts: tall cards (9:16), six a row, the feed's own portrait pictures.
+    void set_portrait(bool portrait);
 
     // Forwards nav to the grid while it is active; returns true when the grid
     // consumed the frame.
@@ -75,8 +77,15 @@ class FeedView
     float smooth_focus() const;
 
   private:
+    // Asks the cache for the pictures of the cards around the focus.
+    void refresh_thumbnails(const Context &context);
+
+    // The picture a card shows: the portrait one for Shorts.
+    std::string thumbnail_for(const yt::FeedItem &item) const;
+
     ui::GridView grid_;
     std::vector<yt::FeedItem> items_;
+    bool portrait_ = false;
     yt::Load state_ = yt::Load::idle;
     std::string error_;
     std::string empty_text_;

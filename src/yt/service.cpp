@@ -683,7 +683,8 @@ struct Service::Impl
             ok = tube.history(&page, continuation);
             break;
         case FeedKind::topic:
-            ok = tube.browse(query, &page, continuation);
+            ok = query == "FEshorts" ? tube.shorts(&page, continuation)
+                                     : tube.browse(query, &page, continuation);
             break;
         case FeedKind::library:
             ok = tube.browse("FElibrary", &page, continuation);
@@ -714,7 +715,8 @@ struct Service::Impl
                     ok = tube.history(&page, continuation);
                     break;
                 case FeedKind::topic:
-                    ok = tube.browse(query, &page, continuation);
+                    ok = query == "FEshorts" ? tube.shorts(&page, continuation)
+                                             : tube.browse(query, &page, continuation);
                     break;
                 case FeedKind::library:
                     ok = tube.browse("FElibrary", &page, continuation);
@@ -2338,6 +2340,15 @@ void Service::inject_feed(FeedKind kind, std::vector<FeedItem> items, std::strin
     view.continuation = std::move(continuation);
     view.error.clear();
     view.revision++;
+}
+
+void Service::inject_topic(std::string browse_id, std::vector<FeedItem> items)
+{
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->topic_id = std::move(browse_id);
+    }
+    inject_feed(FeedKind::topic, std::move(items));
 }
 
 void Service::inject_channels(FeedKind kind, std::vector<ChannelItem> channels)

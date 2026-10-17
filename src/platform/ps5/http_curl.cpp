@@ -4,8 +4,11 @@
 //
 // PacBrew's libcurl plus console_curl.c: no signals, the console's own
 // certificate list and non-blocking sockets. console_curl_setup() installs all
-// three on a handle, so every easy handle here starts with it. A fresh handle
-// per request; callers own the worker thread, never the frame.
+// three on a handle, so every easy handle here starts with it. Handles come
+// from a small pool and go back after the request: a handle keeps its open
+// connections, so the next thumbnail or API call to the same host skips the
+// TCP and TLS handshakes (and the certificate parse) a fresh handle pays.
+// Callers own the worker thread, never the frame.
 
 #include "yt/http.hpp"
 
@@ -14,7 +17,9 @@
 #include <curl/curl.h>
 
 #include <cstddef>
+#include <mutex>
 #include <string>
+#include <vector>
 
 namespace yt::http
 {
@@ -93,6 +98,55 @@ const char *describe(CURLcode code)
     }
 }
 
+// Idle handles, with their connection caches. At most kPoolSize are kept;
+// a burst beyond that gets fresh handles that are cleaned up afterwards.
+constexpr std::size_t kPoolSize = 8;
+
+std::mutex &pool_mutex()
+{
+    static std::mutex instance;
+    return instance;
+}
+
+std::vector<CURL *> &pool()
+{
+    static std::vector<CURL *> instance;
+    return instance;
+}
+
+CURL *take_handle()
+{
+    {
+        std::lock_guard<std::mutex> lock(pool_mutex());
+        std::vector<CURL *> &idle = pool();
+        if (!idle.empty())
+        {
+            CURL *handle = idle.back();
+            idle.pop_back();
+            // Options go back to their defaults; the connections stay.
+            curl_easy_reset(handle);
+            return handle;
+        }
+    }
+    return curl_easy_init();
+}
+
+void give_back(CURL *handle, CURLcode code)
+{
+    // A handle whose transfer failed may hold a broken connection: drop it.
+    if (code == CURLE_OK)
+    {
+        std::lock_guard<std::mutex> lock(pool_mutex());
+        std::vector<CURL *> &idle = pool();
+        if (idle.size() < kPoolSize)
+        {
+            idle.push_back(handle);
+            return;
+        }
+    }
+    curl_easy_cleanup(handle);
+}
+
 } // namespace
 
 std::string describe_lookup(const std::string &host)
@@ -107,7 +161,7 @@ Response perform(const Request &request)
     Response response;
     ensure_global();
 
-    CURL *handle = curl_easy_init();
+    CURL *handle = take_handle();
     if (handle == nullptr)
     {
         response.error = "init";
@@ -160,8 +214,10 @@ Response perform(const Request &request)
     if (code != CURLE_OK)
         response.error = describe(code);
 
+    // The handle goes back to the pool: unhook the header list before freeing it.
+    (void)curl_easy_setopt(handle, CURLOPT_HTTPHEADER, nullptr);
     curl_slist_free_all(headers);
-    curl_easy_cleanup(handle);
+    give_back(handle, code);
     return response;
 }
 

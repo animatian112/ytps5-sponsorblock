@@ -15,6 +15,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace
 {
@@ -464,4 +465,45 @@ TEST(InnerTube, ReadsTheTvSectionContinuationAndChannelTiles)
     EXPECT_TRUE(page.items[0].is_channel());
     EXPECT_EQ(page.items[0].shelf, "Top channels you watch");
     EXPECT_EQ(page.continuation, "page-token");
+}
+
+TEST(InnerTube, ReadsAReelItemAndItsSequenceToken)
+{
+    // reel_item_watch: the Short in replacementEndpoint, its title from the
+    // description panel, the channel from its navigation endpoint, and the
+    // token of the sequence that follows.
+    const char *json = R"({"replacementEndpoint":{"reelWatchEndpoint":{"videoId":"sssssssssss",
+      "thumbnail":{"thumbnails":[{"url":"https://i.ytimg.com/vi/sssssssssss/frame0.jpg","width":1080,"height":1920},
+                                 {"url":"https://i.ytimg.com/vi/sssssssssss/oar2.jpg","width":405,"height":720}]}}},
+      "sequenceContinuation":"seq-token",
+      "engagementPanels":[{"engagementPanelSectionListRenderer":{"content":{"structuredDescriptionContentRenderer":{"items":[
+        {"videoDescriptionHeaderRenderer":{"title":{"runs":[{"text":"A short title"}]},
+          "channel":{"simpleText":"Short Maker"},"views":{"simpleText":"12K views"},
+          "publishDate":{"simpleText":"2 days ago"},
+          "channelNavigationEndpoint":{"browseEndpoint":{"browseId":"UCabcdefghijklmnopqrstuv"}}}}]}}}}]})";
+    yt::FeedItem item;
+    std::string sequence;
+    ASSERT_TRUE(yt::parse_reel_item(json, &item, &sequence));
+    EXPECT_EQ(item.video_id, "sssssssssss");
+    EXPECT_EQ(item.title, "A short title");
+    EXPECT_EQ(item.author, "Short Maker");
+    EXPECT_EQ(item.channel_id, "UCabcdefghijklmnopqrstuv");
+    EXPECT_EQ(item.thumbnail_url, "https://i.ytimg.com/vi/sssssssssss/oar2.jpg");
+    EXPECT_EQ(sequence, "seq-token");
+}
+
+TEST(InnerTube, ReadsAReelSequence)
+{
+    const char *json = R"({"entries":[
+      {"command":{"reelWatchEndpoint":{"videoId":"aaaaaaaaaaa","params":"p-a"}}},
+      {"command":{"reelWatchEndpoint":{"videoId":"bad"}}},
+      {"command":{"reelWatchEndpoint":{"videoId":"bbbbbbbbbbb","params":"p-b"}}}],
+      "continuationEndpoint":{"continuationCommand":{"token":"next-token"}}})";
+    std::vector<yt::ReelEntry> entries;
+    std::string next;
+    ASSERT_TRUE(yt::parse_reel_sequence(json, &entries, &next));
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].video_id, "aaaaaaaaaaa");
+    EXPECT_EQ(entries[1].params, "p-b");
+    EXPECT_EQ(next, "next-token");
 }

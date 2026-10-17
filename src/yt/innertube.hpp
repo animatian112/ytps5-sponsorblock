@@ -53,6 +53,11 @@ class InnerTube
     // A new private playlist named `title`, holding the video.
     bool create_playlist(const std::string &title, const std::string &video_id);
     bool search(const std::string &query, FeedPage *page, const std::string &continuation = {});
+    // The Shorts feed, as SmartTube builds it: the Shorts shelf of the
+    // signed-in subscriptions (TV), then YouTube's endless Shorts sequence
+    // (WEB reel endpoints), each Short's title from its own reel answer. The
+    // continuation is the next sequence token.
+    bool shorts(FeedPage *page, const std::string &continuation = {});
     bool player(const std::string &video_id, VideoInfo *info);
     // Like player(), but keeps every client's answer instead of the first one:
     // a stream URL that one client hands out can be refused by googlevideo
@@ -107,5 +112,19 @@ std::string signature_timestamp(std::string_view js);
 // A channel browse answer: header, tabs and the selected tab's videos. Also
 // exposed for the unit tests.
 bool parse_channel_page(std::string_view json, ChannelPage *page);
+
+// One entry of a reel_watch_sequence answer: the Short, the params its own
+// reel_item_watch request needs, and its (portrait) thumbnail.
+struct ReelEntry
+{
+    std::string video_id;
+    std::string params;
+    std::string thumbnail_url;
+};
+// A reel_item_watch answer: the Short it names (id, title, channel, line,
+// thumbnail) and the token of the sequence that follows it.
+bool parse_reel_item(std::string_view json, FeedItem *item, std::string *sequence);
+// A reel_watch_sequence answer: its Shorts and the next token.
+bool parse_reel_sequence(std::string_view json, std::vector<ReelEntry> *entries, std::string *next);
 
 } // namespace yt

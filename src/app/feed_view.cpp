@@ -76,6 +76,24 @@ FeedView::FeedView()
     grid_.style.exits.left = true;
 }
 
+void FeedView::set_portrait(bool portrait)
+{
+    portrait_ = portrait;
+    grid_.style.columns = portrait ? 6 : 4;
+    grid_.style.card.art_aspect = portrait ? 9.0f / 16.0f : 16.0f / 9.0f;
+    grid_.style.card.subtitle_size = portrait ? 17.0f : 19.0f;
+    grid_.style.card.title_size = portrait ? 21.0f : 24.0f;
+}
+
+std::string FeedView::thumbnail_for(const yt::FeedItem &item) const
+{
+    if (portrait_ && !item.thumbnail_url.empty())
+        return item.thumbnail_url;
+    if (portrait_ && item.video_id.size() == 11)
+        return "https://i.ytimg.com/vi/" + item.video_id + "/oar2.jpg";
+    return card_thumbnail(item);
+}
+
 ui::GridView &FeedView::grid()
 {
     return grid_;
@@ -101,8 +119,13 @@ void FeedView::set_items(const std::vector<yt::FeedItem> &items, const Context &
         if (!item.detail.empty())
             card.subtitle += (card.subtitle.empty() ? "" : "  \xE2\x80\xA2  ") + item.detail;
         card.progress = item.watched >= 0.0f ? std::max(item.watched, 0.03f) : -1.0f;
-        card.texture = context.thumbs.texture(card_thumbnail(item));
+        card.texture = context.thumbs.texture(thumbnail_for(item));
         card.image_aspect = 16.0f / 9.0f;
+        if (portrait_)
+        {
+            const float aspect = context.thumbs.aspect(thumbnail_for(item));
+            card.image_aspect = aspect > 0.0f ? aspect : 9.0f / 16.0f;
+        }
         if (item.live)
             card.badge = "LIVE";
         else
@@ -139,18 +162,7 @@ bool FeedView::handle(const InputFrame &input, ui::Feedback &feedback, const Con
             activated_item_ = items_[static_cast<std::size_t>(focus)];
         }
     }
-    // Cards whose thumbnails arrived while scrolling get their texture here:
-    // set_items() runs only on a feed revision, so patch the visible ones.
-    for (int index = 0; index < grid_.count() && index < static_cast<int>(items_.size()); ++index)
-    {
-        if (grid_.item(index).texture == 0)
-        {
-            const std::uint32_t texture =
-                context.thumbs.texture(card_thumbnail(items_[static_cast<std::size_t>(index)]));
-            if (texture != 0)
-                grid_.item(index).texture = texture;
-        }
-    }
+    refresh_thumbnails(context);
     return event != ui::Event::none;
 }
 
@@ -158,17 +170,33 @@ void FeedView::update(float dt, const Context &context)
 {
     // Refresh visible thumbnails even without input (the grid may not call
     // handle() when it is inactive).
-    for (int index = 0; index < grid_.count() && index < static_cast<int>(items_.size()); ++index)
+    refresh_thumbnails(context);
+    grid_.update(dt);
+}
+
+void FeedView::refresh_thumbnails(const Context &context)
+{
+    // Only the rows around the focus ask for their pictures (a grid of
+    // several pages would otherwise queue every one of them ahead of the
+    // cards in view), and they ask every frame, so a texture the cache
+    // evicted is never drawn under a card that no longer owns it.
+    const int columns = std::max(1, grid_.style.columns);
+    const int count = std::min(grid_.count(), static_cast<int>(items_.size()));
+    const int focus = std::max(0, grid_.focus());
+    const int first = std::max(0, (focus / columns - 2) * columns);
+    const int last = std::min(count, (focus / columns + 4) * columns);
+    for (int index = first; index < last; ++index)
     {
-        if (grid_.item(index).texture == 0)
+        const std::string url = thumbnail_for(items_[static_cast<std::size_t>(index)]);
+        ui::CardItem &card = grid_.item(index);
+        card.texture = context.thumbs.texture(url);
+        if (portrait_ && card.texture != 0)
         {
-            const std::uint32_t texture =
-                context.thumbs.texture(card_thumbnail(items_[static_cast<std::size_t>(index)]));
-            if (texture != 0)
-                grid_.item(index).texture = texture;
+            const float aspect = context.thumbs.aspect(url);
+            if (aspect > 0.0f)
+                card.image_aspect = aspect;
         }
     }
-    grid_.update(dt);
 }
 
 void FeedView::draw(ui::Canvas &canvas, const Context &context) const

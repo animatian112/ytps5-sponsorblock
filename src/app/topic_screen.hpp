@@ -62,6 +62,7 @@ class TopicScreen final : public Screen
     FeedView grid_;
     RowsView rows_;
     bool use_rows_ = false;
+    bool shorts_ = false; // the Shorts section: one portrait grid
     std::uint64_t seen_revision_ = 0;
     bool more_requested_ = false;
     float clock_ = 0.0f;

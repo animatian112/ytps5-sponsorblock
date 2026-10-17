@@ -282,13 +282,22 @@ void RowsView::update(float dt, const Context &context)
     scroll_ += (target - scroll_) * (1.0f - std::exp(-14.0f * dt));
     if (std::fabs(target - scroll_) < 0.5f)
         scroll_ = target;
-    for (auto &row : rows_)
+    // Thumbnails only for the cards on (or next to) the screen: the rows
+    // around the focused one, the cards around each row's focus. Asking for
+    // every card of every row queued hundreds of downloads ahead of the ones
+    // in view and overran the cache. Every frame, so a texture the cache
+    // evicted and handed to another picture is never drawn under the old card.
+    for (std::size_t r = 0; r < rows_.size(); ++r)
     {
-        for (std::size_t i = 0; i < row->items.size(); ++i)
+        auto &row = rows_[r];
+        const int index = static_cast<int>(r);
+        if (index >= focus_row_ - 1 && index <= focus_row_ + 2)
         {
-            ui::CardItem &card = row->shelf.item(static_cast<int>(i));
-            if (card.texture == 0)
-                card.texture = context.thumbs.texture(card_thumbnail(row->items[i]));
+            const int focus = std::max(0, row->shelf.focus());
+            const int count = static_cast<int>(row->items.size());
+            for (int i = std::max(0, focus - 2); i < count && i <= focus + 6; ++i)
+                row->shelf.item(i).texture =
+                    context.thumbs.texture(card_thumbnail(row->items[static_cast<std::size_t>(i)]));
         }
         row->shelf.update(dt);
     }

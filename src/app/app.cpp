@@ -1516,22 +1516,12 @@ void App::draw_chrome(Frame &frame)
         const gfx::Rect badge{1708.0f, 66.0f, 100.0f, 79.0f};
         if (!draw_icon(overlay.list, "logo", badge, gfx::Color::rgb(0xffffff)))
             overlay.list.rounded_rect(badge, 10.0f, gfx::Color::rgb(0xe52d27));
-        if (!version_.empty())
-        {
-            // The running version, and the newer release once one is known.
-            std::string line = version_;
-            if (!update_latest_.empty())
-                line += "   latest " + update_latest_;
-            ui::text(overlay.list, fonts_.mono, line, kContentX, 1046.0f, 20.0f,
-                     gfx::Color::rgb(0x777777));
-        }
-        ui::text(overlay.list, fonts_.regular, screens_[current_]->hint(), 1820.0f, 1046.0f, 20.0f,
-                 gfx::Color::rgb(0x777777), gfx::Align::right);
-    }
-    else
-    {
-        ui::text(overlay.list, fonts_.regular, screens_[current_]->hint(), 1720.0f, 1046.0f, 20.0f,
-                 gfx::Color::rgb(0xbbbbbb), gfx::Align::right);
+        // No build number or button hints along the bottom, as in SmartTube
+        // (Settings > Updates names the version). A newer release only
+        // shows as a white dot on the logo.
+        if (!update_latest_.empty())
+            overlay.list.circle(badge.x + badge.w - 4.0f, badge.y + 4.0f, 9.0f,
+                                gfx::Color::rgb(0xffffff));
     }
     toasts_.set_bounds({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight});
     updates_.draw(overlay);

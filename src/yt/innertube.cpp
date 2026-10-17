@@ -3098,6 +3098,238 @@ bool InnerTube::search(const std::string &query, FeedPage *page, const std::stri
     return parsed;
 }
 
+namespace
+{
+
+// A desktop browser for the WEB reel endpoints (the Shorts sequence only
+// exists for the web player).
+constexpr const char *kDesktopUserAgent =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36";
+constexpr Client kWebReelClient = {
+    kWebClientName, kWebClientVersion, kDesktopUserAgent, nullptr, false, false};
+// Shorts whose title comes from one reel answer each: a page stays quick.
+constexpr std::size_t kShortsPerPage = 12;
+
+// The portrait thumbnail a card needs: the smallest one at least 360 px
+// wide (a 1080 x 1920 frame is slow to fetch and decode), else the largest.
+std::string reel_thumbnail(yyjson_val *thumbnail)
+{
+    yyjson_val *entries = yyjson_obj_get(thumbnail, "thumbnails");
+    const std::size_t count = yyjson_arr_size(entries);
+    std::string best;
+    double best_width = 0.0;
+    std::string largest;
+    double largest_width = -1.0;
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        yyjson_val *entry = yyjson_arr_get(entries, index);
+        const std::string url = string_field(entry, "url");
+        if (url.empty())
+            continue;
+        yyjson_val *width_value = yyjson_obj_get(entry, "width");
+        const double width = yyjson_is_num(width_value) ? yyjson_get_num(width_value) : 0.0;
+        if (width >= 360.0 && (best.empty() || width < best_width))
+        {
+            best = url;
+            best_width = width;
+        }
+        if (width > largest_width)
+        {
+            largest = url;
+            largest_width = width;
+        }
+    }
+    const std::string &chosen = best.empty() ? largest : best;
+    return chosen.empty() ? std::string() : absolute_url(chosen.c_str());
+}
+
+std::string continuation_token(yyjson_val *root)
+{
+    std::string token = string_field(root, "sequenceContinuation");
+    if (token.empty())
+        token = string_field(root, "continuation");
+    if (token.empty())
+        token = string_field(
+            yyjson_obj_get(yyjson_obj_get(root, "continuationEndpoint"), "continuationCommand"),
+            "token");
+    return token;
+}
+
+} // namespace
+
+bool parse_reel_item(std::string_view json, FeedItem *item, std::string *sequence)
+{
+    if (item == nullptr || sequence == nullptr)
+        return false;
+    sequence->clear();
+    yyjson_doc *doc = yyjson_read(json.data(), json.size(), 0);
+    if (doc == nullptr)
+        return false;
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    *sequence = continuation_token(root);
+
+    yyjson_val *reel =
+        yyjson_obj_get(yyjson_obj_get(root, "replacementEndpoint"), "reelWatchEndpoint");
+    const std::string video_id = string_field(reel, "videoId");
+    if (video_id.size() == 11)
+        item->video_id = video_id;
+    const std::string thumbnail = reel_thumbnail(yyjson_obj_get(reel, "thumbnail"));
+    if (!thumbnail.empty())
+        item->thumbnail_url = thumbnail;
+
+    // The description panel names it best (title, channel, views, date);
+    // the player header is the fallback.
+    if (yyjson_val *details = find_object(root, "videoDescriptionHeaderRenderer"))
+    {
+        item->title = text_of(yyjson_obj_get(details, "title"));
+        item->author = text_of(yyjson_obj_get(details, "channel"));
+        const std::string views = text_of(yyjson_obj_get(details, "views"));
+        const std::string date = text_of(yyjson_obj_get(details, "publishDate"));
+        item->detail = views;
+        if (!date.empty())
+            item->detail += (item->detail.empty() ? "" : " \xE2\x80\xA2 ") + date;
+        find_channel_id(yyjson_obj_get(details, "channelNavigationEndpoint"), &item->channel_id, 0);
+    }
+    if (yyjson_val *header = find_object(root, "reelPlayerHeaderRenderer"))
+    {
+        if (item->title.empty())
+            item->title = text_of(yyjson_obj_get(header, "reelTitleText"));
+        if (item->author.empty())
+            item->author = text_of(yyjson_obj_get(header, "channelTitleText"));
+        if (item->detail.empty())
+            item->detail = text_of(yyjson_obj_get(header, "timestampText"));
+        if (item->channel_id.empty())
+            find_channel_id(yyjson_obj_get(header, "channelNavigationEndpoint"), &item->channel_id,
+                            0);
+    }
+    yyjson_doc_free(doc);
+    if (item->thumbnail_url.empty() && item->video_id.size() == 11)
+        item->thumbnail_url = "https://i.ytimg.com/vi/" + item->video_id + "/oar2.jpg";
+    return item->video_id.size() == 11;
+}
+
+bool parse_reel_sequence(std::string_view json, std::vector<ReelEntry> *entries, std::string *next)
+{
+    if (entries == nullptr || next == nullptr)
+        return false;
+    entries->clear();
+    next->clear();
+    yyjson_doc *doc = yyjson_read(json.data(), json.size(), 0);
+    if (doc == nullptr)
+        return false;
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    *next = continuation_token(root);
+    yyjson_val *list = yyjson_obj_get(root, "entries");
+    const std::size_t count = yyjson_arr_size(list);
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        yyjson_val *reel = find_object(yyjson_arr_get(list, index), "reelWatchEndpoint");
+        ReelEntry entry;
+        entry.video_id = string_field(reel, "videoId");
+        if (entry.video_id.size() != 11)
+            continue;
+        entry.params = string_field(reel, "params");
+        entry.thumbnail_url = reel_thumbnail(yyjson_obj_get(reel, "thumbnail"));
+        entries->push_back(std::move(entry));
+    }
+    yyjson_doc_free(doc);
+    return true;
+}
+
+bool InnerTube::shorts(FeedPage *page, const std::string &continuation)
+{
+    if (page == nullptr)
+        return false;
+    *page = FeedPage{};
+    std::vector<std::string> seen;
+    const auto add = [&](FeedItem item)
+    {
+        if (item.video_id.size() != 11 ||
+            std::find(seen.begin(), seen.end(), item.video_id) != seen.end())
+            return;
+        seen.push_back(item.video_id);
+        item.shelf.clear(); // one grid, no rows
+        page->items.push_back(std::move(item));
+    };
+
+    std::string sequence = continuation;
+    if (continuation.empty())
+    {
+        // Signed in: the Shorts shelf of the subscriptions comes first.
+        if (signed_in())
+        {
+            FeedPage subscribed;
+            if (subscriptions(&subscribed))
+                for (FeedItem &item : subscribed.items)
+                {
+                    std::string shelf = item.shelf;
+                    std::transform(shelf.begin(), shelf.end(), shelf.begin(), [](unsigned char c)
+                                   { return static_cast<char>(std::tolower(c)); });
+                    if (shelf.find("shorts") != std::string::npos)
+                        add(std::move(item));
+                }
+        }
+        // The seedless reel: one Short and the token of its sequence.
+        Impl::Attempt first = impl_->post_once(
+            "reel/reel_item_watch",
+            "\"disablePlayerResponse\":true,\"inputType\":\"REEL_WATCH_INPUT_TYPE_SEEDLESS\","
+            "\"params\":\"CA8%3D\"",
+            kWebReelClient);
+        impl_->log_line("reel/reel_item_watch", "seedless", first, first.http_ok ? 1 : 0);
+        FeedItem item;
+        if (first.http_ok && parse_reel_item(first.body, &item, &sequence))
+            add(std::move(item));
+        if (!first.http_ok && page->items.empty())
+        {
+            page->error = impl_->error;
+            return false;
+        }
+    }
+
+    if (!sequence.empty())
+    {
+        Impl::Attempt list = impl_->post_once(
+            "reel/reel_watch_sequence", field_string("sequenceParams", sequence), kWebReelClient);
+        std::vector<ReelEntry> entries;
+        std::string next;
+        const bool parsed = list.http_ok && parse_reel_sequence(list.body, &entries, &next);
+        impl_->log_line("reel/reel_watch_sequence", "shorts", list, entries.size());
+        if (parsed)
+        {
+            page->continuation = next;
+            for (std::size_t index = 0; index < entries.size() && index < kShortsPerPage; ++index)
+            {
+                const ReelEntry &entry = entries[index];
+                FeedItem short_item;
+                short_item.video_id = entry.video_id;
+                short_item.thumbnail_url = entry.thumbnail_url;
+                if (!entry.params.empty())
+                {
+                    std::string extra = "\"disablePlayerResponse\":true,";
+                    extra += field_string("params", entry.params);
+                    extra += ",\"playerRequest\":{" + field_string("videoId", entry.video_id) + "}";
+                    Impl::Attempt details =
+                        impl_->post_once("reel/reel_item_watch", extra, kWebReelClient);
+                    std::string ignored;
+                    if (details.http_ok)
+                        parse_reel_item(details.body, &short_item, &ignored);
+                }
+                if (short_item.thumbnail_url.empty())
+                    short_item.thumbnail_url =
+                        "https://i.ytimg.com/vi/" + entry.video_id + "/oar2.jpg";
+                add(std::move(short_item));
+            }
+        }
+        else if (page->items.empty())
+        {
+            page->error = impl_->error;
+            return false;
+        }
+    }
+    return true;
+}
+
 bool InnerTube::player_variants(const std::string &video_id, std::vector<VideoInfo> *out,
                                 std::string *error)
 {

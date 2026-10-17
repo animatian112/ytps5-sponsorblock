@@ -19,6 +19,9 @@ TopicScreen::TopicScreen(Context &context, const char *id, const char *title, st
     grid_.set_bounds({kContentX, 150.0f, kContentW, 860.0f});
     grid_.set_empty_text("Nothing here right now");
     rows_.set_bounds({kContentX, 140.0f, kContentW, 880.0f});
+    shorts_ = browse_id_ == "FEshorts";
+    if (shorts_)
+        grid_.set_portrait(true); // SmartTube's Shorts grid: tall cards
 }
 
 bool TopicScreen::mine() const
@@ -64,7 +67,7 @@ void TopicScreen::refresh()
     const yt::FeedView view = context_.service.feed(yt::FeedKind::topic);
     grid_.set_items(view.items, context_);
     grid_.set_state(view.state, view.error);
-    use_rows_ = RowsView::shelf_count(view.items) >= 1;
+    use_rows_ = !shorts_ && RowsView::shelf_count(view.items) >= 1;
     if (use_rows_)
         rows_.set_items(view.items, context_);
     more_requested_ = false;

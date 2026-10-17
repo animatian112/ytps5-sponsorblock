@@ -34,6 +34,8 @@ class ThumbCache
     // decoding (the caller draws its placeholder). Requests the download
     // once; calling it every frame is cheap.
     std::uint32_t texture(const std::string &url);
+    // width / height of a loaded image, 0 while it is not loaded.
+    float aspect(const std::string &url) const;
     // Registers an already decoded image (the QR bitmap) under `key`.
     std::uint32_t upload(const std::string &key, const std::uint8_t *rgba, int width, int height);
     // Uploads finished downloads and frees evicted textures; call once per

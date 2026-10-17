@@ -303,6 +303,8 @@ int main(int argc, char **argv)
         shelves[i].shelf = i < 6 ? "Recommended" : (i < 9 ? "Trending" : "Music");
     service.inject_feed(yt::FeedKind::home, shelves, "continuation-fixture");
     service.inject_feed(yt::FeedKind::history, items, {});
+    // The Shorts section: one grid of tall cards.
+    service.inject_topic("FEshorts", items);
     service.inject_feed(yt::FeedKind::subscriptions, items, {});
     service.inject_channels(yt::FeedKind::search, search_page.channels);
     // The channel page the search screen opens: the first card's id must match

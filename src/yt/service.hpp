@@ -217,6 +217,8 @@ class Service
     // ---- offline helpers, used by the PC snapshot run and the console
     // validation tour: publish data without a worker thread ----
     void inject_feed(FeedKind kind, std::vector<FeedItem> items, std::string continuation = {});
+    // The topic slot with the section it belongs to ("FEshorts", ...).
+    void inject_topic(std::string browse_id, std::vector<FeedItem> items);
     // Channels the same injected page carries (search only).
     void inject_channels(FeedKind kind, std::vector<ChannelItem> channels);
     // A channel page without the network: publishes `view` and the tab's
