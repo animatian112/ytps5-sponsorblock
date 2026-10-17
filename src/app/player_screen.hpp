@@ -98,6 +98,14 @@ class PlayerScreen final : public Screen
     int quality_override_ = 0; // a height cap; 0 follows Settings
     std::string audio_track_;  // an audioTrack.id; empty plays the original
     double speed_ = 1.0;
+    // Shuffle: the random pick from the section that plays next, chosen once
+    // per video so the Next button and the end agree; the played ones are
+    // left out until the section is used up.
+    void choose_shuffle();
+    std::string shuffle_pick_;
+    std::string shuffle_for_;
+    std::vector<std::string> played_;
+    std::uint32_t rng_ = 0x9e3779b9u;
     // Jumps to the next (1) or previous (-1) chapter.
     void jump_chapter(int step);
     std::vector<yt::Chapter> chapters_;

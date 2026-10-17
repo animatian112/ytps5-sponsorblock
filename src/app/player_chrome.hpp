@@ -47,7 +47,8 @@ class PlayerChrome
         save, // add to playlist
         open_info,
         open_chapters,
-        pick, // a panel choice: panel() and picked()
+        cycle_mode, // the playback mode button: next, shuffle, repeat, pause, close
+        pick,       // a panel choice: panel() and picked()
     };
     enum class Panel
     {
@@ -62,6 +63,11 @@ class PlayerChrome
 
     // The video's chapters: marks on the seek bar, the current one's name
     // above it, a Chapters button.
+    // Settings::playback_mode, for the mode button's icon.
+    void set_mode(int mode)
+    {
+        mode_ = mode;
+    }
     void set_chapters(std::vector<yt::Chapter> chapters)
     {
         chapters_ = std::move(chapters);
@@ -182,6 +188,7 @@ class PlayerChrome
         save,
         info,
         chapters,
+        mode,
     };
     enum class Zone
     {
@@ -209,6 +216,7 @@ class PlayerChrome
     double buffered_ = 0.0;
     Options options_;
     std::vector<yt::Chapter> chapters_;
+    int mode_ = 0;
     float seek_pending_ = 0.0f; // seconds until a moved target is sought
     bool seek_ready_ = false;
     int seek_streak_ = 0;   // presses in a row: the step grows while held

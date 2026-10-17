@@ -94,9 +94,9 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     : fonts_(fonts), data_root_(std::move(data_root)), settings_(settings), service_(service),
       thumbs_(std::make_unique<ThumbCache>(batch, &delete_texture, 192)),
       resume_(data_root_.empty() ? std::string() : data_root_ + "/resume.txt"),
-      context_{fonts_,  telemetry_,       settings_,       false,      *thumbs_,
-               batch,   service_,         toasts_,         nav_,       active_video_,
-               resume_, pending_channel_, pending_browse_, play_queue_}
+      context_{fonts_,  telemetry_,       settings_,       false,       *thumbs_,
+               batch,   service_,         toasts_,         nav_,        active_video_,
+               resume_, pending_channel_, pending_browse_, play_queue_, section_items_}
 {
     toasts_.style.theme = youtube_theme();
     toasts_.style.anchor = ui::ToastAnchor::top_right;
@@ -558,6 +558,7 @@ enum CardPick
     kPickClearConfirm,
     kPickCancel,
     kPickNewPlaylist,
+    kPickShuffle,
     kPickUnblockBase = 3000,  // + the index of a blocked channel
     kPickPlaylistBase = 1000, // + the index into menu_playlists_
     kPickAccountBase = 2000,  // + the index into the saved accounts
@@ -634,6 +635,8 @@ void App::open_card_menu(const yt::FeedItem &item)
         entries.push_back({"Don't recommend channel", kPickDontRecommend});
     if (video)
         entries.push_back({"Play next", kPickPlayNext});
+    if (video)
+        entries.push_back({"Shuffle play", kPickShuffle});
     entries.push_back({"Open channel", kPickChannel});
     if (signed_in)
         entries.push_back({"Subscribe to the channel", kPickSubscribe});
@@ -692,6 +695,42 @@ void App::open_account_menu()
     if (service_.signed_in())
         entries.push_back({"Sign out", kPickSignOut});
     card_menu_.open("Accounts", std::move(entries));
+}
+
+std::vector<yt::FeedItem> App::current_section(const std::string &video_id) const
+{
+    // The feed of the screen the card is on; a screen with two (search and
+    // a channel page) answers with the one that holds the video.
+    std::vector<yt::FeedKind> kinds;
+    switch (current_)
+    {
+    case kHomeScreen:
+        kinds = {yt::FeedKind::home};
+        break;
+    case kSubscriptionsScreen:
+        kinds = {yt::FeedKind::subscriptions};
+        break;
+    case kHistoryScreen:
+        kinds = {yt::FeedKind::history};
+        break;
+    case kSearchScreen:
+        kinds = {yt::FeedKind::channel, yt::FeedKind::search};
+        break;
+    case kPlayerScreen:
+        kinds = {yt::FeedKind::related};
+        break;
+    default:
+        kinds = {yt::FeedKind::topic, yt::FeedKind::home};
+        break;
+    }
+    for (const yt::FeedKind kind : kinds)
+    {
+        std::vector<yt::FeedItem> items = service_.feed(kind).items;
+        for (const yt::FeedItem &item : items)
+            if (item.video_id == video_id)
+                return items;
+    }
+    return {};
 }
 
 yt::Service::Preferences App::preferences() const
@@ -1070,6 +1109,28 @@ void App::apply_card_pick(int pick)
         play_queue_.push_back(item);
         toasts_.push(ui::StatusKind::info, "Plays next", item.title, 2.0f);
         break;
+    case kPickShuffle:
+    {
+        // SmartTube's shuffle: the section (Home, the playlist, the channel)
+        // plays in random order, starting anywhere in it.
+        std::vector<yt::FeedItem> videos;
+        for (const yt::FeedItem &candidate : current_section(item.video_id))
+            if (candidate.video_id.size() == 11)
+                videos.push_back(candidate);
+        if (videos.empty())
+            videos.push_back(item);
+        settings_.playback_mode = 4;
+        settings_changed_ = true;
+        const std::size_t pick =
+            static_cast<std::size_t>(static_cast<std::uint64_t>(clock_ * 7919.0) % videos.size());
+        section_items_ = videos;
+        shuffle_started_ = true;
+        context_.nav.open_video = true;
+        context_.nav.video_id = videos[pick].video_id;
+        toasts_.push(ui::StatusKind::info, "Shuffle", std::to_string(videos.size()) + " videos",
+                     2.0f);
+        break;
+    }
     case kPickSubscribe:
         if (item.is_channel() || !item.channel_id.empty())
         {
@@ -1365,6 +1426,11 @@ void App::update(const InputFrame &input, float dt)
     }
     else if (ask.open_video && !ask.video_id.empty())
     {
+        // Shuffle picks from the section the video came from; a suggestion
+        // opened in the player keeps the section it had.
+        if (current_ != kPlayerScreen && !shuffle_started_)
+            section_items_ = current_section(ask.video_id);
+        shuffle_started_ = false;
         active_video_ = ask.video_id;
         const std::size_t player = kPlayerScreen;
         if (current_ != player)

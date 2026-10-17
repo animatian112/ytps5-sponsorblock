@@ -279,9 +279,10 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     }
     add_flag(player, "Remember speed", &S::remember_speed,
              "A speed picked in the player stays for the next video");
-    add_steps(player, "Playback mode", &S::playback_mode, {0, 1, 2, 3},
-              {"Next video", "Repeat", "Pause", "Close"},
-              "When a video ends: the next one, the same again, a pause, or back out");
+    add_steps(player, "Playback mode", &S::playback_mode, {0, 4, 1, 2, 3},
+              {"Next video", "Shuffle", "Repeat", "Pause", "Close"},
+              "When a video ends: the next one, a random one from the section, the same again, a "
+              "pause, or back out");
     add_flag(player, "Loop Shorts", &S::loop_shorts, "A Short starts again when it ends");
     add_flag(player, "Remember position", &S::resume, "Continue a video where you left it");
     add_flag(player, "Remember position of short videos", &S::resume_short,

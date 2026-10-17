@@ -87,6 +87,9 @@ struct Context
     std::string &pending_browse;
     // "Play next": videos the player plays before its suggestions, in order.
     std::vector<yt::FeedItem> &play_queue;
+    // The section the playing video was opened from (Home, a playlist, a
+    // channel...): what Shuffle picks from.
+    std::vector<yt::FeedItem> &section;
 };
 
 } // namespace hui::app

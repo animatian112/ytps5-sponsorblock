@@ -34,7 +34,7 @@ constexpr Extra kExtras[] = {
     {2, nullptr, &Settings::remember_speed, 0, 1},
     {3, &Settings::seek_seconds, nullptr, 5, 60},
     {4, &Settings::ui_hide_seconds, nullptr, 0, 30},
-    {5, &Settings::playback_mode, nullptr, 0, 3},
+    {5, &Settings::playback_mode, nullptr, 0, 4},
     {6, nullptr, &Settings::show_clock, 0, 1},
     {7, nullptr, &Settings::show_remaining, 0, 1},
     {8, nullptr, &Settings::show_quality, 0, 1},

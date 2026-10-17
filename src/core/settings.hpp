@@ -61,7 +61,7 @@ struct Settings
     bool remember_speed = true; // keep a changed speed for the next video
     int seek_seconds = 10;      // left/right on the seek bar and L1/R1
     int ui_hide_seconds = 4;    // controls hide after this long (0: never)
-    int playback_mode = 0;      // at the end: 0 next, 1 repeat, 2 pause, 3 close
+    int playback_mode = 0;      // at the end: 0 next, 1 repeat, 2 pause, 3 close, 4 shuffle
     bool show_clock = true;     // the clock in the controls
     bool show_remaining = true; // "Remaining: 4:21" in the controls
     bool show_quality = true;   // "1080p" in the controls

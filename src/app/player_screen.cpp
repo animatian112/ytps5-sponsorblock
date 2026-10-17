@@ -537,6 +537,14 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
                           player_->clock_s() + player_->buffered_s());
         chrome_.set_playing(!player_->paused() && !ended_);
     }
+    // Shuffle picks once per video (and again when the section arrives).
+    if (settings.playback_mode == 4)
+    {
+        const std::string current = playing_id_.empty() ? requested_id_ : playing_id_;
+        if (shuffle_for_ != current || shuffle_pick_.empty())
+            choose_shuffle();
+    }
+    chrome_.set_mode(settings.playback_mode);
     chrome_.set_has_next(next_suggestion() != nullptr);
     {
         // SmartTube's line under the title: channel, then the view count.
@@ -650,6 +658,24 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         case PlayerChrome::Command::open_chapters:
             open_menu(command);
             break;
+        case PlayerChrome::Command::cycle_mode:
+        {
+            // SmartTube's playback mode button: next, shuffle, repeat,
+            // pause, close, and round again. It is the setting itself.
+            static const int kOrder[] = {0, 4, 1, 2, 3};
+            static const char *const kNames[] = {"Play next", "Repeat the video",
+                                                 "Pause at the end", "Close at the end", "Shuffle"};
+            int at = 0;
+            for (int i = 0; i < 5; ++i)
+                if (kOrder[i] == context_.settings.playback_mode)
+                    at = i;
+            context_.settings.playback_mode = kOrder[(at + 1) % 5];
+            context_.settings_changed = true;
+            shuffle_pick_.clear();
+            context_.toasts.push(ui::StatusKind::info, kNames[context_.settings.playback_mode],
+                                 "Playback mode", 1.5f);
+            break;
+        }
         case PlayerChrome::Command::pick:
             apply_pick();
             break;
@@ -745,7 +771,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             player_->seek(0.0);
             player_->set_paused(false);
         }
-        else if (mode == 0 && next_suggestion() != nullptr)
+        else if ((mode == 0 || mode == 4) && next_suggestion() != nullptr)
         {
             play_next();
             return;
@@ -767,6 +793,48 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     related_.update(dt);
 }
 
+void PlayerScreen::choose_shuffle()
+{
+    const std::string current = playing_id_.empty() ? requested_id_ : playing_id_;
+    shuffle_for_ = current;
+    shuffle_pick_.clear();
+    const auto candidates = [&](bool skip_played)
+    {
+        std::vector<const yt::FeedItem *> out;
+        for (const std::vector<yt::FeedItem> *list :
+             std::initializer_list<const std::vector<yt::FeedItem> *>{&context_.section,
+                                                                      &related_items_})
+        {
+            for (const yt::FeedItem &item : *list)
+            {
+                if (item.video_id.size() != 11 || item.video_id == current)
+                    continue;
+                if (skip_played &&
+                    std::find(played_.begin(), played_.end(), item.video_id) != played_.end())
+                    continue;
+                out.push_back(&item);
+            }
+            if (!out.empty())
+                break; // the section first; the suggestions only without one
+        }
+        return out;
+    };
+    std::vector<const yt::FeedItem *> pool = candidates(true);
+    if (pool.empty())
+    {
+        played_.clear(); // the whole section played: start a new round
+        pool = candidates(false);
+    }
+    if (pool.empty())
+        return;
+    // xorshift: no <random> needed for one pick a video.
+    rng_ ^= rng_ << 13;
+    rng_ ^= rng_ >> 17;
+    rng_ ^= rng_ << 5;
+    rng_ ^= static_cast<std::uint32_t>(clock_ * 1000.0f);
+    shuffle_pick_ = pool[rng_ % pool.size()]->video_id;
+}
+
 const yt::FeedItem *PlayerScreen::next_suggestion() const
 {
     // The first suggestion that is not this video: the list YouTube answers
@@ -778,6 +846,14 @@ const yt::FeedItem *PlayerScreen::next_suggestion() const
         if (!item.video_id.empty() && item.video_id != current)
             return &item;
     }
+    // Shuffle: the pick made for this video, from the section.
+    if (context_.settings.playback_mode == 4 && !shuffle_pick_.empty())
+        for (const std::vector<yt::FeedItem> *list :
+             std::initializer_list<const std::vector<yt::FeedItem> *>{&context_.section,
+                                                                      &related_items_})
+            for (const yt::FeedItem &item : *list)
+                if (item.video_id == shuffle_pick_)
+                    return &item;
     for (const yt::FeedItem &item : related_items_)
     {
         if (!item.video_id.empty() && item.video_id != current)
@@ -792,6 +868,11 @@ void PlayerScreen::play_next()
     if (next == nullptr)
         return;
     const std::string id = next->video_id;
+    const std::string current = playing_id_.empty() ? requested_id_ : playing_id_;
+    if (!current.empty())
+        played_.push_back(current);
+    if (played_.size() > 500)
+        played_.erase(played_.begin());
     // A queued pick is played once.
     auto &queue = context_.play_queue;
     queue.erase(std::remove_if(queue.begin(), queue.end(),

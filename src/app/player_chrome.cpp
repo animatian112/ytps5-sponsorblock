@@ -137,6 +137,7 @@ std::vector<PlayerChrome::Button> PlayerChrome::top_buttons() const
     out.push_back(Button::rewind);
     out.push_back(Button::forward);
     out.push_back(Button::speed);
+    out.push_back(Button::mode);
     if (!segment_.empty())
         out.push_back(Button::skip);
     return out;
@@ -203,13 +204,20 @@ std::string PlayerChrome::tooltip(Button button) const
         return "Video info";
     case Button::chapters:
         return "Chapters";
+    case Button::mode:
+    {
+        static const char *const kModes[] = {"Play next", "Repeat the video", "Pause at the end",
+                                             "Close at the end", "Shuffle"};
+        return std::string("Playback mode: ") + kModes[std::clamp(mode_, 0, 4)];
+    }
     }
     return {};
 }
 
 bool PlayerChrome::lit(Button button) const
 {
-    return (button == Button::like && liked_) || (button == Button::dislike && disliked_) ||
+    return (button == Button::mode && mode_ == 4) || (button == Button::like && liked_) ||
+           (button == Button::dislike && disliked_) ||
            (button == Button::subscribe && subscribed_) ||
            (button == Button::captions && captions_on_);
 }
@@ -298,6 +306,8 @@ PlayerChrome::Command PlayerChrome::press(Button button)
         return Command::open_info;
     case Button::chapters:
         return Command::open_chapters;
+    case Button::mode:
+        return Command::cycle_mode;
     }
     return Command::none;
 }
@@ -566,6 +576,14 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
     case Button::chapters:
         name = "chapters";
         break;
+    case Button::mode:
+    {
+        // SmartTube's playback mode icons.
+        static const char *const kIcons[] = {"mode_all", "mode_one", "mode_pause", "mode_none",
+                                             "mode_shuffle"};
+        name = kIcons[std::clamp(mode_, 0, 4)];
+        break;
+    }
     }
     const float size = button == Button::play ? 52.0f : 44.0f;
     if (name != nullptr &&
@@ -665,6 +683,10 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
         list.ring(cx, cy, 20.0f, 4.0f, ink);
         list.circle(cx, cy - 9.0f, 3.0f, ink);
         list.rounded_rect({cx - 2.0f, cy - 3.0f, 4.0f, 14.0f}, 1.0f, ink);
+        break;
+    case Button::mode: // two arrows in a loop
+        list.ring(cx, cy, 18.0f, 4.0f, ink);
+        triangle(list, cx + 18.0f, cy - 4.0f, 14.0f, 1.0f, ink);
         break;
     case Button::chapters: // a list with bullets
         for (int i = 0; i < 3; ++i)

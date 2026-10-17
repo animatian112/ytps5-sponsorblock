@@ -149,9 +149,13 @@ class App
     std::string active_video_;
     ResumeStore resume_;
     yt::ChannelItem pending_channel_;
-    std::string pending_browse_;           // the playlist the browse screen opens
-    std::vector<yt::FeedItem> play_queue_; // "Play next" from the card menu
-    std::size_t player_return_ = 0;        // where Circle in the player goes back to
+    std::string pending_browse_;              // the playlist the browse screen opens
+    std::vector<yt::FeedItem> play_queue_;    // "Play next" from the card menu
+    std::vector<yt::FeedItem> section_items_; // the section a video was opened from
+    bool shuffle_started_ = false;            // "Shuffle play" set section_items_ itself
+    // The videos of the section the focus is in (for Shuffle).
+    std::vector<yt::FeedItem> current_section(const std::string &video_id) const;
+    std::size_t player_return_ = 0; // where Circle in the player goes back to
     Context context_;
     std::vector<std::unique_ptr<Screen>> screens_;
     std::vector<std::unique_ptr<Screen>>::size_type current_ = kHomeScreen;
