@@ -507,3 +507,18 @@ TEST(InnerTube, ReadsAReelSequence)
     EXPECT_EQ(entries[1].params, "p-b");
     EXPECT_EQ(next, "next-token");
 }
+
+TEST(InnerTube, AShowsSeasonsAreALabelNotSeconds)
+{
+    // A show's tile: its overlay says "8" + " seasons" in two runs.
+    const char *json = R"({"contents":[{"tileRenderer":{"contentType":"TILE_CONTENT_TYPE_PLAYLIST",
+      "metadata":{"tileMetadataRenderer":{"title":{"simpleText":"A show"}}},
+      "header":{"tileHeaderRenderer":{"thumbnailOverlays":[{"thumbnailOverlayTimeStatusRenderer":
+        {"text":{"runs":[{"text":"8"},{"text":" seasons"}]},"style":"DEFAULT"}}]}},
+      "onSelectCommand":{"watchEndpoint":{"videoId":"sssssssssss"}}}}]})";
+    yt::FeedPage page;
+    ASSERT_TRUE(yt::parse_feed_page(json, &page));
+    ASSERT_EQ(page.items.size(), 1u);
+    EXPECT_DOUBLE_EQ(page.items[0].length_s, 0.0);
+    EXPECT_EQ(page.items[0].badge, "8 seasons");
+}

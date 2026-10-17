@@ -363,15 +363,35 @@ double parse_clock(const char *text)
 // show's "8 seasons" or a playlist's "46 videos" is a label, not a length.
 bool is_clock_text(const std::string &text)
 {
+    // A running time always has a colon ("0:08"); a bare "8" is the first
+    // part of "8 seasons" split over several runs, never eight seconds.
     bool digit = false;
+    bool colon = false;
     for (const char ch : text)
     {
         if (ch >= '0' && ch <= '9')
             digit = true;
-        else if (ch != ':' && ch != ' ')
+        else if (ch == ':')
+            colon = true;
+        else if (ch != ' ')
             return false;
     }
-    return digit;
+    return digit && colon;
+}
+
+// Every run of a text object joined ("8" + " seasons"), or its simpleText.
+std::string full_text(yyjson_val *container)
+{
+    yyjson_val *runs = yyjson_obj_get(container, "runs");
+    if (yyjson_is_arr(runs))
+    {
+        std::string out;
+        for (std::size_t i = 0, n = yyjson_arr_size(runs); i < n; ++i)
+            out += string_field(yyjson_arr_get(runs, i), "text");
+        if (!out.empty())
+            return out;
+    }
+    return string_field(container, "simpleText");
 }
 
 double length_seconds(yyjson_val *obj)
@@ -851,7 +871,7 @@ void collect_tile(yyjson_val *tile, FeedPage *page)
         const std::string style = string_field(status, "style");
         if (style == "LIVE")
             item.live = true;
-        const std::string length = renderer_text(yyjson_obj_get(status, "text"));
+        const std::string length = full_text(yyjson_obj_get(status, "text"));
         if (length.empty() || item.length_s > 0.0)
             continue;
         if (is_clock_text(length))
