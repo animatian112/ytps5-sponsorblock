@@ -67,9 +67,10 @@ TEST(Settings, AVersionThreeSaveLoadsWithSponsorBlockDefaults)
     Settings before;
     before.music_volume = 2;
     before.max_height = 720;
-    // A version-3 save is a version-4 one without the last three bytes.
+    // A version-3 save is the first 22 bytes of a version-4/5 one (the
+    // fixed fields) without the last three (SponsorBlock).
     std::string data = encode_settings(before);
-    data.resize(data.size() - 3);
+    data.resize(22 - 3);
     data[0] = 3;
     Settings after;
     after.sb_enabled = false;
@@ -152,3 +153,37 @@ TEST(Settings, TheLastCodecCannotBeSwitchedOff)
 }
 
 } // namespace
+
+TEST(Settings, SmartTubeSettingsRoundTripAndAVersionFourSaveKeepsDefaults)
+{
+    Settings before;
+    before.speed_index = 5;
+    before.seek_seconds = 30;
+    before.playback_mode = 2;
+    before.show_clock = false;
+    before.hidden_sections = 0x5;
+    before.grid_columns = 5;
+    before.color_scheme = 2;
+    before.sb_markers = false;
+    Settings after;
+    ASSERT_TRUE(decode_settings(encode_settings(before), &after));
+    EXPECT_EQ(after.speed_index, 5);
+    EXPECT_EQ(after.seek_seconds, 30);
+    EXPECT_EQ(after.playback_mode, 2);
+    EXPECT_FALSE(after.show_clock);
+    EXPECT_TRUE(after.section_hidden(0));
+    EXPECT_FALSE(after.section_hidden(1));
+    EXPECT_TRUE(after.section_hidden(2));
+    EXPECT_EQ(after.grid_columns, 5);
+    EXPECT_EQ(after.color_scheme, 2);
+    EXPECT_FALSE(after.sb_markers);
+
+    std::string data = encode_settings(before);
+    data.resize(22);
+    data[0] = 4;
+    Settings old;
+    ASSERT_TRUE(decode_settings(data, &old));
+    EXPECT_EQ(old.speed_index, 3);
+    EXPECT_TRUE(old.show_clock);
+    EXPECT_EQ(old.hidden_sections, 0u);
+}

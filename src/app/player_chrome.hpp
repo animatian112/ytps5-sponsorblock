@@ -15,6 +15,7 @@
 #pragma once
 
 #include "core/input.hpp"
+#include "yt/types.hpp"
 #include "ui/components.hpp"
 
 #include <string>
@@ -45,6 +46,7 @@ class PlayerChrome
         channel,
         save, // add to playlist
         open_info,
+        open_chapters,
         pick, // a panel choice: panel() and picked()
     };
     enum class Panel
@@ -55,7 +57,24 @@ class PlayerChrome
         quality,
         audio,
         info,
+        chapters,
     };
+
+    // The video's chapters: marks on the seek bar, the current one's name
+    // above it, a Chapters button.
+    void set_chapters(std::vector<yt::Chapter> chapters)
+    {
+        chapters_ = std::move(chapters);
+    }
+    // A seek the player pressed left/right for, once the presses stopped
+    // (SmartTube's seek: the bar moves at once, the video follows when the
+    // target settles, so ten presses cost one seek). True once per seek.
+    bool take_seek()
+    {
+        const bool ready = seek_ready_;
+        seek_ready_ = false;
+        return ready;
+    }
 
     void set_times(double position, double duration, double buffered);
     void set_playing(bool playing);
@@ -77,6 +96,21 @@ class PlayerChrome
         has_channel_ = has_channel;
     }
     // The clock line on the right ("Fri Oct 16  10:34 AM").
+    // SmartTube's player settings.
+    struct Options
+    {
+        double seek_step = 10.0; // seconds per left/right on the seek bar
+        float hide_after = 4.0f; // seconds without input while playing (0: never)
+        bool clock = true;       // the clock at the right of the top row
+        bool remaining = true;   // "Remaining: 4:21"
+        bool quality = true;     // "1080p" at the right of the top row
+        bool tooltips = true;    // the focused button's name
+        int ok_behavior = 0;     // Cross while hidden: 0 controls, 1 pause, 2 both
+    };
+    void set_options(const Options &options)
+    {
+        options_ = options;
+    }
     void set_clock(std::string clock)
     {
         clock_ = std::move(clock);
@@ -147,6 +181,7 @@ class PlayerChrome
         channel,
         save,
         info,
+        chapters,
     };
     enum class Zone
     {
@@ -172,6 +207,12 @@ class PlayerChrome
     double position_ = 0.0;
     double duration_ = 0.0;
     double buffered_ = 0.0;
+    Options options_;
+    std::vector<yt::Chapter> chapters_;
+    float seek_pending_ = 0.0f; // seconds until a moved target is sought
+    bool seek_ready_ = false;
+    int seek_streak_ = 0;   // presses in a row: the step grows while held
+    float seek_gap_ = 0.0f; // seconds since the last seek press
     bool playing_ = true;
     std::vector<ui::MediaRange> ranges_;
     std::string title_;

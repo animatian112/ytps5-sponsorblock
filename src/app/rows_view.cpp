@@ -60,7 +60,9 @@ ui::CardItem card_for(const yt::FeedItem &item, const Context &context)
         card.subtitle += (card.subtitle.empty() ? "" : "  \xE2\x80\xA2  ") + item.detail;
     card.texture = context.thumbs.texture(card_thumbnail(item));
     card.image_aspect = 16.0f / 9.0f;
-    card.badge = item.live ? std::string("LIVE") : format_duration(item.length_s);
+    card.badge = item.live             ? std::string("LIVE")
+                 : item.length_s > 0.0 ? format_duration(item.length_s)
+                                       : item.badge;
     card.progress = item.watched >= 0.0f ? std::max(item.watched, 0.03f) : -1.0f;
     return card;
 }
@@ -291,6 +293,9 @@ void RowsView::update(float dt, const Context &context)
     {
         auto &row = rows_[r];
         const int index = static_cast<int>(r);
+        // Settings > User interface: title lines and corners.
+        row->shelf.style.card.title_lines = context.settings.title_lines;
+        row->shelf.style.card.radius = context.settings.rounded_cards ? 6.0f : 0.0f;
         if (index >= focus_row_ - 1 && index <= focus_row_ + 2)
         {
             const int focus = std::max(0, row->shelf.focus());

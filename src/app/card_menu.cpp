@@ -4,6 +4,8 @@
 
 #include "app/card_menu.hpp"
 
+#include "app/theme.hpp"
+
 #include <algorithm>
 
 namespace hui::app
@@ -80,9 +82,9 @@ void CardMenu::draw(ui::Canvas &canvas, const ui::Fonts &fonts) const
     list.push_opacity(std::min(1.0f, shown_ * 1.4f));
     list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
                       gfx::Color::rgb(0x000000, 0.45f));
-    list.rounded_rect({x, 0.0f, kWidth, gfx::kVirtualHeight}, 0.0f,
-                      gfx::Color::rgb(0x262626)); // SmartTube's Dark Grey dialog
-    list.rounded_rect({x, 0.0f, kWidth, kHeader}, 0.0f, gfx::Color::rgb(0x181818));
+    const Palette &colors = palette(scheme_);
+    list.rounded_rect({x, 0.0f, kWidth, gfx::kVirtualHeight}, 0.0f, colors.dialog);
+    list.rounded_rect({x, 0.0f, kWidth, kHeader}, 0.0f, colors.header);
     ui::text(list, fonts.semibold, fonts.semibold.font->fit(title_, 34.0f, kWidth - 112.0f),
              x + 56.0f, 100.0f, 34.0f, kInk);
     const int count = static_cast<int>(entries_.size());
@@ -93,7 +95,7 @@ void CardMenu::draw(ui::Canvas &canvas, const ui::Fonts &fonts) const
     {
         const gfx::Rect row{x, kHeader + static_cast<float>(i - first) * kRow, kWidth, kRow};
         if (i == focus_)
-            list.rounded_rect(row, 0.0f, gfx::Color::rgb(0x3a3a3a));
+            list.rounded_rect(row, 0.0f, colors.focus);
         const std::string &label = entries_[static_cast<std::size_t>(i)].label;
         ui::text(list, fonts.regular, fonts.regular.font->fit(label, 28.0f, kWidth - 112.0f),
                  x + 56.0f, row.cy() + 10.0f, 28.0f, kInk);

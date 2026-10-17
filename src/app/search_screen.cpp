@@ -127,10 +127,12 @@ void SearchScreen::enter()
         const yt::ChannelItem channel = context_.pending_channel;
         context_.pending_channel = {};
         open_channel_item(channel);
+        channel_external_ = true;
         return;
     }
     // A fresh visit starts on the query answer, whatever the last one opened.
     in_channel_ = false;
+    channel_external_ = false;
     spot_ = Spot::field;
     grid_focus_ = 0;
     grid_scrolled_ = false;
@@ -140,6 +142,12 @@ void SearchScreen::enter()
     results_.set_active(false);
     channels_.set_active(false);
     tabs_.set_focused(false);
+    // Settings > Search > Show keyboard automatically.
+    if (context_.settings.keyboard_auto)
+    {
+        keys_.enter();
+        spot_ = Spot::keyboard;
+    }
 }
 
 void SearchScreen::run_search()
@@ -230,6 +238,12 @@ void SearchScreen::open_channel(std::size_t index)
     if (index >= channel_items_.size())
         return;
     open_channel_item(channel_items_[index]);
+    channel_external_ = false;
+}
+
+bool SearchScreen::uses_back() const
+{
+    return in_channel_ || spot_ != Spot::field;
 }
 
 void SearchScreen::open_channel_item(const yt::ChannelItem &channel)
@@ -365,13 +379,26 @@ void SearchScreen::update_channel(const InputFrame &input, ui::Feedback &feedbac
 {
     // Nothing owns the focus while the page is on its way: no press lands.
     if (channel_loading())
+    {
+        // Circle still leaves a page that is taking its time.
+        if (input.is_pressed(Action::back))
+        {
+            if (channel_external_)
+                context_.nav.leave_channel = true;
+            else
+                back_to_results();
+        }
         return;
+    }
 
     // Circle anywhere leaves the page for the answer that opened it. The
     // keyboard, while it is up, gets it first (it closes itself).
     if (spot_ != Spot::keyboard && input.is_pressed(Action::back))
     {
-        back_to_results();
+        if (channel_external_)
+            context_.nav.leave_channel = true;
+        else
+            back_to_results();
         return;
     }
 

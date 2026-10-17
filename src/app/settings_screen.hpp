@@ -41,6 +41,10 @@ class SettingsScreen final : public Screen
     {
         return wants_rail_;
     }
+    bool uses_back() const override
+    {
+        return open_ >= 0;
+    }
     void enter() override;
     void update(const InputFrame &input, float dt, ui::Feedback &feedback) override;
     void draw(const Context &context, Frame &frame) const override;
@@ -51,9 +55,12 @@ class SettingsScreen final : public Screen
     enum class Icon
     {
         accounts,
+        main_ui,
         player,
-        sponsorblock,
+        subtitles,
         general,
+        search,
+        sponsorblock,
         network,
         updates,
         about,
@@ -73,6 +80,26 @@ class SettingsScreen final : public Screen
         return *tiles_[static_cast<std::size_t>(open_)].form;
     }
     ui::Form &add_tile(const char *label, Icon icon);
+    // One option bound to a Settings field: a toggle (flag, or a sidebar
+    // section's visibility bit) or a stepper over `values`.
+    struct Binding
+    {
+        int id = 0;
+        bool Settings::*flag = nullptr;
+        int Settings::*number = nullptr;
+        std::vector<int> values;
+        int section = -1; // Settings::hidden_sections bit; the toggle reads "shown"
+    };
+    void add_flag(ui::Form &form, const char *label, bool Settings::*flag,
+                  const char *description = nullptr);
+    void add_steps(ui::Form &form, const char *label, int Settings::*number,
+                   std::vector<int> values, std::vector<std::string> labels,
+                   const char *description = nullptr);
+    void add_section(ui::Form &form, int section);
+    // True when the id was one of the bound options (and is now applied).
+    bool apply_binding(int id);
+    std::vector<Binding> bindings_;
+    int next_binding_id_ = 500;
     // The Accounts page lists the remembered accounts; it is rebuilt each
     // time it opens and when the list changes.
     void rebuild_accounts();

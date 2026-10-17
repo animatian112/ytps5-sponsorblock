@@ -56,6 +56,9 @@ struct VideoView
     // The watch-history report for this video: "" (none yet), "ok", or why
     // it failed.
     std::string history_status;
+    // The video's chapters: the watch page's own, else the description's
+    // timestamps (yt/chapters.hpp). Empty when it has none.
+    std::vector<Chapter> chapters;
     std::string error;
     // What the pipeline is doing right now ("Player info", "Streams",
     // "Decoder"): the player screen shows it instead of guessing.
@@ -213,6 +216,24 @@ class Service
     // read: the frame shows the restore message exactly then, never for a
     // token that was not restored and loaded.
     bool take_token_restored();
+
+    // SmartTube's content settings: what the feeds leave out, and whether
+    // YouTube is told what was watched.
+    struct Preferences
+    {
+        bool history = true;
+        bool shorts_home = false;
+        bool shorts_subscriptions = false;
+        bool shorts_history = false;
+        bool shorts_search = false;
+        bool watched_home = false;
+        bool watched_subscriptions = false;
+        bool streams_subscriptions = false;
+        bool mixes = false;
+        bool operator==(const Preferences &) const = default;
+    };
+    // Cheap to call every frame: only a change refreshes the feeds.
+    void set_preferences(const Preferences &preferences);
 
     // ---- offline helpers, used by the PC snapshot run and the console
     // validation tour: publish data without a worker thread ----

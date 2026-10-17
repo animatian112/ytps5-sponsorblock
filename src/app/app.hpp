@@ -13,6 +13,7 @@
 #include "core/settings.hpp"
 #include "core/tween.hpp"
 #include "ui/components.hpp"
+#include "yt/service.hpp"
 #include "yt/update.hpp"
 
 #include <cstddef>
@@ -164,6 +165,10 @@ class App
     ui::SideNav rail_;
     bool rail_focused_ = false;
     bool rail_pinned_ = false;
+    std::uint32_t rail_hidden_ = 0;  // the hidden sections the rail was built with
+    float idle_s_ = 0.0f;            // seconds without input, for screen dimming
+    float rail_settle_ = -1.0f;      // seconds the rail focus rested on a section; -1 idle
+    std::size_t channel_return_ = 1; // where Circle on a channel page opened from elsewhere goes
     ui::Feedback feedback_;
     CardMenu card_menu_;
     yt::FeedItem menu_item_;
@@ -173,6 +178,8 @@ class App
     // The sidebar: SmartTube's sections, My videos, Blocked Channels, the
     // pinned channels and Settings; each entry's tag names its target.
     void rebuild_rail();
+    // The service's content filters and history switch, from the settings.
+    yt::Service::Preferences preferences() const;
     int rail_position(std::size_t screen) const;
     void activate_rail(int position);
     void load_pins();

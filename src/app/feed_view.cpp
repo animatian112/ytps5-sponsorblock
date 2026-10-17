@@ -129,7 +129,7 @@ void FeedView::set_items(const std::vector<yt::FeedItem> &items, const Context &
         if (item.live)
             card.badge = "LIVE";
         else
-            card.badge = format_duration(item.length_s);
+            card.badge = item.length_s > 0.0 ? format_duration(item.length_s) : item.badge;
         cards.push_back(std::move(card));
     }
     grid_.set_items(std::move(cards));
@@ -168,6 +168,12 @@ bool FeedView::handle(const InputFrame &input, ui::Feedback &feedback, const Con
 
 void FeedView::update(float dt, const Context &context)
 {
+    // Settings > User interface: cards a row, title lines, corners.
+    const Settings &settings = context.settings;
+    if (!portrait_)
+        grid_.style.columns = settings.grid_columns;
+    grid_.style.card.title_lines = settings.title_lines;
+    grid_.style.card.radius = settings.rounded_cards ? 6.0f : 0.0f;
     // Refresh visible thumbnails even without input (the grid may not call
     // handle() when it is inactive).
     refresh_thumbnails(context);

@@ -38,8 +38,14 @@ class CardMenu
     int handle(const InputFrame &input, ui::Feedback &feedback);
     void update(float dt);
     void draw(ui::Canvas &canvas, const ui::Fonts &fonts) const;
+    // The color scheme (theme.hpp palette()).
+    void set_scheme(int scheme)
+    {
+        scheme_ = scheme;
+    }
 
   private:
+    int scheme_ = 0;
     std::string title_;
     std::vector<Entry> entries_;
     int focus_ = 0;

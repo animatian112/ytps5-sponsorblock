@@ -14,6 +14,17 @@ const ui::Theme &youtube_theme();
 // on a dark pill rather than on the red accent.
 const ui::Theme &card_theme();
 
+// SmartTube's color schemes (Settings > User interface > Color scheme): the
+// sidebar, the side menus' body and header, and a focused menu row.
+struct Palette
+{
+    gfx::Color sidebar;
+    gfx::Color dialog;
+    gfx::Color header;
+    gfx::Color focus;
+};
+const Palette &palette(int scheme);
+
 // The content column right of the collapsed rail, shared by every section.
 constexpr float kContentX = 160.0f;
 constexpr float kContentW = 1680.0f;

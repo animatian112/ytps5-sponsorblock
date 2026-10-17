@@ -61,4 +61,24 @@ const ui::Theme &card_theme()
     return value;
 }
 
+const Palette &palette(int scheme)
+{
+    static const Palette kPalettes[] = {
+        // Dark Grey (SmartTube's default look)
+        {gfx::Color::rgb(0x181818), gfx::Color::rgb(0x262626), gfx::Color::rgb(0x181818),
+         gfx::Color::rgb(0x3a3a3a)},
+        // Dark
+        {gfx::Color::rgb(0x000000), gfx::Color::rgb(0x161616), gfx::Color::rgb(0x0b0b0b),
+         gfx::Color::rgb(0x333333)},
+        // Red
+        {gfx::Color::rgb(0x7f1d1a), gfx::Color::rgb(0x262626), gfx::Color::rgb(0x7f1d1a),
+         gfx::Color::rgb(0xb3261e)},
+        // Blue Grey
+        {gfx::Color::rgb(0x263238), gfx::Color::rgb(0x37474f), gfx::Color::rgb(0x263238),
+         gfx::Color::rgb(0x546e7a)},
+    };
+    constexpr int count = static_cast<int>(sizeof(kPalettes) / sizeof(kPalettes[0]));
+    return kPalettes[scheme >= 0 && scheme < count ? scheme : 0];
+}
+
 } // namespace hui::app

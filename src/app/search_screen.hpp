@@ -51,6 +51,7 @@ class SearchScreen final : public Screen
     void draw(const Context &context, Frame &frame) const override;
     std::span<const TourStep> tour() const override;
     bool wants_rail_focus() const override;
+    bool uses_back() const override;
 
   private:
     // The component that owns the focus. The keyboard and the channel row only
@@ -88,7 +89,10 @@ class SearchScreen final : public Screen
     ui::TabBar tabs_;       // the tabs of the open channel page
     std::vector<yt::ChannelItem> channel_items_;
     Spot spot_ = Spot::field;
-    bool in_channel_ = false;        // the grid shows a channel page, not the answer
+    bool in_channel_ = false; // the grid shows a channel page, not the answer
+    // The page came from outside the search (a card menu, the player, the
+    // sidebar): Circle goes back there, not to a search nobody asked for.
+    bool channel_external_ = false;
     std::string channel_id_;         // the channel the page shows ("" = none)
     yt::ChannelItem channel_header_; // what that page answered with
     yt::Load channel_state_ = yt::Load::idle;

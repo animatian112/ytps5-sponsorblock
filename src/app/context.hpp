@@ -41,10 +41,11 @@ struct Nav
     bool open_video = false;   // start playing video_id on the player screen
     bool open_channel = false; // show context.pending_channel on the search screen
     std::string video_id;
-    bool leave_player = false; // close the player and go back to the tab
-    bool leave_browse = false; // close a playlist page and go back to the tab
-    bool go_to = false;        // switch to `screen`
-    int screen_index = 0;      // index into App::screen_count()
+    bool leave_player = false;  // close the player and go back to the tab
+    bool leave_browse = false;  // close a playlist page and go back to the tab
+    bool leave_channel = false; // close a channel page opened from elsewhere
+    bool go_to = false;         // switch to `screen`
+    int screen_index = 0;       // index into App::screen_count()
     bool start_login = false;
     bool cancel_login = false;
     bool sign_out = false;

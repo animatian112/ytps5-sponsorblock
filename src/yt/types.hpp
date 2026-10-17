@@ -158,6 +158,10 @@ struct FeedItem
     std::string not_interested_token;
     std::string dont_recommend_token;
     std::string remove_history_token; // "Remove from watch history" (History's cards)
+    bool short_form = false;          // a Short (reelWatchEndpoint, shortsLockupViewModel)
+    // The thumbnail's badge when it is not a running time: "8 seasons",
+    // "46 videos", "NEW". The card shows it instead of a duration.
+    std::string badge;
 
     // A channel card: video_id is the channel's "UC..." id.
     bool is_channel() const
@@ -203,6 +207,13 @@ struct ChannelPage
     }
 };
 
+// A chapter of a video: where it starts and its name.
+struct Chapter
+{
+    double start_s = 0.0;
+    std::string title;
+};
+
 struct FeedPage
 {
     std::vector<FeedItem> items;
@@ -221,6 +232,8 @@ struct FeedPage
     std::string like_status;
     // History's "Clear all watch history" (feedback token), when offered.
     std::string clear_history_token;
+    // A watch page's chapters (chapterRenderer), in order.
+    std::vector<Chapter> chapters;
     bool ok() const
     {
         return error.empty();

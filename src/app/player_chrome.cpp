@@ -26,8 +26,6 @@ constexpr float kTrackY = 858.0f;
 constexpr float kBottomRowY = 936.0f;
 constexpr float kButtonRadius = 42.0f; // the grey circle behind the focused icon
 constexpr float kButtonPitch = 116.0f;
-constexpr float kHideAfter = 4.0f; // seconds without input while playing
-constexpr double kSeekStep = 10.0;
 constexpr float kQuarter = 1.5707963f;
 
 const gfx::Color kInk = gfx::Color::rgb(0xffffff);
@@ -160,6 +158,8 @@ std::vector<PlayerChrome::Button> PlayerChrome::bottom_buttons() const
         out.push_back(Button::save);
     if (audio_tracks_)
         out.push_back(Button::audio);
+    if (!chapters_.empty())
+        out.push_back(Button::chapters);
     out.push_back(Button::info);
     return out;
 }
@@ -201,6 +201,8 @@ std::string PlayerChrome::tooltip(Button button) const
         return "Add to playlist";
     case Button::info:
         return "Video info";
+    case Button::chapters:
+        return "Chapters";
     }
     return {};
 }
@@ -237,13 +239,23 @@ void PlayerChrome::wake()
 
 PlayerChrome::Command PlayerChrome::seek_by(double seconds)
 {
-    const double from = seek_hold_ > 0.0f ? seek_target_ : position_;
-    double target = from + seconds;
+    // Held (or pressed quickly again and again) the step grows, as in
+    // SmartTube: x1, then x2, x4 and x8.
+    seek_streak_ = seek_gap_ < 0.6f ? seek_streak_ + 1 : 0;
+    seek_gap_ = 0.0f;
+    const double factor = seek_streak_ < 4    ? 1.0
+                          : seek_streak_ < 10 ? 2.0
+                          : seek_streak_ < 18 ? 4.0
+                                              : 8.0;
+    const double from = seek_hold_ > 0.0f || seek_pending_ > 0.0f ? seek_target_ : position_;
+    double target = from + seconds * factor;
     if (duration_ > 0.0)
         target = std::min(target, std::max(0.0, duration_ - 1.0));
     seek_target_ = std::max(0.0, target);
     seek_hold_ = 1.2f;
-    return Command::seek;
+    // The bar moves now; the video follows once the presses stop.
+    seek_pending_ = 0.45f;
+    return Command::none;
 }
 
 PlayerChrome::Command PlayerChrome::press(Button button)
@@ -255,11 +267,11 @@ PlayerChrome::Command PlayerChrome::press(Button button)
         seek_hold_ = 1.2f;
         return Command::restart;
     case Button::rewind:
-        return seek_by(-kSeekStep);
+        return seek_by(-options_.seek_step);
     case Button::play:
         return Command::toggle_pause;
     case Button::forward:
-        return seek_by(kSeekStep);
+        return seek_by(options_.seek_step);
     case Button::next:
         return Command::next;
     case Button::skip:
@@ -284,6 +296,8 @@ PlayerChrome::Command PlayerChrome::press(Button button)
         return Command::save;
     case Button::info:
         return Command::open_info;
+    case Button::chapters:
+        return Command::open_chapters;
     }
     return Command::none;
 }
@@ -356,17 +370,21 @@ PlayerChrome::Command PlayerChrome::handle(const InputFrame &input, ui::Feedback
         // only bring the controls back.
         if (input.is_pressed(Action::back))
             return Command::none;
-        show();
         if (input.is_pressed(Action::confirm))
         {
+            // Settings > Player > OK button behavior.
             feedback.play(audio::Cue::select);
-            return Command::toggle_pause;
+            if (options_.ok_behavior != 1)
+                show();
+            return options_.ok_behavior == 0 ? Command::none : Command::toggle_pause;
         }
+        show();
         if (input.nav == Direction::left || input.nav == Direction::right)
         {
             zone_ = Zone::seek;
             feedback.play(audio::Cue::tick);
-            return seek_by(input.nav == Direction::right ? kSeekStep : -kSeekStep);
+            return seek_by(input.nav == Direction::right ? options_.seek_step
+                                                         : -options_.seek_step);
         }
         feedback.play(audio::Cue::open);
         return Command::none;
@@ -389,7 +407,8 @@ PlayerChrome::Command PlayerChrome::handle(const InputFrame &input, ui::Feedback
         if (input.nav == Direction::left || input.nav == Direction::right)
         {
             feedback.play(audio::Cue::tick);
-            return seek_by(input.nav == Direction::right ? kSeekStep : -kSeekStep);
+            return seek_by(input.nav == Direction::right ? options_.seek_step
+                                                         : -options_.seek_step);
         }
         if (input.nav == Direction::up || input.nav == Direction::down)
         {
@@ -403,6 +422,12 @@ PlayerChrome::Command PlayerChrome::handle(const InputFrame &input, ui::Feedback
         if (input.is_pressed(Action::confirm))
         {
             feedback.play(audio::Cue::select);
+            if (seek_pending_ > 0.0f)
+            {
+                seek_pending_ = 0.0f; // Cross: go there now
+                seek_ready_ = true;
+                return Command::none;
+            }
             return Command::toggle_pause;
         }
         return Command::none;
@@ -462,10 +487,21 @@ void PlayerChrome::update(float dt)
     if (shown_ && playing_ && !lifted_ && panel_ == Panel::none)
     {
         idle_ += dt;
-        if (idle_ >= kHideAfter)
+        if (options_.hide_after > 0.0f && idle_ >= options_.hide_after)
             hide();
     }
-    if (seek_hold_ > 0.0f)
+    seek_gap_ += dt;
+    if (seek_pending_ > 0.0f)
+    {
+        seek_pending_ -= dt;
+        if (seek_pending_ <= 0.0f)
+        {
+            seek_pending_ = 0.0f;
+            seek_ready_ = true;
+            seek_hold_ = 1.2f; // keep the target on the bar until the video got there
+        }
+    }
+    else if (seek_hold_ > 0.0f)
         seek_hold_ = std::max(0.0f, seek_hold_ - dt);
     visibility_ = approach(visibility_, shown_ ? 1.0f : 0.0f, 14.0f, dt);
     lift_ = approach(lift_, lifted_ && shown_ ? 1.0f : 0.0f, 12.0f, dt);
@@ -526,6 +562,9 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
         break;
     case Button::info:
         name = "info";
+        break;
+    case Button::chapters:
+        name = "chapters";
         break;
     }
     const float size = button == Button::play ? 52.0f : 44.0f;
@@ -627,6 +666,14 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
         list.circle(cx, cy - 9.0f, 3.0f, ink);
         list.rounded_rect({cx - 2.0f, cy - 3.0f, 4.0f, 14.0f}, 1.0f, ink);
         break;
+    case Button::chapters: // a list with bullets
+        for (int i = 0; i < 3; ++i)
+        {
+            const float y = cy - 12.0f + static_cast<float>(i) * 12.0f;
+            list.circle(cx - 16.0f, y, 3.5f, ink);
+            list.rounded_rect({cx - 8.0f, y - 2.0f, 26.0f, 4.0f}, 1.0f, ink);
+        }
+        break;
     }
 }
 
@@ -655,10 +702,10 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
     }
 
     // The format and the clock at the right of the top row.
-    if (!quality_.empty())
+    if (options_.quality && !quality_.empty())
         ui::text(list, fonts.regular, quality_, kRight, kTopRowY - 12.0f - rise, 30.0f, kInk,
                  gfx::Align::right);
-    if (!clock_.empty())
+    if (options_.clock && !clock_.empty())
         ui::text(list, fonts.regular, clock_, kRight, kTopRowY + 28.0f - rise, 28.0f, kInk,
                  gfx::Align::right);
 
@@ -677,7 +724,7 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
             {
                 list.circle(cx, cy, kButtonRadius,
                             gfx::Color::rgb(0x6b6b6b, panel_ == Panel::none ? 0.85f : 0.6f));
-                if (panel_ == Panel::none)
+                if (panel_ == Panel::none && options_.tooltips)
                 {
                     tip = tooltip(button);
                     tip_x = cx;
@@ -721,6 +768,32 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
                 list.rounded_rect({x0, track.y, x1 - x0, track.h}, 0.0f, range.color);
         }
     }
+    if (duration_ > 0.0 && chapters_.size() > 1)
+    {
+        // Chapter marks: a gap in the bar where each chapter starts.
+        for (std::size_t i = 1; i < chapters_.size(); ++i)
+        {
+            const float x =
+                track.x + track.w * std::clamp(static_cast<float>(chapters_[i].start_s / duration_),
+                                               0.0f, 1.0f);
+            list.rounded_rect({x - 2.0f, track.y - 1.0f, 4.0f, track.h + 2.0f}, 0.0f,
+                              gfx::Color::rgb(0x000000, 0.85f));
+        }
+        // While seeking, the chapter under the target above the thumb.
+        int at = -1;
+        for (std::size_t i = 0; i < chapters_.size(); ++i)
+            if (chapters_[i].start_s <= shown_position + 0.25)
+                at = static_cast<int>(i);
+        if (at >= 0 && seek_focus && fonts.regular.font != nullptr)
+        {
+            const std::string name = fonts.regular.font->fit(
+                chapters_[static_cast<std::size_t>(at)].title, 26.0f, 900.0f);
+            const float x = std::clamp(track.x + track.w * played, track.x + 200.0f,
+                                       track.x + track.w - 200.0f);
+            ui::text(list, fonts.regular, name, x, track.y - 22.0f, 26.0f,
+                     gfx::Color::rgb(0xdddddd), gfx::Align::center);
+        }
+    }
     if (seek_focus)
         list.circle(track.x + track.w * played, track.y + track_h * 0.5f, 14.0f, kInk);
 
@@ -728,8 +801,9 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
 
     // Remaining time, then position / length, at the right of the bottom row.
     const double left = duration_ > shown_position ? duration_ - shown_position : 0.0;
-    ui::text(list, fonts.regular, "Remaining: " + clock_text(left), kRight,
-             kBottomRowY - 8.0f - rise, 30.0f, kInk, gfx::Align::right);
+    if (options_.remaining)
+        ui::text(list, fonts.regular, "Remaining: " + clock_text(left), kRight,
+                 kBottomRowY - 8.0f - rise, 30.0f, kInk, gfx::Align::right);
     ui::text(list, fonts.regular, clock_text(shown_position) + " / " + clock_text(duration_),
              kRight, kBottomRowY + 34.0f - rise, 30.0f, kInk, gfx::Align::right);
 

@@ -152,12 +152,12 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
             return;
         service_.create_playlist(prompt_text_, prompt_video_, "Created " + prompt_text_);
     };
-    rail_.icon = [](ui::Canvas &canvas, const gfx::Rect &box, const ui::NavEntry &entry, int, float,
-                    gfx::Color ink)
+    rail_.icon = [this](ui::Canvas &canvas, const gfx::Rect &box, const ui::NavEntry &entry, int,
+                        float, gfx::Color ink)
     {
         // Entries carry their target in `tag`: a screen index, or a negative
         // action (My videos, Blocked Channels, a pinned channel).
-        const gfx::Color page = gfx::Color::rgb(0x181818);
+        const gfx::Color page = palette(settings_.color_scheme).sidebar;
         const float centre_x = box.cx();
         const float centre_y = box.cy();
         const float s = box.w * 0.5f;
@@ -241,6 +241,14 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     screens_.push_back(make_login_screen(context_));
     screens_.push_back(make_player_screen(context_));
     screens_.push_back(make_browse_screen(context_));
+    // Settings > General > Boot to section.
+    static const std::size_t kBoot[Settings::kBootSectionCount] = {
+        kHomeScreen, kSubscriptionsScreen, kShortsScreen, kHistoryScreen, kPlaylistsScreen};
+    if (settings_.boot_section > 0 && settings_.boot_section < Settings::kBootSectionCount)
+    {
+        current_ = kBoot[settings_.boot_section];
+        last_tab_ = current_;
+    }
     screens_[current_]->enter();
 }
 
@@ -686,6 +694,21 @@ void App::open_account_menu()
     card_menu_.open("Accounts", std::move(entries));
 }
 
+yt::Service::Preferences App::preferences() const
+{
+    yt::Service::Preferences p;
+    p.history = settings_.history_enabled;
+    p.shorts_home = settings_.hide_shorts_home;
+    p.shorts_subscriptions = settings_.hide_shorts_subscriptions;
+    p.shorts_history = settings_.hide_shorts_history;
+    p.shorts_search = settings_.hide_shorts_search;
+    p.watched_home = settings_.hide_watched_home;
+    p.watched_subscriptions = settings_.hide_watched_subscriptions;
+    p.streams_subscriptions = settings_.hide_streams_subscriptions;
+    p.mixes = settings_.hide_mixes;
+    return p;
+}
+
 void App::rebuild_rail()
 {
     // SmartTube's sidebar order; Search is the orb above the list.
@@ -693,26 +716,30 @@ void App::rebuild_rail()
     {
         const char *label;
         int tag;
+        int section; // Settings::kSectionNames index (-1: always shown)
     };
     static const Item kItems[] = {
-        {"Search", static_cast<int>(kSearchScreen)},
-        {"Home", static_cast<int>(kHomeScreen)},
-        {"Shorts", static_cast<int>(kShortsScreen)},
-        {"Sports", static_cast<int>(kSportsScreen)},
-        {"LIVE", static_cast<int>(kLiveScreen)},
-        {"Gaming", static_cast<int>(kGamingScreen)},
-        {"News", static_cast<int>(kNewsScreen)},
-        {"Music", static_cast<int>(kMusicScreen)},
-        {"Channels", static_cast<int>(kChannelsScreen)},
-        {"Subscriptions", static_cast<int>(kSubscriptionsScreen)},
-        {"History", static_cast<int>(kHistoryScreen)},
-        {"Playlists", static_cast<int>(kPlaylistsScreen)},
-        {"My videos", kRailMyVideos},
-        {"Blocked Channels", kRailBlocked},
+        {"Search", static_cast<int>(kSearchScreen), -1},
+        {"Home", static_cast<int>(kHomeScreen), -1},
+        {"Shorts", static_cast<int>(kShortsScreen), 0},
+        {"Sports", static_cast<int>(kSportsScreen), 1},
+        {"LIVE", static_cast<int>(kLiveScreen), 2},
+        {"Gaming", static_cast<int>(kGamingScreen), 3},
+        {"News", static_cast<int>(kNewsScreen), 4},
+        {"Music", static_cast<int>(kMusicScreen), 5},
+        {"Channels", static_cast<int>(kChannelsScreen), 6},
+        {"Subscriptions", static_cast<int>(kSubscriptionsScreen), 7},
+        {"History", static_cast<int>(kHistoryScreen), 8},
+        {"Playlists", static_cast<int>(kPlaylistsScreen), 9},
+        {"My videos", kRailMyVideos, 10},
+        {"Blocked Channels", kRailBlocked, 11},
     };
+    // Settings > User interface > Sidebar sections hides any of them.
+    rail_hidden_ = settings_.hidden_sections;
     std::vector<ui::NavEntry> entries;
     for (const Item &item : kItems)
-        entries.push_back({item.label, {}, {}, false, item.tag < 0, false, item.tag});
+        if (!settings_.section_hidden(item.section))
+            entries.push_back({item.label, {}, {}, false, item.tag < 0, false, item.tag});
     for (std::size_t i = 0; i < pins_.size(); ++i)
         entries.push_back({pins_[i].name.empty() ? pins_[i].channel_id : pins_[i].name,
                            {},
@@ -1117,6 +1144,12 @@ void App::update(const InputFrame &input, float dt)
     clock_ += dt;
     feedback_.clear();
     context_.settings_changed = false;
+    // Idle time for the screen dimming: any press or stick move resets it.
+    idle_s_ = input.nav != Direction::none || input.pressed != 0 ? 0.0f : idle_s_ + dt;
+    if (settings_.hidden_sections != rail_hidden_)
+        rebuild_rail();
+    card_menu_.set_scheme(settings_.color_scheme);
+    service_.set_preferences(preferences());
     context_.nav = Nav{};
 
     // The auto-update card is answered first: while it shows it holds the
@@ -1131,6 +1164,10 @@ void App::update(const InputFrame &input, float dt)
     // section, keeping the rail, so the player can go Home -> Subscriptions ->
     // Settings without L1/R1.
     bool rail_keep_expanded = false;
+    // The frame the focus moves between the rail and the screen, the screen
+    // must not read the press that moved it (Right would also step one card,
+    // Circle would also act on the page).
+    bool focus_moved = false;
     // A menu opened in this frame does not read the press that opened it.
     const bool menu_was_active = card_menu_.active();
     if (current_ >= kTabCount)
@@ -1171,14 +1208,52 @@ void App::update(const InputFrame &input, float dt)
             const ui::Event event = rail_.handle(input, feedback_);
             if (event == ui::Event::activated)
                 activate_rail(rail_.focus()); // a section keeps the rail; actions act
+            else if (event == ui::Event::moved)
+                rail_settle_ = 0.0f; // SmartTube opens a section as the focus rests on it
             else if (event == ui::Event::cancelled || input.nav == Direction::right)
             {
                 // Back to the content; the rail stays open one more frame so
                 // the hand-off reads as a transition, then collapses.
                 rail_focused_ = false;
                 rail_keep_expanded = true;
+                focus_moved = true;
+            }
+            // Scrolling the sections opens them: once the focus has rested
+            // on a section a moment, it shows (Search, the account's own
+            // pages and pinned channels still wait for Cross).
+            if (rail_focused_ && rail_settle_ >= 0.0f)
+            {
+                rail_settle_ += dt;
+                if (rail_settle_ >= 0.3f)
+                {
+                    rail_settle_ = -1.0f;
+                    const auto &entries = rail_.entries();
+                    const int position = rail_.focus();
+                    if (position >= 0 && position < static_cast<int>(entries.size()))
+                    {
+                        const int tag = entries[static_cast<std::size_t>(position)].tag;
+                        if (tag >= 0 && tag != static_cast<int>(kSearchScreen) &&
+                            static_cast<std::size_t>(tag) != current_)
+                        {
+                            rail_.set_current(position, false);
+                            show(static_cast<std::size_t>(tag));
+                        }
+                    }
+                }
             }
         }
+        else if (input.is_pressed(Action::back) && !prompt_active_ &&
+                 !screens_[current_]->uses_back())
+        {
+            // Circle in a section's content goes to the sidebar, as in
+            // SmartTube; Circle there comes back.
+            rail_focused_ = true;
+            rail_settle_ = -1.0f;
+            focus_moved = true;
+            feedback_.play(audio::Cue::back);
+        }
+        if (focus_moved)
+            avatar_focus_ = false;
     }
 
     InputFrame screen_input = input;
@@ -1192,7 +1267,7 @@ void App::update(const InputFrame &input, float dt)
         screen_input = InputFrame{};
         screen_input.connected = input.connected;
     }
-    else if (rail_focused_ || update_held || card_menu_.active())
+    else if (rail_focused_ || focus_moved || update_held || card_menu_.active())
     {
         if (menu_was_active && !update_held)
         {
@@ -1255,7 +1330,10 @@ void App::update(const InputFrame &input, float dt)
     // A grid that ran off its left edge hands the focus to the rail; the screen
     // keeps its own focus until it is returned.
     if (current_ < kTabCount && screens_[current_]->wants_rail_focus())
+    {
         rail_focused_ = true;
+        rail_settle_ = -1.0f;
+    }
 
     rail_.set_focused(rail_focused_);
     rail_.set_expanded(rail_focused_ || rail_pinned_ || rail_keep_expanded);
@@ -1299,10 +1377,20 @@ void App::update(const InputFrame &input, float dt)
     if (ask.open_channel && !pending_channel_.channel_id.empty())
     {
         // The player's Channel button: the search screen shows the page.
+        // Circle there comes back to the section it was opened from.
+        if (current_ < kTabCount && current_ != kSearchScreen)
+            channel_return_ = current_;
+        else if (current_ != kSearchScreen)
+            channel_return_ = previous_tab() == kSearchScreen ? kHomeScreen : previous_tab();
         active_video_.clear();
         service_.request_close_video();
-        show(kSearchScreen);
+        if (current_ == kSearchScreen)
+            screens_[current_]->enter(); // already here: open the new page
+        else
+            show(kSearchScreen);
     }
+    if (ask.leave_channel && current_ == kSearchScreen)
+        show(channel_return_);
     if (ask.leave_browse && current_ == kBrowseScreen)
         show(previous_tab());
     if (ask.leave_player && current_ == kPlayerScreen)
@@ -1399,7 +1487,7 @@ void App::draw_sidebar(ui::Canvas &canvas)
     if (open > 0.01f)
         list.rounded_rect(
             {0.0f, 0.0f, mix(104.0f, 540.0f), gfx::kVirtualHeight}, 0.0f,
-            gfx::Color::rgb(0x181818, std::min(1.0f, open * 1.5f))); // SmartTube's Dark Grey
+            palette(settings_.color_scheme).sidebar.with_alpha(std::min(1.0f, open * 1.5f)));
 
     // The search orb (entry 0) and the account's picture.
     const int focus = rail_focused_ ? rail_.focus() : -1;
@@ -1487,8 +1575,9 @@ void App::draw_chrome(Frame &frame)
         int minute = 0;
         bool twelve = true;
         constexpr float kClockX = 1578.0f;
-        if (sys::local_clock(&hour, &minute, &twelve))
+        if (settings_.corner_clock && sys::local_clock(&hour, &minute, &twelve))
         {
+            twelve = !settings_.time_24h;
             char text[16];
             if (twelve)
                 std::snprintf(text, sizeof(text), "%d:%02d %s", hour % 12 == 0 ? 12 : hour % 12,
@@ -1501,7 +1590,8 @@ void App::draw_chrome(Frame &frame)
         int weekday = 0;
         int month = 0;
         int day = 0;
-        if (sys::local_date(&weekday, &month, &day) && month >= 1 && month <= 12)
+        if (settings_.corner_clock && sys::local_date(&weekday, &month, &day) && month >= 1 &&
+            month <= 12)
         {
             static const char *const kDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
             static const char *const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -1522,6 +1612,16 @@ void App::draw_chrome(Frame &frame)
         if (!update_latest_.empty())
             overlay.list.circle(badge.x + badge.w - 4.0f, badge.y + 4.0f, 9.0f,
                                 gfx::Color::rgb(0xffffff));
+    }
+    // Settings > General > Screen dimming: nothing pressed for a while (and
+    // no video playing) darkens the screen until the next press.
+    if (settings_.dim_minutes > 0 && current_ != kPlayerScreen)
+    {
+        const float limit = static_cast<float>(settings_.dim_minutes) * 60.0f;
+        const float dim = std::clamp((idle_s_ - limit) / 2.0f, 0.0f, 1.0f) * 0.8f;
+        if (dim > 0.0f)
+            overlay.list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
+                                      gfx::Color::rgb(0x000000, dim));
     }
     toasts_.set_bounds({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight});
     updates_.draw(overlay);

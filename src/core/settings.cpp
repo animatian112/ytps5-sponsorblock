@@ -13,8 +13,66 @@ namespace hui
 
 namespace
 {
-constexpr std::uint8_t kVersion = 4;
+constexpr std::uint8_t kVersion = 5;
+constexpr std::uint8_t kVersionWithoutExtras = 4;
 constexpr std::uint8_t kVersionWithoutSponsorBlock = 3;
+
+// Version 5 appends SmartTube's settings as (key, value) pairs: a key this
+// build does not know is skipped, a missing one keeps its default, so later
+// settings need no new version. Keys are never reused.
+struct Extra
+{
+    std::uint8_t key;
+    int Settings::*number; // or
+    bool Settings::*flag;
+    int low;
+    int high;
+};
+
+constexpr Extra kExtras[] = {
+    {1, &Settings::speed_index, nullptr, 0, Settings::kSpeedCount - 1},
+    {2, nullptr, &Settings::remember_speed, 0, 1},
+    {3, &Settings::seek_seconds, nullptr, 5, 60},
+    {4, &Settings::ui_hide_seconds, nullptr, 0, 30},
+    {5, &Settings::playback_mode, nullptr, 0, 3},
+    {6, nullptr, &Settings::show_clock, 0, 1},
+    {7, nullptr, &Settings::show_remaining, 0, 1},
+    {8, nullptr, &Settings::show_quality, 0, 1},
+    {9, nullptr, &Settings::show_tooltips, 0, 1},
+    {10, nullptr, &Settings::suggestions, 0, 1},
+    {11, nullptr, &Settings::loop_shorts, 0, 1},
+    {12, nullptr, &Settings::resume, 0, 1},
+    {13, nullptr, &Settings::resume_short, 0, 1},
+    {14, nullptr, &Settings::prefer_avc, 0, 1},
+    {15, &Settings::ok_behavior, nullptr, 0, 2},
+    {16, &Settings::subtitle_language, nullptr, 0, Settings::kSubtitleLanguageCount - 1},
+    {17, &Settings::subtitle_size, nullptr, 0, 2},
+    {18, nullptr, &Settings::subtitle_background, 0, 1},
+    {19, &Settings::boot_section, nullptr, 0, Settings::kBootSectionCount - 1},
+    // 20: hidden_sections (unsigned, written apart below)
+    {21, nullptr, &Settings::hide_shorts_home, 0, 1},
+    {22, nullptr, &Settings::hide_shorts_subscriptions, 0, 1},
+    {23, nullptr, &Settings::hide_shorts_history, 0, 1},
+    {24, nullptr, &Settings::hide_shorts_search, 0, 1},
+    {25, nullptr, &Settings::hide_watched_home, 0, 1},
+    {26, nullptr, &Settings::hide_watched_subscriptions, 0, 1},
+    {27, nullptr, &Settings::hide_streams_subscriptions, 0, 1},
+    {28, nullptr, &Settings::hide_mixes, 0, 1},
+    {29, nullptr, &Settings::history_enabled, 0, 1},
+    {30, nullptr, &Settings::time_24h, 0, 1},
+    {31, &Settings::dim_minutes, nullptr, 0, 60},
+    {32, nullptr, &Settings::corner_clock, 0, 1},
+    {33, &Settings::title_lines, nullptr, 1, 3},
+    {34, &Settings::grid_columns, nullptr, 3, 5},
+    {35, nullptr, &Settings::rounded_cards, 0, 1},
+    {36, &Settings::color_scheme, nullptr, 0, Settings::kColorSchemeCount - 1},
+    {37, nullptr, &Settings::keyboard_auto, 0, 1},
+    {38, nullptr, &Settings::search_history, 0, 1},
+    {39, nullptr, &Settings::sb_markers, 0, 1},
+    {40, nullptr, &Settings::sb_once, 0, 1},
+};
+constexpr std::uint8_t kHiddenSectionsKey = 20;
+
 } // namespace
 
 std::string encode_settings(const Settings &settings)
@@ -41,6 +99,17 @@ std::string encode_settings(const Settings &settings)
     w.put_bool(settings.sb_enabled);
     w.put(static_cast<std::uint8_t>(settings.sb_mode));
     w.put(static_cast<std::uint8_t>(settings.sb_scope));
+    constexpr std::size_t count = sizeof(kExtras) / sizeof(kExtras[0]);
+    w.put(static_cast<std::uint16_t>(count + 1));
+    for (const Extra &extra : kExtras)
+    {
+        w.put(extra.key);
+        const int value =
+            extra.number != nullptr ? settings.*extra.number : (settings.*extra.flag ? 1 : 0);
+        w.put(static_cast<std::int32_t>(value));
+    }
+    w.put(kHiddenSectionsKey);
+    w.put(static_cast<std::int32_t>(settings.hidden_sections));
     return w.data();
 }
 
@@ -48,7 +117,8 @@ bool decode_settings(std::string_view data, Settings *settings)
 {
     bytes::Reader r(data);
     const std::uint8_t version = r.get<std::uint8_t>();
-    if (version != kVersion && version != kVersionWithoutSponsorBlock)
+    if (version != kVersion && version != kVersionWithoutExtras &&
+        version != kVersionWithoutSponsorBlock)
         return false;
     Settings s;
     s.music_volume = std::clamp<int>(r.get<std::uint8_t>(), 0, 10);
@@ -82,6 +152,32 @@ bool decode_settings(std::string_view data, Settings *settings)
         s.sb_enabled = r.get_bool();
         s.sb_mode = std::clamp<int>(r.get<std::uint8_t>(), 0, 2);
         s.sb_scope = std::clamp<int>(r.get<std::uint8_t>(), 0, 2);
+    }
+    if (version >= 5)
+    {
+        const int count = r.get<std::uint16_t>();
+        for (int i = 0; i < count && r.ok(); ++i)
+        {
+            const std::uint8_t key = r.get<std::uint8_t>();
+            const int value = static_cast<int>(r.get<std::int32_t>());
+            if (key == kHiddenSectionsKey)
+            {
+                s.hidden_sections =
+                    static_cast<std::uint32_t>(value) & ((1u << Settings::kSectionCount) - 1u);
+                continue;
+            }
+            for (const Extra &extra : kExtras)
+            {
+                if (extra.key != key)
+                    continue;
+                const int clamped = std::clamp(value, extra.low, extra.high);
+                if (extra.number != nullptr)
+                    s.*extra.number = clamped;
+                else
+                    s.*extra.flag = clamped != 0;
+                break;
+            }
+        }
     }
     if (!r.finished())
         return false;

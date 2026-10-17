@@ -64,6 +64,13 @@ class Screen
     {
         return false;
     }
+    // True when Circle means something on this screen right now (a page to
+    // close, a keyboard, an open settings group). Otherwise Circle on a tab
+    // screen moves the focus to the sidebar, as in SmartTube.
+    virtual bool uses_back() const
+    {
+        return false;
+    }
     // The video card the focus sits on, for the card menu (hold Cross or
     // press Square); nullptr when the focus is elsewhere.
     virtual const yt::FeedItem *focused_item() const

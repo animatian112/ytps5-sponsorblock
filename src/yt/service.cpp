@@ -155,6 +155,7 @@ struct Service::Impl
         int resolve_purpose = 0;
     } job;
     std::vector<ChannelItem> blocked; // <token file>.blocked: id TAB name
+    Service::Preferences preferences;
     std::string account_channel;
     std::uint64_t resolved_revision = 0;
     ChannelItem resolved_channel;
@@ -303,14 +304,37 @@ struct Service::Impl
         return false;
     }
 
-    FeedView filtered(const FeedView &view) const
+    FeedView filtered(const FeedView &view, FeedKind kind = FeedKind::topic) const
     {
         FeedView out = view;
-        if (blocked.empty())
+        const Service::Preferences &p = preferences;
+        const bool home = kind == FeedKind::home;
+        const bool subs = kind == FeedKind::subscriptions;
+        const bool shorts = (home && p.shorts_home) || (subs && p.shorts_subscriptions) ||
+                            (kind == FeedKind::history && p.shorts_history) ||
+                            (kind == FeedKind::search && p.shorts_search);
+        const bool watched = (home && p.watched_home) || (subs && p.watched_subscriptions);
+        const bool streams = subs && p.streams_subscriptions;
+        const bool mixes = p.mixes && kind != FeedKind::library;
+        if (blocked.empty() && !shorts && !watched && !streams && !mixes)
             return out;
-        out.items.erase(std::remove_if(out.items.begin(), out.items.end(),
-                                       [&](const FeedItem &item) { return is_blocked(item); }),
-                        out.items.end());
+        const auto drop = [&](const FeedItem &item)
+        {
+            if (is_blocked(item))
+                return true;
+            if (shorts && item.short_form)
+                return true;
+            if (watched && item.watched >= 0.85f)
+                return true;
+            if (streams && item.live)
+                return true;
+            // A Mix: a radio playlist ("RD..."), or a card YouTube titles so.
+            if (mixes && (item.video_id.rfind("VLRD", 0) == 0 ||
+                          item.video_id.rfind("RD", 0) == 0 || item.title.rfind("Mix - ", 0) == 0))
+                return true;
+            return false;
+        };
+        out.items.erase(std::remove_if(out.items.begin(), out.items.end(), drop), out.items.end());
         return out;
     }
 
@@ -1235,6 +1259,12 @@ struct Service::Impl
                 FeedPage related_page;
                 if (tube.related(video_id, &related_page))
                 {
+                    if (!related_page.chapters.empty())
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        video.chapters = related_page.chapters;
+                        video.revision++;
+                    }
                     if (related_page.meta_known)
                     {
                         std::lock_guard<std::mutex> lock(mutex);
@@ -1282,6 +1312,12 @@ struct Service::Impl
         }
         if (!auth.signed_in())
             return;
+        {
+            // Settings > General > History off: YouTube is not told.
+            std::lock_guard<std::mutex> lock(mutex);
+            if (!preferences.history)
+                return;
+        }
         // A signed-in TV answer's tracking URLs; asked for on their own when
         // the stream came from another client.
         std::string playback;
@@ -1973,6 +2009,7 @@ void Service::request_video(std::string video_id, CodecChoice choice)
     impl_->video.info = VideoInfo{};
     impl_->video.like_status.clear();
     impl_->video.history_status.clear();
+    impl_->video.chapters.clear();
     impl_->video.subscribed = false;
     impl_->video.source_client.clear();
     impl_->video.attempts.clear();
@@ -2248,21 +2285,21 @@ FeedView Service::feed(FeedKind kind) const
     switch (kind)
     {
     case FeedKind::home:
-        return impl_->filtered(impl_->home);
+        return impl_->filtered(impl_->home, kind);
     case FeedKind::subscriptions:
-        return impl_->filtered(impl_->subscriptions);
+        return impl_->filtered(impl_->subscriptions, kind);
     case FeedKind::related:
-        return impl_->filtered(impl_->related);
+        return impl_->filtered(impl_->related, kind);
     case FeedKind::channel:
         return impl_->channel_feed;
     case FeedKind::history:
-        return impl_->filtered(impl_->history);
+        return impl_->filtered(impl_->history, kind);
     case FeedKind::topic:
-        return impl_->filtered(impl_->topic);
+        return impl_->filtered(impl_->topic, kind);
     case FeedKind::library:
-        return impl_->filtered(impl_->library);
+        return impl_->filtered(impl_->library, kind);
     default:
-        return impl_->filtered(impl_->search);
+        return impl_->filtered(impl_->search, FeedKind::search);
     }
 }
 
@@ -2275,7 +2312,19 @@ std::uint64_t Service::search_revision() const
 FeedView Service::search_feed() const
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    return impl_->filtered(impl_->search);
+    return impl_->filtered(impl_->search, FeedKind::search);
+}
+
+void Service::set_preferences(const Preferences &preferences)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->preferences == preferences)
+        return;
+    impl_->preferences = preferences;
+    // The filtered views changed: every screen rebuilds its cards.
+    for (FeedView *view : {&impl_->home, &impl_->subscriptions, &impl_->related, &impl_->history,
+                           &impl_->topic, &impl_->library, &impl_->search})
+        view->revision++;
 }
 
 std::string Service::search_query() const

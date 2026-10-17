@@ -98,7 +98,17 @@ class PlayerScreen final : public Screen
     int quality_override_ = 0; // a height cap; 0 follows Settings
     std::string audio_track_;  // an audioTrack.id; empty plays the original
     double speed_ = 1.0;
-    double resume_s_ = -1.0; // where a reopened video continues
+    // Jumps to the next (1) or previous (-1) chapter.
+    void jump_chapter(int step);
+    std::vector<yt::Chapter> chapters_;
+    std::uint64_t chapters_revision_ = 0;
+    std::string chapters_for_;
+    int applied_speed_index_ = -1;     // Settings::speed_index last applied
+    bool end_handled_ = false;         // the playback mode already acted on this end
+    bool captions_chosen_ = false;     // the user picked captions (or Off) this session
+    bool sponsor_markers_ = true;      // Settings::sb_markers the bar was painted with
+    std::vector<double> skipped_ends_; // segments already skipped once (by end time)
+    double resume_s_ = -1.0;           // where a reopened video continues
     std::vector<int> menu_heights_;
     std::vector<std::string> menu_tracks_;
     // Subtitles: the language picked last is turned on again for the next

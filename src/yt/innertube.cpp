@@ -359,11 +359,26 @@ double parse_clock(const char *text)
     return total;
 }
 
+// True for a running time ("4:21", "1:02:03"): digits and colons only. A
+// show's "8 seasons" or a playlist's "46 videos" is a label, not a length.
+bool is_clock_text(const std::string &text)
+{
+    bool digit = false;
+    for (const char ch : text)
+    {
+        if (ch >= '0' && ch <= '9')
+            digit = true;
+        else if (ch != ':' && ch != ' ')
+            return false;
+    }
+    return digit;
+}
+
 double length_seconds(yyjson_val *obj)
 {
     yyjson_val *text = yyjson_obj_get(obj, "lengthText");
     yyjson_val *simple = yyjson_obj_get(text, "simpleText");
-    if (yyjson_is_str(simple))
+    if (yyjson_is_str(simple) && is_clock_text(yyjson_get_str(simple)))
         return parse_clock(yyjson_get_str(simple));
     return number_field(obj, "lengthSeconds", 0.0);
 }
@@ -577,7 +592,7 @@ std::string lockup_thumbnail(yyjson_val *lockup)
 
 // The first badge text that is a duration (M:SS / H:MM:SS), or "LIVE" which
 // sets the live flag instead.
-double lockup_length(yyjson_val *thumbnail_view_model, bool *live)
+double lockup_length(yyjson_val *thumbnail_view_model, bool *live, std::string *label_out)
 {
     yyjson_val *overlays = yyjson_obj_get(thumbnail_view_model, "overlays");
     const std::size_t overlay_count = yyjson_arr_size(overlays);
@@ -604,12 +619,14 @@ double lockup_length(yyjson_val *thumbnail_view_model, bool *live)
                 *live = true;
                 return 0.0;
             }
-            if (std::strchr(label, ':') != nullptr)
+            if (is_clock_text(label))
             {
                 const double seconds = parse_clock(label);
                 if (seconds > 0.0)
                     return seconds;
             }
+            else if (label_out != nullptr && label_out->empty())
+                *label_out = label; // "8 seasons", "46 videos"
         }
     }
     return 0.0;
@@ -741,7 +758,8 @@ void collect_lockup(yyjson_val *obj, FeedPage *page)
     item.author = lockup_author(lockup_metadata);
     item.thumbnail_url = lockup_thumbnail(lockup);
     item.live = contains_text(content_type.c_str(), "live");
-    item.length_s = lockup_length(yyjson_obj_get(content_image, "thumbnailViewModel"), &item.live);
+    item.length_s =
+        lockup_length(yyjson_obj_get(content_image, "thumbnailViewModel"), &item.live, &item.badge);
     item.shelf = page->current_shelf;
     scan_card_menu(lockup, {}, &item, 0);
     page->items.push_back(std::move(item));
@@ -759,8 +777,12 @@ void collect_tile(yyjson_val *tile, FeedPage *page)
         return;
     yyjson_val *command = yyjson_obj_get(tile, "onSelectCommand");
     std::string video_id = string_field(yyjson_obj_get(command, "watchEndpoint"), "videoId");
+    bool reel = false;
     if (video_id.empty())
+    {
         video_id = string_field(yyjson_obj_get(command, "reelWatchEndpoint"), "videoId");
+        reel = !video_id.empty();
+    }
     if (video_id.empty())
     {
         // A playlist tile opens its browse page ("VL..."): it becomes a
@@ -790,6 +812,7 @@ void collect_tile(yyjson_val *tile, FeedPage *page)
         return;
 
     FeedItem item;
+    item.short_form = reel;
     item.video_id = std::move(video_id);
     item.title = std::move(title);
     // The first line's first item is the channel on video tiles.
@@ -829,8 +852,12 @@ void collect_tile(yyjson_val *tile, FeedPage *page)
         if (style == "LIVE")
             item.live = true;
         const std::string length = renderer_text(yyjson_obj_get(status, "text"));
-        if (!length.empty() && item.length_s <= 0.0)
+        if (length.empty() || item.length_s > 0.0)
+            continue;
+        if (is_clock_text(length))
             item.length_s = parse_clock(length.c_str());
+        else if (item.badge.empty())
+            item.badge = length; // a show's "8 seasons", a playlist's "46 videos"
     }
     item.watched = watched_share(overlays);
     scan_card_menu(tile, {}, &item, 0);
@@ -1081,6 +1108,7 @@ void collect_short(yyjson_val *obj, FeedPage *page)
     }
     FeedItem item;
     item.video_id = video_id;
+    item.short_form = true;
     yyjson_val *overlay = yyjson_obj_get(obj, "overlayMetadata");
     item.title = string_field(yyjson_obj_get(overlay, "primaryText"), "content");
     item.detail = string_field(yyjson_obj_get(overlay, "secondaryText"), "content");
@@ -1123,6 +1151,17 @@ void walk_feed(yyjson_val *value, FeedPage *page, std::string *continuation)
                 collect_playlist(child, page);
             if (std::strcmp(name, "shortsLockupViewModel") == 0)
                 collect_short(child, page);
+            if (std::strcmp(name, "chapterRenderer") == 0)
+            {
+                // The watch page's chapters (the player bar's markers).
+                Chapter chapter;
+                chapter.title = text_of(yyjson_obj_get(child, "title"));
+                chapter.start_s = number_field(child, "timeRangeStartMillis", -1.0) / 1000.0;
+                if (chapter.start_s >= 0.0 && !chapter.title.empty() &&
+                    (page->chapters.empty() || chapter.start_s > page->chapters.back().start_s))
+                    page->chapters.push_back(std::move(chapter));
+                continue;
+            }
             if (is_shelf_key(name))
             {
                 // A shelf: its items carry its title, so the screen can show
@@ -3250,6 +3289,7 @@ bool InnerTube::shorts(FeedPage *page, const std::string &continuation)
             return;
         seen.push_back(item.video_id);
         item.shelf.clear(); // one grid, no rows
+        item.short_form = true;
         page->items.push_back(std::move(item));
     };
 

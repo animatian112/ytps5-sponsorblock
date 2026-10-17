@@ -9,6 +9,8 @@
 
 #include "app/player_screen.hpp"
 
+#include "yt/chapters.hpp"
+
 #include "platform/ps5/system.hpp"
 
 #include "app/feed_view.hpp"
@@ -44,7 +46,20 @@ std::string grouped_digits(const std::string &digits)
 }
 
 // "Fri Oct 16  10:34 AM", as SmartTube shows it in the player.
-std::string clock_line()
+// "0:00", "12:05", "1:02:03" for a chapter's start.
+std::string chapter_time(double seconds)
+{
+    const int total = static_cast<int>(seconds + 0.5);
+    char text[24];
+    if (total >= 3600)
+        std::snprintf(text, sizeof(text), "%d:%02d:%02d", total / 3600, (total % 3600) / 60,
+                      total % 60);
+    else
+        std::snprintf(text, sizeof(text), "%d:%02d", total / 60, total % 60);
+    return text;
+}
+
+std::string clock_line(bool hours24)
 {
     static const char *const kDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
     static const char *const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -62,7 +77,7 @@ std::string clock_line()
     if (sys::local_clock(&hour, &minute, &twelve))
     {
         char text[16];
-        if (twelve)
+        if (!hours24)
             std::snprintf(text, sizeof(text), "%d:%02d %s", hour % 12 == 0 ? 12 : hour % 12, minute,
                           hour < 12 ? "AM" : "PM");
         else
@@ -215,6 +230,12 @@ yt::CodecChoice PlayerScreen::codec_choice() const
     choice.av1 = context_.settings.codec_av1;
     choice.max_height = context_.settings.max_height;
     choice.decode = context_.settings.decode_mode;
+    if (context_.settings.prefer_avc && choice.avc)
+    {
+        // Settings > Player > Prefer AVC: VP9 and AV1 only when AVC is off.
+        choice.vp9 = false;
+        choice.av1 = false;
+    }
     if (quality_override_ > 0)
     {
         choice.max_height = quality_override_;
@@ -235,8 +256,13 @@ void PlayerScreen::request_video(const std::string &video_id)
     if (video_id != current)
     {
         // Continue where this video was left last time (0: from the start).
-        const double saved = context_.resume.position(video_id);
+        const double saved = context_.settings.resume ? context_.resume.position(video_id) : 0.0;
         resume_s_ = saved > 0.0 ? saved : -1.0;
+        // Settings > Player > Remember speed off: each video starts at the
+        // default speed.
+        if (!context_.settings.remember_speed)
+            speed_ = context_.settings.speed();
+        skipped_ends_.clear();
         audio_track_.clear(); // a track id belongs to one video
     }
     requested_id_ = video_id;
@@ -285,10 +311,12 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
     const sb::Decision decision =
         sponsor_.poll(position, duration, playing, static_cast<sb::Mode>(settings.sb_mode));
 
-    // A new segment list: paint it onto the seek bar.
-    if (sponsor_.revision() != sponsor_revision_)
+    // A new segment list: paint it onto the seek bar (Settings > SponsorBlock
+    // > Color markers decides whether it shows).
+    if (sponsor_.revision() != sponsor_revision_ || sponsor_markers_ != settings.sb_markers)
     {
         sponsor_revision_ = sponsor_.revision();
+        sponsor_markers_ = settings.sb_markers;
         std::vector<ui::MediaRange> ranges;
         for (const sb::Segment &segment : sponsor_.segments())
         {
@@ -296,15 +324,21 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
             range.start = static_cast<float>(segment.start_s);
             range.end = static_cast<float>(segment.end_s);
             range.color = segment_color(segment.category);
-            ranges.push_back(range);
+            if (settings.sb_markers)
+                ranges.push_back(range);
         }
         chrome_.set_ranges(std::move(ranges));
         yt::log::line("sponsorblock: %zu segments on the bar (%s)", sponsor_.segments().size(),
                       sponsor_.status().c_str());
     }
 
-    if (decision.kind == sb::Kind::skip)
+    // "Don't skip segments again": one that was skipped plays the next time.
+    const bool skipped_before =
+        settings.sb_once && std::any_of(skipped_ends_.begin(), skipped_ends_.end(), [&](double end)
+                                        { return std::abs(end - decision.target_s) < 0.5; });
+    if (decision.kind == sb::Kind::skip && !skipped_before)
     {
+        skipped_ends_.push_back(decision.target_s);
         player_->seek(decision.target_s);
         context_.toasts.push(ui::StatusKind::info, "Skipped " + decision.label, "SponsorBlock",
                              2.5f);
@@ -345,6 +379,26 @@ void PlayerScreen::skip_segment_now(ui::Feedback &feedback)
 void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedback)
 {
     clock_ += dt;
+    const Settings &settings = context_.settings;
+    // Settings > Player > Video speed: a new default applies at once.
+    if (settings.speed_index != applied_speed_index_)
+    {
+        applied_speed_index_ = settings.speed_index;
+        speed_ = settings.speed();
+        if (player_ != nullptr)
+            player_->set_speed(speed_);
+    }
+    {
+        PlayerChrome::Options options;
+        options.seek_step = static_cast<double>(settings.seek_seconds);
+        options.hide_after = static_cast<float>(settings.ui_hide_seconds);
+        options.clock = settings.show_clock;
+        options.remaining = settings.show_remaining;
+        options.quality = settings.show_quality;
+        options.tooltips = settings.show_tooltips;
+        options.ok_behavior = settings.ok_behavior;
+        chrome_.set_options(options);
+    }
 
     // Adopt the player the worker opened.
     if (!consumed_player_)
@@ -356,7 +410,10 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             playing_id_ = requested_id_;
             consumed_player_ = true;
             ended_ = false;
-            if (resume_s_ > 0.0)
+            // Videos under 5 minutes start over unless the setting keeps them.
+            const double length = context_.service.video().info.length_s;
+            if (resume_s_ > 0.0 &&
+                (context_.settings.resume_short || length <= 0.0 || length >= 300.0))
                 player_->seek(resume_s_);
             resume_s_ = -1.0;
             if (speed_ != 1.0)
@@ -449,7 +506,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             if (item.live)
                 card.badge = "LIVE";
             else
-                card.badge = format_duration(item.length_s);
+                card.badge = item.length_s > 0.0 ? format_duration(item.length_s) : item.badge;
             cards.push_back(std::move(card));
         }
         related_.set_items(std::move(cards));
@@ -487,10 +544,30 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         if (!view.info.view_count.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") +
                     grouped_digits(view.info.view_count) + " views";
+        // The chapter playing, after the channel and views.
+        if (player_ != nullptr && !chapters_.empty())
+        {
+            const int at = yt::chapter_at(chapters_, player_->clock_s());
+            if (at >= 0)
+                meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") +
+                        chapters_[static_cast<std::size_t>(at)].title;
+        }
         chrome_.set_info(view.info.title.empty() ? playing_id_ : view.info.title, meta,
                          player_ != nullptr ? player_->quality_label() : std::string());
-        chrome_.set_clock(clock_line());
+        chrome_.set_clock(clock_line(context_.settings.time_24h));
     }
+
+    // Chapters: the watch page's, else the description's timestamps.
+    if (view.revision != chapters_revision_ || playing_id_ != chapters_for_)
+    {
+        chapters_revision_ = view.revision;
+        chapters_for_ = playing_id_;
+        chapters_ =
+            !view.chapters.empty() ? view.chapters : yt::parse_chapters(view.info.description);
+        chrome_.set_chapters(chapters_);
+    }
+    if (chrome_.take_seek() && player_ != nullptr)
+        player_->seek(chrome_.seek_target());
 
     update_sponsorblock(input, feedback);
     chrome_.set_segment(sponsor_here_);
@@ -556,7 +633,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             skip_segment_now(feedback);
             break;
         case PlayerChrome::Command::suggestions:
-            if (!related_items_.empty())
+            if (!related_items_.empty() && settings.suggestions)
             {
                 in_related_ = true;
                 chrome_.set_lifted(true);
@@ -570,6 +647,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         case PlayerChrome::Command::open_quality:
         case PlayerChrome::Command::open_audio:
         case PlayerChrome::Command::open_info:
+        case PlayerChrome::Command::open_chapters:
             open_menu(command);
             break;
         case PlayerChrome::Command::pick:
@@ -610,14 +688,19 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         case PlayerChrome::Command::none:
             break;
         }
+        // L2 / R2: the previous / next chapter.
+        if (input.is_pressed(Action::jump_prev))
+            jump_chapter(-1);
+        if (input.is_pressed(Action::jump_next))
+            jump_chapter(1);
         if (input.is_pressed(Action::page_prev) && player_ != nullptr)
         {
-            player_->seek(player_->clock_s() - 10.0);
+            player_->seek(player_->clock_s() - static_cast<double>(settings.seek_seconds));
             chrome_.show();
         }
         if (input.is_pressed(Action::page_next) && player_ != nullptr)
         {
-            player_->seek(player_->clock_s() + 10.0);
+            player_->seek(player_->clock_s() + static_cast<double>(settings.seek_seconds));
             chrome_.show();
         }
     }
@@ -647,11 +730,31 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     }
     related_.set_active(in_related_);
 
-    // Autoplay: the next suggestion starts the moment the video ends.
-    if (ended_ && !in_related_ && next_suggestion() != nullptr)
+    // The end of a video, as Settings > Player > Playback mode says: the next
+    // suggestion (autoplay), the same video again, a pause, or back out.
+    // A Short loops instead when "Loop Shorts" is on.
+    if (!ended_)
+        end_handled_ = false;
+    else if (!in_related_ && !end_handled_ && player_ != nullptr)
     {
-        play_next();
-        return;
+        end_handled_ = true;
+        const bool tall = texture_width_ > 0 && texture_height_ > texture_width_;
+        const int mode = settings.loop_shorts && tall ? 1 : settings.playback_mode;
+        if (mode == 1)
+        {
+            player_->seek(0.0);
+            player_->set_paused(false);
+        }
+        else if (mode == 0 && next_suggestion() != nullptr)
+        {
+            play_next();
+            return;
+        }
+        else if (mode == 3)
+        {
+            context_.nav.leave_player = true;
+            return;
+        }
     }
 
     if (input.is_pressed(Action::back) && !back_used)
@@ -796,6 +899,18 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
         chrome_.open_panel(PlayerChrome::Panel::quality, "Quality", std::move(options), selected);
         break;
     }
+    case PlayerChrome::Command::open_chapters:
+    {
+        // SmartTube's chapter list: the start and the name; the current one
+        // is marked, a pick jumps there.
+        std::vector<std::string> options;
+        for (const yt::Chapter &chapter : chapters_)
+            options.push_back(chapter_time(chapter.start_s) + "   " + chapter.title);
+        const int at = player_ != nullptr ? yt::chapter_at(chapters_, player_->clock_s()) : 0;
+        chrome_.open_panel(PlayerChrome::Panel::chapters, "Chapters", std::move(options),
+                           std::max(0, at));
+        break;
+    }
     case PlayerChrome::Command::open_info:
     {
         // The description, wrapped to the panel; Up/Down scroll it.
@@ -869,6 +984,7 @@ void PlayerScreen::apply_pick()
     switch (panel)
     {
     case PlayerChrome::Panel::captions:
+        captions_chosen_ = true;
         if (pick <= 0 || pick > static_cast<int>(view.info.captions.size()))
         {
             caption_language_.clear();
@@ -916,15 +1032,44 @@ void PlayerScreen::apply_pick()
             reopen();
         }
         break;
+    case PlayerChrome::Panel::chapters:
+        if (pick >= 0 && pick < static_cast<int>(chapters_.size()) && player_ != nullptr)
+            player_->seek(chapters_[static_cast<std::size_t>(pick)].start_s);
+        break;
     case PlayerChrome::Panel::info:
     case PlayerChrome::Panel::none:
         break;
     }
 }
 
+void PlayerScreen::jump_chapter(int step)
+{
+    if (player_ == nullptr || chapters_.empty())
+        return;
+    const double position = player_->clock_s();
+    int at = yt::chapter_at(chapters_, position);
+    // Back from a few seconds into a chapter restarts it, as a previous
+    // track button does; from its start it goes to the one before.
+    if (step < 0 && at >= 0 && position - chapters_[static_cast<std::size_t>(at)].start_s > 3.0)
+        step = 0;
+    const int target = std::clamp(at + step, 0, static_cast<int>(chapters_.size()) - 1);
+    if (step > 0 && target == at)
+        return; // the last chapter: nothing after it
+    const yt::Chapter &chapter = chapters_[static_cast<std::size_t>(target)];
+    player_->seek(chapter.start_s);
+    chrome_.show();
+    context_.toasts.push(ui::StatusKind::info, chapter.title, "Chapter", 2.0f);
+}
+
 void PlayerScreen::update_captions()
 {
     const yt::VideoView view = context_.service.video();
+    // Settings > Subtitles > Subtitle language: on by itself until the user
+    // picks captions (or Off) in the player.
+    const int language = context_.settings.subtitle_language;
+    if (caption_language_.empty() && !captions_chosen_ && language > 0 &&
+        language < Settings::kSubtitleLanguageCount)
+        caption_language_ = Settings::kSubtitleLanguages[language][0];
     // A new video: turn the chosen language on again when it has it.
     if (!caption_language_.empty() && !playing_id_.empty() && captions_for_ != playing_id_ &&
         view.state == yt::Load::ready && !view.info.captions.empty())
@@ -954,6 +1099,11 @@ void PlayerScreen::draw_captions(ui::Canvas &canvas, const Context &context) con
 {
     if (caption_text_.empty() || context.fonts.semibold.font == nullptr)
         return;
+    // Settings > Subtitles: text size and the box behind it.
+    static const float kSizes[] = {30.0f, 38.0f, 48.0f};
+    const float size = kSizes[std::clamp(context.settings.subtitle_size, 0, 2)];
+    const float pitch = size + 14.0f;
+    const bool box = context.settings.subtitle_background;
     std::vector<std::string> lines;
     std::size_t at = 0;
     while (at <= caption_text_.size())
@@ -964,7 +1114,7 @@ void PlayerScreen::draw_captions(ui::Canvas &canvas, const Context &context) con
         if (!line.empty())
         {
             // Long lines wrap at 1400 pixels.
-            for (const std::string &part : context.fonts.semibold.font->wrap(line, 38.0f, 1400.0f))
+            for (const std::string &part : context.fonts.semibold.font->wrap(line, size, 1400.0f))
                 lines.push_back(part);
         }
         if (end == std::string::npos)
@@ -975,16 +1125,20 @@ void PlayerScreen::draw_captions(ui::Canvas &canvas, const Context &context) con
         lines.erase(lines.begin(), lines.end() - 4);
     // Above the controls while they are up, near the bottom edge otherwise.
     const float bottom = 1030.0f - (400.0f * chrome_.lift() + 290.0f) * chrome_.visibility();
-    float y = bottom - static_cast<float>(lines.size()) * 52.0f;
+    float y = bottom - static_cast<float>(lines.size()) * pitch;
     for (const std::string &line : lines)
     {
-        const float width = context.fonts.semibold.measure(line, 38.0f);
-        canvas.list.rounded_rect(
-            {gfx::kVirtualWidth * 0.5f - width * 0.5f - 16.0f, y, width + 32.0f, 50.0f}, 6.0f,
-            gfx::Color::rgb(0x000000, 0.72f));
-        ui::text(canvas.list, context.fonts.semibold, line, gfx::kVirtualWidth * 0.5f, y + 38.0f,
-                 38.0f, gfx::Color::rgb(0xffffff), gfx::Align::center);
-        y += 52.0f;
+        const float width = context.fonts.semibold.measure(line, size);
+        if (box)
+            canvas.list.rounded_rect(
+                {gfx::kVirtualWidth * 0.5f - width * 0.5f - 16.0f, y, width + 32.0f, pitch - 2.0f},
+                6.0f, gfx::Color::rgb(0x000000, 0.72f));
+        else // without the box a dark copy underneath keeps it readable
+            ui::text(canvas.list, context.fonts.semibold, line, gfx::kVirtualWidth * 0.5f + 2.0f,
+                     y + size + 2.0f, size, gfx::Color::rgb(0x000000, 0.9f), gfx::Align::center);
+        ui::text(canvas.list, context.fonts.semibold, line, gfx::kVirtualWidth * 0.5f, y + size,
+                 size, gfx::Color::rgb(0xffffff), gfx::Align::center);
+        y += pitch;
     }
 }
 

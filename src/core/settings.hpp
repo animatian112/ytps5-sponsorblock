@@ -54,6 +54,82 @@ struct Settings
     // The design shown when the app opens (index into the concept list).
     int concept_index = 0;
 
+    // ---- SmartTube's settings (save version 5, stored as key/value pairs so
+    // later additions need no new version) ----
+    // Player
+    int speed_index = 3;        // default speed, index into kSpeeds (1x)
+    bool remember_speed = true; // keep a changed speed for the next video
+    int seek_seconds = 10;      // left/right on the seek bar and L1/R1
+    int ui_hide_seconds = 4;    // controls hide after this long (0: never)
+    int playback_mode = 0;      // at the end: 0 next, 1 repeat, 2 pause, 3 close
+    bool show_clock = true;     // the clock in the controls
+    bool show_remaining = true; // "Remaining: 4:21" in the controls
+    bool show_quality = true;   // "1080p" in the controls
+    bool show_tooltips = true;  // the name of the focused button
+    bool suggestions = true;    // the suggestions row under the controls
+    bool loop_shorts = false;   // a Short starts again instead of moving on
+    bool resume = true;         // continue where a video was left
+    bool resume_short = false;  // ... also videos under 5 minutes
+    bool prefer_avc = false;    // AVC before VP9/AV1 (1080p at most)
+    int ok_behavior = 0;        // Cross while hidden: 0 controls, 1 pause, 2 both
+    // Subtitles
+    int subtitle_language = 0; // index into kSubtitleLanguages (0: off)
+    int subtitle_size = 1;     // 0 small, 1 medium, 2 large
+    bool subtitle_background = true;
+    // General
+    int boot_section = 0;              // index into kBootSections
+    std::uint32_t hidden_sections = 0; // bit per kSectionNames entry
+    bool hide_shorts_home = false;
+    bool hide_shorts_subscriptions = false;
+    bool hide_shorts_history = false;
+    bool hide_shorts_search = false;
+    bool hide_watched_home = false;
+    bool hide_watched_subscriptions = false;
+    bool hide_streams_subscriptions = false;
+    bool hide_mixes = false;
+    bool history_enabled = true; // tell YouTube what was watched
+    bool time_24h = false;
+    int dim_minutes = 0; // dim the screen after this idle time (0: never)
+    // User interface
+    bool corner_clock = true; // the clock top right of the sections
+    int title_lines = 2;      // card title lines, 1..3
+    int grid_columns = 4;     // cards a row in the grids, 3..5
+    bool rounded_cards = true;
+    int color_scheme = 0; // index into kColorSchemes
+    // Search
+    bool keyboard_auto = true;  // the keyboard opens with the search
+    bool search_history = true; // keep the last searches as suggestions
+    // SponsorBlock
+    bool sb_markers = true; // the segments on the seek bar
+    bool sb_once = false;   // a segment skipped once plays the next time
+
+    static constexpr int kSpeedCount = 8;
+    static constexpr double kSpeeds[kSpeedCount] = {0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0};
+    static constexpr int kSubtitleLanguageCount = 10;
+    static constexpr const char *kSubtitleLanguages[kSubtitleLanguageCount][2] = {
+        {"", "Off"},      {"en", "English"},    {"es", "Spanish"}, {"fr", "French"},
+        {"de", "German"}, {"pt", "Portuguese"}, {"it", "Italian"}, {"ja", "Japanese"},
+        {"ko", "Korean"}, {"ru", "Russian"}};
+    // The sections the sidebar can hide, in its order.
+    static constexpr int kSectionCount = 12;
+    static constexpr const char *kSectionNames[kSectionCount] = {
+        "Shorts",   "Sports",        "Live",    "Gaming",    "News",      "Music",
+        "Channels", "Subscriptions", "History", "Playlists", "My videos", "Blocked channels"};
+    static constexpr int kBootSectionCount = 5;
+    static constexpr const char *kBootSections[kBootSectionCount] = {
+        "Home", "Subscriptions", "Shorts", "History", "Playlists"};
+    static constexpr int kColorSchemeCount = 4;
+    static constexpr const char *kColorSchemes[kColorSchemeCount] = {"Dark Grey", "Dark", "Red",
+                                                                     "Blue Grey"};
+    bool section_hidden(int index) const
+    {
+        return index >= 0 && index < kSectionCount && ((hidden_sections >> index) & 1u) != 0;
+    }
+    double speed() const
+    {
+        return kSpeeds[speed_index >= 0 && speed_index < kSpeedCount ? speed_index : 3];
+    }
+
     struct Resolution
     {
         int width;

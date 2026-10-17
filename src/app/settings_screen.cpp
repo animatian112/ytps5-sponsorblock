@@ -233,12 +233,78 @@ ui::Form &SettingsScreen::add_tile(const char *label, Icon icon)
 
 SettingsScreen::SettingsScreen(Context &context) : context_(context)
 {
+    using S = Settings;
     add_tile("Accounts", Icon::accounts);
     rebuild_accounts();
+
+    // ---- User interface (SmartTube's "Main UI") ----
+    ui::Form &ui_form = add_tile("User interface", Icon::main_ui);
+    ui_form.add_header("Look");
+    {
+        std::vector<int> values;
+        std::vector<std::string> labels;
+        for (int i = 0; i < S::kColorSchemeCount; ++i)
+        {
+            values.push_back(i);
+            labels.emplace_back(S::kColorSchemes[i]);
+        }
+        add_steps(ui_form, "Color scheme", &S::color_scheme, values, labels,
+                  "The sidebar's and the menus' colors");
+    }
+    add_steps(ui_form, "Video grid scale", &S::grid_columns, {5, 4, 3},
+              {"Small", "Normal", "Large"}, "Cards a row in Subscriptions, History and the grids");
+    add_steps(ui_form, "Card title lines", &S::title_lines, {1, 2, 3}, {"1", "2", "3"});
+    add_flag(ui_form, "Rounded card corners", &S::rounded_cards);
+    add_flag(ui_form, "Home: top right corner clock", &S::corner_clock);
+    add_flag(ui_form, "24-hour clock", &S::time_24h);
+    ui_form.add_header("Sidebar sections");
+    for (int i = 0; i < S::kSectionCount; ++i)
+        add_section(ui_form, i);
+
+    // ---- Player ----
     ui::Form &player = add_tile("Player", Icon::player);
+    player.add_header("Playback");
+    {
+        std::vector<int> values;
+        std::vector<std::string> labels;
+        static const char *const kSpeedLabels[] = {"0.25x", "0.5x", "0.75x", "1x",
+                                                   "1.25x", "1.5x", "1.75x", "2x"};
+        for (int i = 0; i < S::kSpeedCount; ++i)
+        {
+            values.push_back(i);
+            labels.emplace_back(kSpeedLabels[i]);
+        }
+        add_steps(player, "Video speed", &S::speed_index, values, labels,
+                  "The speed every video starts at");
+    }
+    add_flag(player, "Remember speed", &S::remember_speed,
+             "A speed picked in the player stays for the next video");
+    add_steps(player, "Playback mode", &S::playback_mode, {0, 1, 2, 3},
+              {"Next video", "Repeat", "Pause", "Close"},
+              "When a video ends: the next one, the same again, a pause, or back out");
+    add_flag(player, "Loop Shorts", &S::loop_shorts, "A Short starts again when it ends");
+    add_flag(player, "Remember position", &S::resume, "Continue a video where you left it");
+    add_flag(player, "Remember position of short videos", &S::resume_short,
+             "Also videos shorter than 5 minutes");
+    add_steps(player, "Seek interval", &S::seek_seconds, {5, 10, 15, 20, 30, 60},
+              {"5 sec", "10 sec", "15 sec", "20 sec", "30 sec", "60 sec"},
+              "Left/right on the seek bar, L1/R1 while playing");
+    player.add_header("Controls");
+    add_steps(player, "Auto-hide UI", &S::ui_hide_seconds, {3, 4, 5, 8, 10, 0},
+              {"3 sec", "4 sec", "5 sec", "8 sec", "10 sec", "Never"});
+    add_steps(player, "OK button behavior", &S::ok_behavior, {0, 1, 2}, {"UI", "Pause", "Both"},
+              "What Cross does while the controls are hidden: show them, pause, or both");
+    add_flag(player, "Show clock in controls bar", &S::show_clock);
+    add_flag(player, "Show remaining time", &S::show_remaining);
+    add_flag(player, "Show quality info", &S::show_quality);
+    add_flag(player, "Show button tooltips", &S::show_tooltips);
+    add_flag(player, "Suggestions", &S::suggestions, "The row of videos under the controls");
+    player.add_header("Video formats");
     player.add_toggle(kCodecAvc, "AVC (H.264)", context_.settings.codec_avc);
     player.add_toggle(kCodecVp9, "VP9", context_.settings.codec_vp9);
     player.add_toggle(kCodecAv1, "AV1", context_.settings.codec_av1);
+    add_flag(player, "Prefer AVC over VP9", &S::prefer_avc,
+             "Steadier on the CPU decoder; 1080p at most");
 
     ui::FormRow &resolution = player.add_stepper(
         kMaxHeight, "Maximum resolution", height_to_index(context_.settings.max_height), 0, 3, 1);
@@ -264,21 +330,73 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         return kLabels[value];
     };
 
+    // ---- Subtitles ----
+    ui::Form &subtitles = add_tile("Subtitles", Icon::subtitles);
+    {
+        std::vector<int> values;
+        std::vector<std::string> labels;
+        for (int i = 0; i < S::kSubtitleLanguageCount; ++i)
+        {
+            values.push_back(i);
+            labels.emplace_back(S::kSubtitleLanguages[i][1]);
+        }
+        add_steps(subtitles, "Subtitle language", &S::subtitle_language, values, labels,
+                  "Turned on by itself when a video has it");
+    }
+    add_steps(subtitles, "Text size", &S::subtitle_size, {0, 1, 2}, {"Small", "Medium", "Large"});
+    add_flag(subtitles, "Background", &S::subtitle_background, "A dark box behind the text");
+
+    // ---- General ----
+    ui::Form &general = add_tile("General", Icon::general);
+    {
+        std::vector<int> values;
+        std::vector<std::string> labels;
+        for (int i = 0; i < S::kBootSectionCount; ++i)
+        {
+            values.push_back(i);
+            labels.emplace_back(S::kBootSections[i]);
+        }
+        add_steps(general, "Boot to section", &S::boot_section, values, labels,
+                  "The section the app opens on");
+    }
+    add_flag(general, "History", &S::history_enabled,
+             "Off pauses history: YouTube is not told what you watch");
+    add_steps(general, "Screen dimming", &S::dim_minutes, {0, 1, 3, 5, 10, 30},
+              {"Never", "1 min", "3 min", "5 min", "10 min", "30 min"},
+              "Darken the screen when nothing happens (not while a video plays)");
+    general.add_toggle(kHaptics, "Haptics", context_.settings.haptics).description =
+        "Rumble on clicks and drags";
+    general.add_header("Hide content");
+    add_flag(general, "Hide Shorts from Home", &S::hide_shorts_home);
+    add_flag(general, "Hide Shorts from Subscriptions", &S::hide_shorts_subscriptions);
+    add_flag(general, "Hide Shorts from History", &S::hide_shorts_history);
+    add_flag(general, "Hide Shorts from search results", &S::hide_shorts_search);
+    add_flag(general, "Hide watched videos from Home", &S::hide_watched_home);
+    add_flag(general, "Hide watched videos from Subscriptions", &S::hide_watched_subscriptions);
+    add_flag(general, "Hide streams from Subscriptions", &S::hide_streams_subscriptions);
+    add_flag(general, "Hide Mixes", &S::hide_mixes);
+
+    // ---- Search ----
+    ui::Form &search = add_tile("Search", Icon::search);
+    add_flag(search, "Show keyboard automatically", &S::keyboard_auto,
+             "The keyboard opens as soon as Search does");
+
+    // ---- SponsorBlock ----
     ui::Form &sponsor = add_tile("SponsorBlock", Icon::sponsorblock);
-    sponsor.add_toggle(kSbEnabled, "Skip segments", context_.settings.sb_enabled).description =
+    sponsor.add_toggle(kSbEnabled, "Enable", context_.settings.sb_enabled).description =
         "Community-marked segments from sponsor.ajay.app";
     ui::FormRow &sb_mode =
-        sponsor.add_stepper(kSbMode, "When a segment starts", context_.settings.sb_mode, 0, 2, 1);
+        sponsor.add_stepper(kSbMode, "Choose action", context_.settings.sb_mode, 0, 2, 1);
     sb_mode.description = sb_mode_description(context_.settings.sb_mode);
     sb_mode.stepper.format = [](int value) -> std::string
     {
-        static const char *const kLabels[] = {"Skip", "Ask", "Only mark"};
+        static const char *const kLabels[] = {"Skip", "Ask", "Do nothing"};
         if (value < 0 || value > 2)
             return "Skip";
         return kLabels[value];
     };
     ui::FormRow &sb_scope =
-        sponsor.add_stepper(kSbScope, "Segments", context_.settings.sb_scope, 0, 2, 1);
+        sponsor.add_stepper(kSbScope, "Categories", context_.settings.sb_scope, 0, 2, 1);
     sb_scope.description = sb_scope_description(context_.settings.sb_scope);
     sb_scope.stepper.format = [](int value) -> std::string
     {
@@ -287,15 +405,90 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
             return "Everything";
         return kLabels[value];
     };
-
-    ui::Form &general = add_tile("General", Icon::general);
-    general.add_toggle(kHaptics, "Haptics", context_.settings.haptics).description =
-        "Rumble on clicks and drags";
+    add_flag(sponsor, "Color markers on progress bar", &S::sb_markers);
+    add_flag(sponsor, "Don't skip segments again", &S::sb_once,
+             "A segment skipped once plays when you seek back to it");
 
     // One-shot tiles.
     tiles_.push_back({"Network test", Icon::network, nullptr, kNetTest});
     tiles_.push_back({"Updates", Icon::updates, nullptr, kCheckUpdates});
     tiles_.push_back({"About", Icon::about, nullptr, kAbout});
+}
+
+void SettingsScreen::add_flag(ui::Form &form, const char *label, bool Settings::*flag,
+                              const char *description)
+{
+    Binding binding;
+    binding.id = next_binding_id_++;
+    binding.flag = flag;
+    ui::FormRow &row = form.add_toggle(binding.id, label, context_.settings.*flag);
+    if (description != nullptr)
+        row.description = description;
+    bindings_.push_back(std::move(binding));
+}
+
+void SettingsScreen::add_steps(ui::Form &form, const char *label, int Settings::*number,
+                               std::vector<int> values, std::vector<std::string> labels,
+                               const char *description)
+{
+    Binding binding;
+    binding.id = next_binding_id_++;
+    binding.number = number;
+    int index = 0;
+    for (std::size_t i = 0; i < values.size(); ++i)
+        if (values[i] == context_.settings.*number)
+            index = static_cast<int>(i);
+    ui::FormRow &row =
+        form.add_stepper(binding.id, label, index, 0, static_cast<int>(values.size()) - 1, 1);
+    row.stepper.format = [labels](int value) -> std::string
+    {
+        if (value < 0 || value >= static_cast<int>(labels.size()))
+            return {};
+        return labels[static_cast<std::size_t>(value)];
+    };
+    if (description != nullptr)
+        row.description = description;
+    binding.values = std::move(values);
+    bindings_.push_back(std::move(binding));
+}
+
+void SettingsScreen::add_section(ui::Form &form, int section)
+{
+    Binding binding;
+    binding.id = next_binding_id_++;
+    binding.section = section;
+    form.add_toggle(binding.id, Settings::kSectionNames[section],
+                    !context_.settings.section_hidden(section));
+    bindings_.push_back(std::move(binding));
+}
+
+bool SettingsScreen::apply_binding(int id)
+{
+    for (const Binding &binding : bindings_)
+    {
+        if (binding.id != id)
+            continue;
+        Settings &settings = context_.settings;
+        if (binding.section >= 0)
+        {
+            const std::uint32_t bit = 1u << binding.section;
+            if (form().toggle_value(id))
+                settings.hidden_sections &= ~bit;
+            else
+                settings.hidden_sections |= bit;
+        }
+        else if (binding.flag != nullptr)
+            settings.*binding.flag = form().toggle_value(id);
+        else if (binding.number != nullptr)
+        {
+            const int index = form().stepper_value(id);
+            if (index >= 0 && index < static_cast<int>(binding.values.size()))
+                settings.*binding.number = binding.values[static_cast<std::size_t>(index)];
+        }
+        context_.settings_changed = true;
+        return true;
+    }
+    return false;
 }
 
 void SettingsScreen::rebuild_accounts()
@@ -353,6 +546,8 @@ void SettingsScreen::enter()
 
 void SettingsScreen::apply(int id, ui::Feedback &feedback)
 {
+    if (apply_binding(id))
+        return;
     switch (id)
     {
     case kCodecAvc:
@@ -640,6 +835,12 @@ const char *icon_name(SettingsScreen::Icon icon)
         return "set_player";
     case SettingsScreen::Icon::sponsorblock:
         return "set_block";
+    case SettingsScreen::Icon::main_ui:
+        return "set_main_ui";
+    case SettingsScreen::Icon::subtitles:
+        return "set_subtitles";
+    case SettingsScreen::Icon::search:
+        return "set_search";
     case SettingsScreen::Icon::general:
         return "set_general";
     case SettingsScreen::Icon::network:
@@ -683,6 +884,9 @@ void SettingsScreen::draw_icon(gfx::DrawList &list, Icon icon, const gfx::Rect &
         list.triangle({cx - s * 0.8f, cy + s * 0.05f, s * 1.6f, s * 0.95f}, ink, 0.0f, 3.14159265f);
         list.triangle({cx - s * 0.22f, cy - s * 0.42f, s * 0.6f, s * 0.6f}, hole, 0.0f, 1.5707963f);
         break;
+    case Icon::main_ui:
+    case Icon::subtitles:
+    case Icon::search:
     case Icon::general: // a gear
         for (int i = 0; i < 8; ++i)
         {
