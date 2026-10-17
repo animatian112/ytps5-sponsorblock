@@ -102,6 +102,15 @@ struct Settings
     // SponsorBlock
     bool sb_markers = true; // the segments on the seek bar
     bool sb_once = false;   // a segment skipped once plays the next time
+    // SmartTube's per-category actions, in yt::sponsorblock order (sponsor,
+    // self promotion, interaction, intro, outro, preview, non-music, filler,
+    // highlight, exclusive access): 0 off, 1 skip, 2 skip + notify, 3 ask,
+    // 4 show only.
+    static constexpr int kSbCategories = 10;
+    int sb_act[kSbCategories] = {2, 2, 2, 2, 2, 2, 2, 0, 4, 4};
+    int sb_min_seconds = 1;     // segments shorter than this are not skipped
+    bool sb_alt_server = false; // api.sponsor.ajay.app
+    bool sb_stats = true;       // tell the database which segments were skipped
 
     static constexpr int kSpeedCount = 8;
     static constexpr double kSpeeds[kSpeedCount] = {0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0};

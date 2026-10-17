@@ -182,3 +182,32 @@ TEST(SponsorBlock, ScopesSelectCategories)
 }
 
 } // namespace
+
+TEST(SponsorBlock, PerCategoryActionsHighlightAndWholeVideoLabels)
+{
+    answer(200,
+           R"([{"category":"sponsor","actionType":"skip","segment":[60,90],"UUID":"s"},)"
+           R"({"category":"intro","actionType":"skip","segment":[0,12],"UUID":"i"},)"
+           R"({"category":"poi_highlight","actionType":"poi","segment":[300,300],"UUID":"h"},)"
+           R"({"category":"exclusive_access","actionType":"full","segment":[0,0],"UUID":"e"}])");
+    sb::Options options;
+    options.action[0] = sb::Action::skip; // sponsor: silently
+    options.action[3] = sb::Action::off;  // intro: not asked for
+    sb::Skipper skipper;
+    skipper.load("dQw4w9WgXcQ", options);
+    for (int i = 0; i < 400 && skipper.status().empty(); ++i)
+    {
+        (void)skipper.poll(0.0, 600.0, false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    const std::string url = HttpStub::instance().exchanges().at(0).request.url;
+    EXPECT_EQ(url.find("%22intro%22"), std::string::npos) << url;
+    EXPECT_NE(url.find("%22poi%22"), std::string::npos) << url;
+    EXPECT_DOUBLE_EQ(skipper.highlight_s(), 300.0);
+    EXPECT_EQ(skipper.whole_video_label(), "Exclusive access");
+    const sb::Decision d = skipper.poll(60.3, 600.0, true);
+    EXPECT_EQ(d.kind, sb::Kind::skip);
+    EXPECT_TRUE(d.silent);
+    EXPECT_EQ(d.uuid, "s");
+    HttpStub::instance().clear();
+}

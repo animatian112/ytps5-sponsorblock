@@ -120,7 +120,10 @@ struct VideoInfo
     std::string watchtime_url;
     std::string channel_id;  // videoDetails.channelId
     std::string description; // videoDetails.shortDescription
-    std::string view_count;  // videoDetails.viewCount, digits
+    // The seek preview sheets: playerStoryboardSpecRenderer.spec
+    // ("url|w#h#count#cols#rows#interval#name#sigh|..."), see yt/storyboard.hpp.
+    std::string storyboard_spec;
+    std::string view_count; // videoDetails.viewCount, digits
     std::vector<CaptionTrack> captions;
     int preroll_ads = 0;
     // std::chrono::steady_clock milliseconds when the URLs start to play:
@@ -234,6 +237,8 @@ struct FeedPage
     std::string clear_history_token;
     // A watch page's chapters (chapterRenderer), in order.
     std::vector<Chapter> chapters;
+    // A watch page's channel picture (the owner line's avatar).
+    std::string channel_avatar;
     bool ok() const
     {
         return error.empty();

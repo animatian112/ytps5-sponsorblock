@@ -149,6 +149,10 @@ gfx::Color segment_color(const std::string &category)
         return gfx::Color::rgb(0x008fd6);
     if (category == "music_offtopic")
         return gfx::Color::rgb(0xff9900);
+    if (category == "filler")
+        return gfx::Color::rgb(0x7300ff);
+    if (category == "poi_highlight")
+        return gfx::Color::rgb(0xff1684);
     return gfx::Color::rgb(0xaaaaaa);
 }
 
@@ -172,6 +176,14 @@ PlayerScreen::PlayerScreen(Context &context) : context_(context)
     related_.style.counter = false;
     related_.title = "Suggestions";
     related_.set_bounds({96.0f, 1080.0f, 1728.0f, 370.0f});
+    chapters_row_.style = related_.style;
+    chapters_row_.style.item_width = 240.0f;
+    chapters_row_.style.card.title_lines = 1;
+    chapters_row_.style.card.title_size = 19.0f;
+    chapters_row_.style.card.subtitle_size = 16.0f;
+    chapters_row_.style.title_size = 26.0f;
+    chapters_row_.title = "Chapters";
+    chapters_row_.set_bounds({96.0f, 1080.0f, 1728.0f, 250.0f});
     related_.set_active(false);
 }
 
@@ -198,6 +210,7 @@ void PlayerScreen::enter()
     login_retry_sent_ = false;
     ended_ = false;
     in_related_ = false;
+    in_chapters_ = false;
     related_.set_active(false);
     chrome_.set_lifted(false);
     chrome_.show();
@@ -290,29 +303,39 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
 {
     namespace sb = yt::sponsorblock;
     const Settings &settings = context_.settings;
-    if (!settings.sb_enabled || player_ == nullptr || playing_id_.empty())
+    const yt::VideoView view = context_.service.video();
+    // SponsorBlock off, or this channel excluded from it (video menu).
+    const bool excluded = !view.info.channel_id.empty() &&
+                          std::find(context_.sb_excluded.begin(), context_.sb_excluded.end(),
+                                    view.info.channel_id) != context_.sb_excluded.end();
+    if (!settings.sb_enabled || excluded || player_ == nullptr || playing_id_.empty())
     {
         if (!sponsor_video_.empty())
             reset_sponsorblock();
         return;
     }
-    // Start (or restart, when the category setting moved) the lookup.
-    if (sponsor_video_ != playing_id_ || sponsor_scope_ != settings.sb_scope)
+    // SmartTube's per-category settings; a change reloads the list.
+    sb::Options options;
+    for (int i = 0; i < sb::kCategoryCount && i < Settings::kSbCategories; ++i)
+        options.action[i] = static_cast<sb::Action>(std::clamp(settings.sb_act[i], 0, 4));
+    options.min_skip_ms = static_cast<long>(settings.sb_min_seconds) * 1000;
+    options.skip_once = settings.sb_once;
+    options.alt_server = settings.sb_alt_server;
+    if (sponsor_video_ != playing_id_ || !(sponsor_options_ == options))
     {
         reset_sponsorblock();
         sponsor_video_ = playing_id_;
-        sponsor_scope_ = settings.sb_scope;
-        sponsor_.load(playing_id_, static_cast<sb::Scope>(settings.sb_scope));
+        sponsor_options_ = options;
+        sponsor_.load(playing_id_, options);
     }
 
     const double position = player_->clock_s();
     const double duration = player_->duration_s();
     const bool playing = !player_->paused() && !ended_ && player_->buffered_s() > 0.0;
-    const sb::Decision decision =
-        sponsor_.poll(position, duration, playing, static_cast<sb::Mode>(settings.sb_mode));
+    const sb::Decision decision = sponsor_.poll(position, duration, playing);
 
-    // A new segment list: paint it onto the seek bar (Settings > SponsorBlock
-    // > Color markers decides whether it shows).
+    // A new segment list: paint it onto the seek bar (Color markers), say
+    // what a whole video is labelled, and remember the highlight.
     if (sponsor_.revision() != sponsor_revision_ || sponsor_markers_ != settings.sb_markers)
     {
         sponsor_revision_ = sponsor_.revision();
@@ -320,19 +343,32 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
         std::vector<ui::MediaRange> ranges;
         for (const sb::Segment &segment : sponsor_.segments())
         {
+            if (segment.action == "full" || !settings.sb_markers)
+                continue;
             ui::MediaRange range;
             range.start = static_cast<float>(segment.start_s);
-            range.end = static_cast<float>(segment.end_s);
+            // A highlight is a point: a short mark.
+            range.end = segment.action == "poi"
+                            ? static_cast<float>(segment.start_s) +
+                                  std::max(1.0f, static_cast<float>(duration) * 0.004f)
+                            : static_cast<float>(segment.end_s);
             range.color = segment_color(segment.category);
-            if (settings.sb_markers)
-                ranges.push_back(range);
+            ranges.push_back(range);
         }
         chrome_.set_ranges(std::move(ranges));
         yt::log::line("sponsorblock: %zu segments on the bar (%s)", sponsor_.segments().size(),
                       sponsor_.status().c_str());
+        const std::string label = sponsor_.whole_video_label();
+        if (!label.empty() && settings.sb_act[9] != 0 && sponsor_notice_for_ != playing_id_)
+        {
+            sponsor_notice_for_ = playing_id_;
+            context_.toasts.push(ui::StatusKind::info, "This video: " + label, "SponsorBlock",
+                                 4.0f);
+        }
     }
 
-    // "Don't skip segments again": one that was skipped plays the next time.
+    // "Don't skip segments again" is the tracker's; the one-shot list here
+    // keeps a skipped segment from being skipped on every poll after a seek.
     const bool skipped_before =
         settings.sb_once && std::any_of(skipped_ends_.begin(), skipped_ends_.end(), [&](double end)
                                         { return std::abs(end - decision.target_s) < 0.5; });
@@ -340,21 +376,37 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
     {
         skipped_ends_.push_back(decision.target_s);
         player_->seek(decision.target_s);
-        context_.toasts.push(ui::StatusKind::info, "Skipped " + decision.label, "SponsorBlock",
-                             2.5f);
+        if (!decision.silent)
+            context_.toasts.push(ui::StatusKind::info, "Skipped " + decision.label, "SponsorBlock",
+                                 2.5f);
+        if (settings.sb_stats)
+            sb::report_viewed(decision.uuid, settings.sb_alt_server);
         yt::log::line("sponsorblock: skipped %s to %.1f s", decision.label.c_str(),
                       decision.target_s);
     }
 
-    // The segment under the playhead, for the Triangle hint.
+    // The segment under the playhead, for the Triangle hint; without one, a
+    // highlight still ahead (Settings: Highlight > Offer jump).
     sponsor_here_.clear();
+    sponsor_highlight_ = -1.0;
     for (const sb::Segment &segment : sponsor_.segments())
     {
+        if (segment.action == "poi" || segment.action == "full")
+            continue;
+        if (segment.index >= 0 && segment.index < Settings::kSbCategories &&
+            settings.sb_act[segment.index] == 0)
+            continue;
         if (position >= segment.start_s && position < segment.end_s - 0.5)
         {
             sponsor_here_ = segment.label;
             break;
         }
+    }
+    const double highlight = sponsor_.highlight_s();
+    if (sponsor_here_.empty() && settings.sb_act[8] != 0 && highlight > position + 2.0)
+    {
+        sponsor_highlight_ = highlight;
+        sponsor_here_ = "to highlight";
     }
 
     if (input.is_pressed(Action::north) && !sponsor_here_.empty())
@@ -365,6 +417,15 @@ void PlayerScreen::skip_segment_now(ui::Feedback &feedback)
 {
     if (player_ == nullptr)
         return;
+    if (sponsor_highlight_ > 0.0)
+    {
+        // Triangle before the highlight: jump to the best part.
+        player_->seek(sponsor_highlight_);
+        context_.toasts.push(ui::StatusKind::info, "Jumped to the highlight", "SponsorBlock", 2.0f);
+        sponsor_highlight_ = -1.0;
+        sponsor_here_.clear();
+        return;
+    }
     const yt::sponsorblock::Decision manual =
         sponsor_.skip_now(player_->clock_s(), player_->duration_s());
     if (manual.kind == yt::sponsorblock::Kind::skip)
@@ -576,6 +637,26 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     }
     if (chrome_.take_seek() && player_ != nullptr)
         player_->seek(chrome_.seek_target());
+    // Seek preview: the storyboard frame the bar points at.
+    if (storyboard_for_ != playing_id_ && !view.info.storyboard_spec.empty())
+    {
+        storyboard_for_ = playing_id_;
+        const double length = view.info.length_s > 0.0
+                                  ? view.info.length_s
+                                  : (player_ != nullptr ? player_->duration_s() : 0.0);
+        if (!storyboard_.parse(view.info.storyboard_spec, length))
+            yt::log::line("storyboard: unreadable spec");
+    }
+    if (chrome_.previewing() && storyboard_for_ == playing_id_ && !storyboard_.empty())
+    {
+        const yt::StoryboardFrame frame = storyboard_.frame_at(chrome_.preview_time());
+        chrome_.set_preview(
+            context_.thumbs.texture(frame.url), {frame.u, frame.v, frame.w, frame.h},
+            frame.height > 0 ? static_cast<float>(frame.width) / static_cast<float>(frame.height)
+                             : 16.0f / 9.0f);
+    }
+    else
+        chrome_.set_preview(0, {0.0f, 0.0f, 1.0f, 1.0f}, 16.0f / 9.0f);
 
     update_sponsorblock(input, feedback);
     chrome_.set_segment(sponsor_here_);
@@ -595,6 +676,8 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
                            yt::audio_tracks(view.info.formats).size() > 1);
     }
     chrome_.set_has_channel(!view.info.channel_id.empty());
+    chrome_.set_channel_avatar(
+        view.channel_avatar.empty() ? 0u : context_.thumbs.texture(view.channel_avatar));
     chrome_.set_account(context_.service.signed_in() && view.state == yt::Load::ready,
                         view.like_status == "LIKE", view.like_status == "DISLIKE", view.subscribed);
     // Say once whether YouTube took the video into the account's history.
@@ -641,9 +724,15 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             skip_segment_now(feedback);
             break;
         case PlayerChrome::Command::suggestions:
-            if (!related_items_.empty() && settings.suggestions)
+            // Down from the controls: the chapters first, then the
+            // suggestions.
+            if (!chapters_.empty() || (!related_items_.empty() && settings.suggestions))
             {
                 in_related_ = true;
+                in_chapters_ = !chapters_.empty();
+                if (in_chapters_ && player_ != nullptr)
+                    chapters_row_.set_focus(
+                        std::max(0, yt::chapter_at(chapters_, player_->clock_s())));
                 chrome_.set_lifted(true);
                 feedback.play(audio::Cue::tab);
             }
@@ -730,6 +819,34 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             chrome_.show();
         }
     }
+    else if (in_chapters_)
+    {
+        chrome_.show();
+        const ui::Event event = chapters_row_.handle(input, feedback);
+        if (event == ui::Event::activated)
+        {
+            const std::size_t index = static_cast<std::size_t>(chapters_row_.focus());
+            if (index < chapters_.size() && player_ != nullptr)
+                player_->seek(chapters_[index].start_s);
+            in_related_ = false;
+            in_chapters_ = false;
+            chrome_.set_lifted(false);
+        }
+        else if (input.nav == Direction::down && !related_items_.empty() && settings.suggestions)
+        {
+            in_chapters_ = false;
+            feedback.play(audio::Cue::focus);
+        }
+        else if (event == ui::Event::cancelled || input.nav == Direction::up)
+        {
+            in_related_ = false;
+            in_chapters_ = false;
+            chrome_.set_lifted(false);
+            back_used = event == ui::Event::cancelled;
+            if (input.nav == Direction::up)
+                feedback.play(audio::Cue::focus);
+        }
+    }
     else
     {
         chrome_.show(); // the row keeps the controls up
@@ -745,6 +862,11 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
                 request_video(next);
             }
         }
+        else if (input.nav == Direction::up && !chapters_.empty())
+        {
+            in_chapters_ = true; // up: the chapters row above
+            feedback.play(audio::Cue::focus);
+        }
         else if (event == ui::Event::cancelled || input.nav == Direction::up)
         {
             in_related_ = false;
@@ -754,7 +876,8 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
                 feedback.play(audio::Cue::focus);
         }
     }
-    related_.set_active(in_related_);
+    related_.set_active(in_related_ && !in_chapters_);
+    chapters_row_.set_active(in_related_ && in_chapters_);
 
     // The end of a video, as Settings > Player > Playback mode says: the next
     // suggestion (autoplay), the same video again, a pause, or back out.
@@ -786,11 +909,58 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     if (input.is_pressed(Action::back) && !back_used)
         context_.nav.leave_player = true;
 
-    // The row sits under the block and slides up with it.
-    const float lift = chrome_.lift();
-    related_.set_bounds({96.0f, 1080.0f - 400.0f * lift + 10.0f, 1728.0f, 370.0f});
+    // The rows sit under the block and slide up with it: the chapters,
+    // then the suggestions.
+    fill_chapter_row();
+    const float top = 1080.0f - rise() + 10.0f;
+    if (!chapters_.empty())
+    {
+        chapters_row_.set_bounds({96.0f, top, 1728.0f, 270.0f});
+        related_.set_bounds({96.0f, top + 300.0f, 1728.0f, 370.0f});
+    }
+    else
+        related_.set_bounds({96.0f, top, 1728.0f, 370.0f});
     chrome_.update(dt);
     related_.update(dt);
+    chapters_row_.update(dt);
+}
+
+float PlayerScreen::rise() const
+{
+    return (chapters_.empty() ? 400.0f : 700.0f) * chrome_.lift();
+}
+
+void PlayerScreen::fill_chapter_row()
+{
+    if (chapters_.empty())
+        return;
+    // Built when the chapters (or the storyboard) arrive; the pictures are
+    // patched in as their sheets load.
+    if (chapters_row_for_ != chapters_revision_ + 1 ||
+        chapters_row_.items().size() != chapters_.size())
+    {
+        chapters_row_for_ = chapters_revision_ + 1;
+        std::vector<ui::CardItem> cards;
+        for (const yt::Chapter &chapter : chapters_)
+        {
+            ui::CardItem card;
+            card.title = chapter.title;
+            card.subtitle = chapter_time(chapter.start_s);
+            card.image_aspect = 16.0f / 9.0f;
+            cards.push_back(std::move(card));
+        }
+        chapters_row_.set_items(std::move(cards));
+    }
+    if (storyboard_.empty() || storyboard_for_ != playing_id_ || chrome_.lift() < 0.01f)
+        return;
+    for (std::size_t i = 0; i < chapters_.size(); ++i)
+    {
+        ui::CardItem &card = chapters_row_.item(static_cast<int>(i));
+        // A moment into the chapter: its first frame is often a title card.
+        const yt::StoryboardFrame frame = storyboard_.frame_at(chapters_[i].start_s + 2.0);
+        card.texture = context_.thumbs.texture(frame.url);
+        card.uv = {frame.u, frame.v, frame.w, frame.h};
+    }
 }
 
 void PlayerScreen::choose_shuffle()
@@ -1205,7 +1375,7 @@ void PlayerScreen::draw_captions(ui::Canvas &canvas, const Context &context) con
     if (lines.size() > 4)
         lines.erase(lines.begin(), lines.end() - 4);
     // Above the controls while they are up, near the bottom edge otherwise.
-    const float bottom = 1030.0f - (400.0f * chrome_.lift() + 290.0f) * chrome_.visibility();
+    const float bottom = 1030.0f - (rise() + 290.0f) * chrome_.visibility();
     float y = bottom - static_cast<float>(lines.size()) * pitch;
     for (const std::string &line : lines)
     {
@@ -1344,11 +1514,14 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
 
     // The controls, and the suggestions row under them when it is open.
     const float lift = chrome_.lift();
-    chrome_.draw(canvas, context.fonts, 400.0f * lift);
-    if (lift > 0.01f && !related_items_.empty())
+    chrome_.draw(canvas, context.fonts, rise());
+    if (lift > 0.01f)
     {
         canvas.list.push_opacity(std::min(1.0f, lift * 1.5f));
-        related_.draw(canvas);
+        if (!chapters_.empty())
+            chapters_row_.draw(canvas);
+        if (!related_items_.empty())
+            related_.draw(canvas);
         canvas.list.pop_opacity();
     }
 

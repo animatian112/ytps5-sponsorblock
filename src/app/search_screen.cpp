@@ -80,10 +80,58 @@ SearchScreen::SearchScreen(Context &context) : context_(context)
     field_.set_bounds({kContentX, 140.0f, kContentW, 64.0f});
     field_.set_active(true);
 
-    keys_.style.theme = youtube_theme();
+    // The PlayStation's own keyboard: a full-width dark band at the bottom,
+    // grey keys, the focused one white with dark text, Done a lighter key; Square
+    // deletes, Triangle types a space, L2 shifts, R2 switches to symbols.
+    static const ui::Theme kPs5Keys = []
+    {
+        ui::Theme theme = youtube_theme();
+        theme.surface = gfx::Color::rgb(0x3d3d3d);
+        theme.surface_high = gfx::Color::rgb(0x3d3d3d);
+        theme.secondary = gfx::Color::rgb(0x3d3d3d);
+        theme.text = gfx::Color::rgb(0xffffff);
+        theme.accent = gfx::Color::rgb(0xffffff);
+        theme.focus = gfx::Color::rgb(0xffffff);
+        theme.primary = gfx::Color::rgb(0x9a9a9a);    // the Done key, lighter than the rest
+        theme.on_primary = gfx::Color::rgb(0x111111); // dark text on the white focus
+        theme.radius = 8.0f;
+        return theme;
+    }();
+    keys_.style.theme = kPs5Keys;
+    keys_.style.panel = false;
+    keys_.style.highlight.color = gfx::Color::rgb(0xffffff);
+    keys_.style.highlight.breathe = false;
+    keys_.style.gap = 10.0f;
+    keys_.style.label_size = 32.0f;
     keys_.style.bindings = ui::KeyboardBindings::standard();
-    keys_.set_layouts({ui::KeyboardLayout::letters(), ui::KeyboardLayout::numeric()});
-    keys_.set_bounds({560.0f, 470.0f, 1080.0f, 520.0f});
+    {
+        using ui::KeyboardKey;
+        using ui::KeyKind;
+        ui::KeyboardLayout letters;
+        letters.name = "abc";
+        letters.columns = 11;
+        letters.add_row("1234567890");
+        letters.rows.back().push_back({KeyKind::backspace, {}, {}, 1, {}});
+        letters.add_row("qwertyuiop-");
+        letters.add_row("asdfghjkl'&");
+        letters.rows[2][9].shifted = "\"";
+        letters.add_row(std::vector<KeyboardKey>{{KeyKind::shift, {}, {}, 1, {}}});
+        for (const char ch : std::string("zxcvbnm,.?"))
+        {
+            KeyboardKey key;
+            key.text = std::string(1, ch);
+            if (ch >= 'a' && ch <= 'z')
+                key.shifted = std::string(1, static_cast<char>(ch - 'a' + 'A'));
+            letters.rows.back().push_back(std::move(key));
+        }
+        letters.add_row(std::vector<KeyboardKey>{{KeyKind::layout, {}, {}, 2, "@#:"},
+                                                 {KeyKind::space, {}, {}, 6, {}},
+                                                 {KeyKind::done, {}, {}, 3, {}}});
+        ui::KeyboardLayout symbols = ui::KeyboardLayout::symbols();
+        symbols.name = "@#:";
+        keys_.set_layouts({letters, symbols});
+    }
+    keys_.set_bounds({300.0f, 640.0f, 1320.0f, 410.0f});
     keys_.on_text = [this](std::string_view text) { field_.insert(text); };
     keys_.on_backspace = [this] { field_.backspace(); };
     keys_.on_done = [this] { run_search(); };
@@ -592,6 +640,14 @@ void SearchScreen::draw(const Context &context, Frame &frame) const
     ui::Canvas overlay{frame.overlay, context.fonts, frame.glass_texture, clock_};
     overlay.list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
                               gfx::Color::rgb(0x000000, 0.5f));
+    if (spot_ == Spot::keyboard)
+    {
+        // The PlayStation keyboard's band behind the keys.
+        overlay.list.rounded_rect({0.0f, 612.0f, gfx::kVirtualWidth, gfx::kVirtualHeight - 612.0f},
+                                  0.0f, gfx::Color::rgb(0x1a1a1a, 0.97f));
+        overlay.list.rounded_rect({0.0f, 612.0f, gfx::kVirtualWidth, 2.0f}, 0.0f,
+                                  gfx::Color::rgb(0x3d3d3d));
+    }
     keys_.draw(overlay);
 }
 

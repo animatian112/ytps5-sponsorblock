@@ -34,6 +34,9 @@ class ThumbCache
     // decoding (the caller draws its placeholder). Requests the download
     // once; calling it every frame is cheap.
     std::uint32_t texture(const std::string &url);
+    // Quiet: one download at a time, so a starting video's decoder keeps the
+    // CPU (several JPEG decodes at once made the first seconds stutter).
+    void set_quiet(bool quiet);
     // width / height of a loaded image, 0 while it is not loaded.
     float aspect(const std::string &url) const;
     // Registers an already decoded image (the QR bitmap) under `key`.

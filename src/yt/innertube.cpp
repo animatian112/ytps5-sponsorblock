@@ -1912,6 +1912,16 @@ bool parse_feed_page(std::string_view json, FeedPage *page)
             page->channel_id = id;
     }
 
+    // The channel's picture on a watch page: the owner line's avatar.
+    {
+        yyjson_val *owner = find_object(root, "videoOwnerRenderer");
+        yyjson_val *thumbs = yyjson_obj_get(yyjson_obj_get(owner, "thumbnail"), "thumbnails");
+        if (yyjson_arr_size(thumbs) == 0)
+            thumbs = yyjson_obj_get(find_object(root, "channelThumbnail"), "thumbnails");
+        if (yyjson_arr_size(thumbs) > 0)
+            page->channel_avatar = largest_thumbnail(thumbs);
+    }
+
     // The account's standing toward the video (a /next answer).
     yyjson_val *subscribe = find_object(root, "subscribeButtonRenderer");
     if (subscribe != nullptr)
@@ -2249,6 +2259,9 @@ bool parse_video_info(std::string_view json, VideoInfo *info)
     info->author = string_field(details, "author");
     info->channel_id = string_field(details, "channelId");
     info->description = string_field(details, "shortDescription");
+    info->storyboard_spec = string_field(
+        yyjson_obj_get(yyjson_obj_get(root, "storyboards"), "playerStoryboardSpecRenderer"),
+        "spec");
     info->view_count = string_field(details, "viewCount");
     info->length_s = number_field(details, "lengthSeconds", 0.0);
     yyjson_val *live = yyjson_obj_get(details, "isLiveContent");

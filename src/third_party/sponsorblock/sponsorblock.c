@@ -14,11 +14,11 @@
 
 static const char *const k_cat_names[SB_CAT_COUNT] = {
     "sponsor", "selfpromo",      "interaction", "intro",        "outro",
-    "preview", "music_offtopic", "filler",      "poi_highlight"};
+    "preview", "music_offtopic", "filler",      "poi_highlight", "exclusive_access"};
 
 static const char *const k_cat_labels[SB_CAT_COUNT] = {
     "Sponsor",       "Self promotion",    "Interaction reminder", "Intro",    "Outro",
-    "Preview/Recap", "Non-music section", "Filler tangent",       "Highlight"};
+    "Preview/Recap", "Non-music section", "Filler tangent",       "Highlight", "Exclusive access"};
 
 static int cat_index(unsigned flag)
 {
@@ -95,6 +95,7 @@ void sb_config_defaults(sb_config *cfg)
     /* Highlights are a point to jump *to*, not a range to skip; they are
      * still fetched so a UI can show them. */
     cfg->action[cat_index(SB_CAT_POI_HIGHLIGHT)] = SB_ACT_DO_NOTHING;
+    cfg->action[cat_index(SB_CAT_EXCLUSIVE_ACCESS)] = SB_ACT_DO_NOTHING;
     /* SmartTube doesn't request categories set to "do nothing" (filler). */
     cfg->categories = SB_CAT_ALL & ~SB_CAT_FILLER;
     cfg->min_skip_ms = 0;
@@ -668,7 +669,9 @@ static void put_json_list_encoded(sbuf *b, const char *const *items, int n)
 int sb_build_url(char *out, size_t cap, const sb_config *cfg, const char *server,
                  const char *video_id)
 {
-    static const char *const actions[] = {"skip", "mute"};
+    /* Ranges to skip, plus the highlight point and whole-video labels
+     * (paid promotion, exclusive access) a player can show. */
+    static const char *const actions[] = {"skip", "mute", "poi", "full"};
     const char *cats[SB_CAT_COUNT];
     int ncat = 0;
     sbuf b = {out, cap, 0, 0};
@@ -705,7 +708,7 @@ int sb_build_url(char *out, size_t cap, const sb_config *cfg, const char *server
     }
     put_json_list_encoded(&b, cats, ncat);
     sb_put(&b, "&actionTypes=");
-    put_json_list_encoded(&b, actions, 2);
+    put_json_list_encoded(&b, actions, 4);
     return b.overflow ? -1 : (int)b.len;
 }
 

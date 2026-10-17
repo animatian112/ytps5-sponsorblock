@@ -63,6 +63,11 @@ class PlayerChrome
 
     // The video's chapters: marks on the seek bar, the current one's name
     // above it, a Chapters button.
+    // The channel's picture (a texture, 0: the initial in a circle).
+    void set_channel_avatar(std::uint32_t texture)
+    {
+        avatar_ = texture;
+    }
     // Settings::playback_mode, for the mode button's icon.
     void set_mode(int mode)
     {
@@ -128,6 +133,23 @@ class PlayerChrome
     double seek_target() const
     {
         return seek_target_;
+    }
+    // True while the player moves the seek target (the preview shows), and
+    // the time the bar points at.
+    bool previewing() const
+    {
+        return shown_ && (seek_pending_ > 0.0f || (zone_ == Zone::seek && seek_hold_ > 0.0f));
+    }
+    double preview_time() const
+    {
+        return seek_target_;
+    }
+    // The storyboard frame of preview_time(): a texture and its rectangle.
+    void set_preview(std::uint32_t texture, const gfx::Rect &uv, float aspect)
+    {
+        preview_texture_ = texture;
+        preview_uv_ = uv;
+        preview_aspect_ = aspect;
     }
 
     // The choice panel: the screen opens it in answer to open_*.
@@ -217,6 +239,10 @@ class PlayerChrome
     Options options_;
     std::vector<yt::Chapter> chapters_;
     int mode_ = 0;
+    std::uint32_t avatar_ = 0;
+    std::uint32_t preview_texture_ = 0;
+    gfx::Rect preview_uv_{0.0f, 0.0f, 1.0f, 1.0f};
+    float preview_aspect_ = 16.0f / 9.0f;
     float seek_pending_ = 0.0f; // seconds until a moved target is sought
     bool seek_ready_ = false;
     int seek_streak_ = 0;   // presses in a row: the step grows while held

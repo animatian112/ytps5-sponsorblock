@@ -36,12 +36,40 @@ enum class Scope : std::uint8_t
 
 unsigned categories_for(Scope scope);
 
+// SmartTube's per-category settings. The categories in SmartTube's order.
+constexpr int kCategoryCount = 10;
+// "sponsor", "selfpromo", ... and their names in the settings.
+const char *category_id(int index);
+const char *category_label(int index);
+// What a category does (Settings: Off is "not requested at all").
+enum class Action : std::uint8_t
+{
+    off = 0,    // not fetched
+    skip = 1,   // skip silently
+    notify = 2, // skip and show a toast
+    ask = 3,    // offer "Triangle: skip"
+    show = 4,   // only the marker on the seek bar (a highlight: offer the jump)
+};
+struct Options
+{
+    Action action[kCategoryCount] = {Action::notify, Action::notify, Action::notify, Action::notify,
+                                     Action::notify, Action::notify, Action::notify, Action::off,
+                                     Action::show,   Action::show};
+    long min_skip_ms = 1000; // shorter segments are never skipped
+    bool skip_once = true;   // a segment skipped once plays the next time
+    bool alt_server = false; // api.sponsor.ajay.app
+    bool operator==(const Options &) const = default;
+};
+
 struct Segment
 {
     double start_s = 0.0;
     double end_s = 0.0;
     std::string category; // "sponsor", "intro", ...
     std::string label;    // "Sponsor", "Intro", ...
+    std::string action;   // "skip", "mute", "poi" (a highlight), "full" (the whole video)
+    std::string uuid;     // for the view count report
+    int index = -1;       // into category_id()
 };
 
 enum class Kind : std::uint8_t
@@ -56,7 +84,13 @@ struct Decision
     Kind kind = Kind::none;
     double target_s = 0.0;
     std::string label;
+    bool silent = false; // Action::skip: no toast
+    std::string uuid;    // the segment skipped, for the view count
 };
+
+// Tells the database a segment was skipped (SmartTube's "send skip
+// statistics"): one GET-free POST on a detached worker.
+void report_viewed(const std::string &uuid, bool alt_server);
 
 class Skipper
 {
@@ -69,6 +103,14 @@ class Skipper
     // Starts loading the segments of a video (or drops them: empty id). Never
     // blocks; the answer arrives a moment later on the worker.
     void load(const std::string &video_id, Scope scope);
+    // The same with SmartTube's per-category settings; poll(pos, dur,
+    // playing) then follows them.
+    void load(const std::string &video_id, const Options &options);
+    Decision poll(double position_s, double duration_s, bool playing);
+    // The highlight (poi_highlight) start, or -1.
+    double highlight_s() const;
+    // A whole-video label ("Exclusive access", "Sponsor"...), or empty.
+    std::string whole_video_label() const;
     void clear();
 
     // Changes whenever a new segment list was adopted.
@@ -102,6 +144,8 @@ class Skipper
     std::uint64_t adopted_generation_ = 0;
     void *tracker_ = nullptr; // sb_tracker, created on adopt
     Mode tracker_mode_ = Mode::skip;
+    bool per_category_ = false; // load(Options): the tracker follows options_
+    Options options_;
 };
 
 } // namespace yt::sponsorblock

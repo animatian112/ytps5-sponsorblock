@@ -35,7 +35,8 @@ extern "C"
         SB_CAT_MUSIC_OFFTOPIC = 1u << 6,
         SB_CAT_FILLER = 1u << 7,
         SB_CAT_POI_HIGHLIGHT = 1u << 8,
-        SB_CAT_COUNT = 9
+        SB_CAT_EXCLUSIVE_ACCESS = 1u << 9, /* a whole-video label ("full") */
+        SB_CAT_COUNT = 10
     };
 #define SB_CAT_ALL ((1u << SB_CAT_COUNT) - 1u)
 

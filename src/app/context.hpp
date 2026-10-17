@@ -90,6 +90,10 @@ struct Context
     // The section the playing video was opened from (Home, a playlist, a
     // channel...): what Shuffle picks from.
     std::vector<yt::FeedItem> &section;
+    // Channels SponsorBlock leaves alone ("Exclude this channel"), by id; set
+    // sb_excluded_changed after editing so the app stores the list.
+    std::vector<std::string> &sb_excluded;
+    bool sb_excluded_changed = false;
 };
 
 } // namespace hui::app

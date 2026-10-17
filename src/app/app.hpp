@@ -153,6 +153,9 @@ class App
     std::vector<yt::FeedItem> play_queue_;    // "Play next" from the card menu
     std::vector<yt::FeedItem> section_items_; // the section a video was opened from
     bool shuffle_started_ = false;            // "Shuffle play" set section_items_ itself
+    std::vector<std::string> sb_excluded_;    // <data>/sb_excluded.txt, one channel id a line
+    void load_sb_excluded();
+    void save_sb_excluded() const;
     // The videos of the section the focus is in (for Shuffle).
     std::vector<yt::FeedItem> current_section(const std::string &video_id) const;
     std::size_t player_return_ = 0; // where Circle in the player goes back to

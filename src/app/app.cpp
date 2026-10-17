@@ -94,9 +94,10 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     : fonts_(fonts), data_root_(std::move(data_root)), settings_(settings), service_(service),
       thumbs_(std::make_unique<ThumbCache>(batch, &delete_texture, 192)),
       resume_(data_root_.empty() ? std::string() : data_root_ + "/resume.txt"),
-      context_{fonts_,  telemetry_,       settings_,       false,       *thumbs_,
-               batch,   service_,         toasts_,         nav_,        active_video_,
-               resume_, pending_channel_, pending_browse_, play_queue_, section_items_}
+      context_{fonts_,      telemetry_,       settings_,       false,       *thumbs_,
+               batch,       service_,         toasts_,         nav_,        active_video_,
+               resume_,     pending_channel_, pending_browse_, play_queue_, section_items_,
+               sb_excluded_}
 {
     toasts_.style.theme = youtube_theme();
     toasts_.style.anchor = ui::ToastAnchor::top_right;
@@ -241,6 +242,7 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     screens_.push_back(make_login_screen(context_));
     screens_.push_back(make_player_screen(context_));
     screens_.push_back(make_browse_screen(context_));
+    load_sb_excluded();
     // Settings > General > Boot to section.
     static const std::size_t kBoot[Settings::kBootSectionCount] = {
         kHomeScreen, kSubscriptionsScreen, kShortsScreen, kHistoryScreen, kPlaylistsScreen};
@@ -559,6 +561,7 @@ enum CardPick
     kPickCancel,
     kPickNewPlaylist,
     kPickShuffle,
+    kPickSbExclude,
     kPickUnblockBase = 3000,  // + the index of a blocked channel
     kPickPlaylistBase = 1000, // + the index into menu_playlists_
     kPickAccountBase = 2000,  // + the index into the saved accounts
@@ -637,6 +640,14 @@ void App::open_card_menu(const yt::FeedItem &item)
         entries.push_back({"Play next", kPickPlayNext});
     if (video)
         entries.push_back({"Shuffle play", kPickShuffle});
+    if (!item.channel_id.empty() && settings_.sb_enabled)
+    {
+        const bool excluded = std::find(sb_excluded_.begin(), sb_excluded_.end(),
+                                        item.channel_id) != sb_excluded_.end();
+        entries.push_back({excluded ? "Include this channel in SponsorBlock"
+                                    : "Exclude this channel from SponsorBlock",
+                           kPickSbExclude});
+    }
     entries.push_back({"Open channel", kPickChannel});
     if (signed_in)
         entries.push_back({"Subscribe to the channel", kPickSubscribe});
@@ -848,6 +859,35 @@ void App::activate_rail(int position)
         context_.nav.open_channel = true;
         rail_focused_ = false;
     }
+}
+
+void App::load_sb_excluded()
+{
+    sb_excluded_.clear();
+    std::string data;
+    if (data_root_.empty() || !save::read_file(data_root_ + "/sb_excluded.txt", &data, 64u << 10))
+        return;
+    std::size_t at = 0;
+    while (at < data.size())
+    {
+        std::size_t end = data.find('\n', at);
+        if (end == std::string::npos)
+            end = data.size();
+        const std::string id = data.substr(at, end - at);
+        if (id.size() == 24)
+            sb_excluded_.push_back(id);
+        at = end + 1;
+    }
+}
+
+void App::save_sb_excluded() const
+{
+    if (data_root_.empty())
+        return;
+    std::string data;
+    for (const std::string &id : sb_excluded_)
+        data += id + '\n';
+    (void)save::write_atomic(data_root_ + "/sb_excluded.txt", data);
 }
 
 void App::load_pins()
@@ -1109,6 +1149,25 @@ void App::apply_card_pick(int pick)
         play_queue_.push_back(item);
         toasts_.push(ui::StatusKind::info, "Plays next", item.title, 2.0f);
         break;
+    case kPickSbExclude:
+    {
+        // SmartTube's "Exclude this channel from SponsorBlock" (and back).
+        const auto at = std::find(sb_excluded_.begin(), sb_excluded_.end(), item.channel_id);
+        if (at != sb_excluded_.end())
+        {
+            sb_excluded_.erase(at);
+            toasts_.push(ui::StatusKind::info, "SponsorBlock on for this channel", item.author,
+                         2.0f);
+        }
+        else if (item.channel_id.size() == 24)
+        {
+            sb_excluded_.push_back(item.channel_id);
+            toasts_.push(ui::StatusKind::info, "SponsorBlock off for this channel", item.author,
+                         2.0f);
+        }
+        save_sb_excluded();
+        break;
+    }
     case kPickShuffle:
     {
         // SmartTube's shuffle: the section (Home, the playlist, the channel)
@@ -1211,6 +1270,11 @@ void App::update(const InputFrame &input, float dt)
         rebuild_rail();
     card_menu_.set_scheme(settings_.color_scheme);
     service_.set_preferences(preferences());
+    if (context_.sb_excluded_changed)
+    {
+        context_.sb_excluded_changed = false;
+        save_sb_excluded();
+    }
     // An account whose token is kept but did not refresh (no network yet,
     // a hiccup at Google) is tried again every 20 s instead of looking
     // signed out until the app restarts.
@@ -1396,6 +1460,9 @@ void App::update(const InputFrame &input, float dt)
         toasts_.push(result.first ? ui::StatusKind::success : ui::StatusKind::warning,
                      result.second, {}, 2.5f);
     }
+    // While a video plays, pictures load one at a time: the decoder keeps
+    // the CPU and the start does not stutter.
+    thumbs_->set_quiet(current_ == kPlayerScreen);
     screens_[current_]->update(screen_input, dt, feedback_);
     thumbs_->pump();
     // A video request that neither arrives nor fails would leave the player on

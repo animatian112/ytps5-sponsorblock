@@ -94,6 +94,8 @@ struct ThumbCache::Impl
     // Newest first: a worker takes the job drawn most recently, so the cards
     // on screen load before the ones a previous screen (or account) queued.
     std::deque<Job> work;
+    bool quiet = false;
+    int active = 0; // downloads running on the workers
     pthread_t threads[kWorkers] = {};
 
     Impl(gfx::GlBatch &batch_, Destroy destroy_, std::size_t capacity_)
@@ -108,9 +110,11 @@ struct ThumbCache::Impl
             std::string key;
             {
                 std::unique_lock<std::mutex> lock(mutex);
-                wake.wait(lock, [this] { return quit || !work.empty(); });
+                wake.wait(lock,
+                          [this] { return quit || (!work.empty() && (!quiet || active == 0)); });
                 if (quit)
                     return;
+                ++active;
                 auto newest = work.begin();
                 for (auto it = work.begin(); it != work.end(); ++it)
                     if (it->asked > newest->asked)
@@ -146,6 +150,8 @@ struct ThumbCache::Impl
 
             std::lock_guard<std::mutex> lock(mutex);
             ready.push_back(std::move(result));
+            --active;
+            wake.notify_all();
         }
     }
 
@@ -226,6 +232,15 @@ std::uint32_t ThumbCache::texture(const std::string &url)
             }
     }
     return 0;
+}
+
+void ThumbCache::set_quiet(bool quiet)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->quiet == quiet)
+        return;
+    impl_->quiet = quiet;
+    impl_->wake.notify_all();
 }
 
 float ThumbCache::aspect(const std::string &url) const

@@ -70,7 +70,12 @@ constexpr Extra kExtras[] = {
     {38, nullptr, &Settings::search_history, 0, 1},
     {39, nullptr, &Settings::sb_markers, 0, 1},
     {40, nullptr, &Settings::sb_once, 0, 1},
+    {41, &Settings::sb_min_seconds, nullptr, 0, 10},
+    {42, nullptr, &Settings::sb_alt_server, 0, 1},
+    {43, nullptr, &Settings::sb_stats, 0, 1},
 };
+// 60 + i: Settings::sb_act[i].
+constexpr std::uint8_t kSbActionKey = 60;
 constexpr std::uint8_t kHiddenSectionsKey = 20;
 
 } // namespace
@@ -100,7 +105,7 @@ std::string encode_settings(const Settings &settings)
     w.put(static_cast<std::uint8_t>(settings.sb_mode));
     w.put(static_cast<std::uint8_t>(settings.sb_scope));
     constexpr std::size_t count = sizeof(kExtras) / sizeof(kExtras[0]);
-    w.put(static_cast<std::uint16_t>(count + 1));
+    w.put(static_cast<std::uint16_t>(count + 1 + Settings::kSbCategories));
     for (const Extra &extra : kExtras)
     {
         w.put(extra.key);
@@ -110,6 +115,11 @@ std::string encode_settings(const Settings &settings)
     }
     w.put(kHiddenSectionsKey);
     w.put(static_cast<std::int32_t>(settings.hidden_sections));
+    for (int i = 0; i < Settings::kSbCategories; ++i)
+    {
+        w.put(static_cast<std::uint8_t>(kSbActionKey + i));
+        w.put(static_cast<std::int32_t>(settings.sb_act[i]));
+    }
     return w.data();
 }
 
@@ -160,6 +170,11 @@ bool decode_settings(std::string_view data, Settings *settings)
         {
             const std::uint8_t key = r.get<std::uint8_t>();
             const int value = static_cast<int>(r.get<std::int32_t>());
+            if (key >= kSbActionKey && key < kSbActionKey + Settings::kSbCategories)
+            {
+                s.sb_act[key - kSbActionKey] = std::clamp(value, 0, 4);
+                continue;
+            }
             if (key == kHiddenSectionsKey)
             {
                 s.hidden_sections =

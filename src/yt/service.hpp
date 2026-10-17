@@ -59,6 +59,7 @@ struct VideoView
     // The video's chapters: the watch page's own, else the description's
     // timestamps (yt/chapters.hpp). Empty when it has none.
     std::vector<Chapter> chapters;
+    std::string channel_avatar; // the channel's picture (from the watch page)
     std::string error;
     // What the pipeline is doing right now ("Player info", "Streams",
     // "Decoder"): the player screen shows it instead of guessing.

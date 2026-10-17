@@ -11,6 +11,7 @@
 #include "yt/player.hpp"
 #include "yt/service.hpp"
 #include "yt/sponsorblock.hpp"
+#include "yt/storyboard.hpp"
 
 #include "ui/components.hpp"
 
@@ -44,7 +45,7 @@ class PlayerScreen final : public Screen
     void leave() override;
     const yt::FeedItem *focused_item() const override
     {
-        if (!in_related_)
+        if (!in_related_ || in_chapters_)
             return nullptr;
         const int index = related_.focus();
         if (index < 0 || index >= static_cast<int>(related_items_.size()))
@@ -77,6 +78,14 @@ class PlayerScreen final : public Screen
     std::string playing_id_;
     PlayerChrome chrome_;
     ui::Carousel related_;
+    // SmartTube's chapters: a row of their own above the suggestions, each
+    // card the storyboard frame of where it starts.
+    ui::Carousel chapters_row_;
+    bool in_chapters_ = false;
+    std::uint64_t chapters_row_for_ = 0; // chapters_revision_ the row was built from
+    // How far the controls rise for the rows below them.
+    float rise() const;
+    void fill_chapter_row();
     std::vector<yt::FeedItem> related_items_;
     std::uint64_t related_revision_ = 0;
     std::uint64_t video_revision_ = 0;
@@ -109,6 +118,8 @@ class PlayerScreen final : public Screen
     // Jumps to the next (1) or previous (-1) chapter.
     void jump_chapter(int step);
     std::vector<yt::Chapter> chapters_;
+    yt::Storyboard storyboard_; // the seek preview frames of playing_id_
+    std::string storyboard_for_;
     std::uint64_t chapters_revision_ = 0;
     std::string chapters_for_;
     int applied_speed_index_ = -1;     // Settings::speed_index last applied
@@ -136,8 +147,11 @@ class PlayerScreen final : public Screen
     yt::sponsorblock::Skipper sponsor_;
     std::string sponsor_video_;
     int sponsor_scope_ = -1;
+    yt::sponsorblock::Options sponsor_options_;
     std::uint64_t sponsor_revision_ = 0;
     std::string sponsor_here_;
+    double sponsor_highlight_ = -1.0; // the highlight ahead (Triangle jumps), or -1
+    std::string sponsor_notice_for_;  // the video the whole-video label was told for
 };
 
 } // namespace hui::app

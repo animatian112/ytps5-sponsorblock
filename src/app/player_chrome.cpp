@@ -159,8 +159,6 @@ std::vector<PlayerChrome::Button> PlayerChrome::bottom_buttons() const
         out.push_back(Button::save);
     if (audio_tracks_)
         out.push_back(Button::audio);
-    if (!chapters_.empty())
-        out.push_back(Button::chapters);
     out.push_back(Button::info);
     return out;
 }
@@ -470,7 +468,11 @@ PlayerChrome::Command PlayerChrome::handle(const InputFrame &input, ui::Feedback
             feedback.play(audio::Cue::focus);
         }
         else
-            feedback.play(audio::Cue::error);
+        {
+            // Up past the top row puts the controls away.
+            hide();
+            feedback.play(audio::Cue::back);
+        }
         return Command::none;
     }
     if (input.nav == Direction::down)
@@ -565,6 +567,13 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
         name = "subscribe";
         break;
     case Button::channel:
+        if (avatar_ != 0)
+        {
+            // SmartTube's "Show icon on the channel button": the picture.
+            list.image(avatar_, {cx - 24.0f, cy - 24.0f, 48.0f, 48.0f}, gfx::kFullUv,
+                       gfx::Color::rgb(0xffffff), 24.0f);
+            return;
+        }
         name = "channel";
         break;
     case Button::save:
@@ -719,8 +728,18 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
         ui::text(list, fonts.regular, fonts.regular.font->fit(title_, 60.0f, width), kLeft,
                  kTitleY - rise, 60.0f, kInk);
         if (!subtitle_.empty())
-            ui::text(list, fonts.regular, fonts.regular.font->fit(subtitle_, 30.0f, width), kLeft,
+        {
+            // The channel's picture before its name.
+            float x = kLeft;
+            if (avatar_ != 0)
+            {
+                list.image(avatar_, {kLeft, kSubtitleY - rise - 30.0f, 40.0f, 40.0f}, gfx::kFullUv,
+                           gfx::Color::rgb(0xffffff), 20.0f);
+                x += 54.0f;
+            }
+            ui::text(list, fonts.regular, fonts.regular.font->fit(subtitle_, 30.0f, width), x,
                      kSubtitleY - rise, 30.0f, kInk);
+        }
     }
 
     // The format and the clock at the right of the top row.
@@ -818,6 +837,28 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
     }
     if (seek_focus)
         list.circle(track.x + track.w * played, track.y + track_h * 0.5f, 14.0f, kInk);
+    // SmartTube's seek preview: the storyboard frame of the target above the
+    // thumb, its time under it.
+    if (previewing() && preview_texture_ != 0)
+    {
+        const float w = 320.0f;
+        const float h = w / std::max(0.5f, preview_aspect_);
+        const float x =
+            std::clamp(track.x + track.w * played - w * 0.5f, track.x, track.x + track.w - w);
+        const gfx::Rect box{x, track.y - h - 70.0f, w, h};
+        list.rounded_rect({box.x - 4.0f, box.y - 4.0f, box.w + 8.0f, box.h + 8.0f}, 8.0f,
+                          gfx::Color::rgb(0xffffff));
+        list.image(preview_texture_, box, preview_uv_, gfx::Color::rgb(0xffffff), 6.0f);
+        if (fonts.semibold.font != nullptr)
+        {
+            const std::string at = clock_text(seek_target_);
+            const float tw = fonts.semibold.measure(at, 26.0f) + 24.0f;
+            const gfx::Rect pill{box.cx() - tw * 0.5f, box.y + box.h - 40.0f, tw, 34.0f};
+            list.rounded_rect(pill, 6.0f, gfx::Color::rgb(0x000000, 0.75f));
+            ui::text(list, fonts.semibold, at, pill.cx(), pill.cy() + 9.0f, 26.0f, kInk,
+                     gfx::Align::center);
+        }
+    }
 
     draw_row(bottom_buttons(), kBottomRowY - rise, Zone::bottom);
 

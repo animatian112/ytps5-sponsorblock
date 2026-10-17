@@ -10,6 +10,7 @@
 #include "yt/http.hpp"
 #include "yt/log.hpp"
 #include "yt/service.hpp"
+#include "yt/sponsorblock.hpp"
 #include "yt/update.hpp"
 #include "ui/components.hpp"
 
@@ -106,6 +107,7 @@ enum : int
     kSignIn,
     kAbout,
     kAddAccount,
+    kSbClearExcluded,
     kAccountBase = 100, // + the index of a remembered account
 };
 
@@ -382,33 +384,39 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     add_flag(search, "Show keyboard automatically", &S::keyboard_auto,
              "The keyboard opens as soon as Search does");
 
-    // ---- SponsorBlock ----
+    // ---- SponsorBlock (SmartTube's page) ----
     ui::Form &sponsor = add_tile("SponsorBlock", Icon::sponsorblock);
     sponsor.add_toggle(kSbEnabled, "Enable", context_.settings.sb_enabled).description =
         "Community-marked segments from sponsor.ajay.app";
-    ui::FormRow &sb_mode =
-        sponsor.add_stepper(kSbMode, "Choose action", context_.settings.sb_mode, 0, 2, 1);
-    sb_mode.description = sb_mode_description(context_.settings.sb_mode);
-    sb_mode.stepper.format = [](int value) -> std::string
+    sponsor.add_header("Categories");
+    for (int i = 0; i < S::kSbCategories; ++i)
     {
-        static const char *const kLabels[] = {"Skip", "Ask", "Do nothing"};
-        if (value < 0 || value > 2)
-            return "Skip";
-        return kLabels[value];
-    };
-    ui::FormRow &sb_scope =
-        sponsor.add_stepper(kSbScope, "Categories", context_.settings.sb_scope, 0, 2, 1);
-    sb_scope.description = sb_scope_description(context_.settings.sb_scope);
-    sb_scope.stepper.format = [](int value) -> std::string
-    {
-        static const char *const kLabels[] = {"Sponsors", "+ Promotion", "Everything"};
-        if (value < 0 || value > 2)
-            return "Everything";
-        return kLabels[value];
-    };
+        // The highlight is a point to jump to, a whole-video label a notice.
+        if (i == 8)
+            add_raw_steps(sponsor, yt::sponsorblock::category_label(i),
+                          &context_.settings.sb_act[i], {0, 4}, {"Off", "Offer jump"},
+                          "Triangle jumps to the best part");
+        else if (i == 9)
+            add_raw_steps(sponsor, yt::sponsorblock::category_label(i),
+                          &context_.settings.sb_act[i], {0, 4}, {"Off", "Notify"},
+                          "Says when a whole video is paid promotion or exclusive");
+        else
+            add_raw_steps(sponsor, yt::sponsorblock::category_label(i),
+                          &context_.settings.sb_act[i], {0, 1, 2, 3, 4},
+                          {"Off", "Skip", "Skip + notify", "Ask", "Show only"});
+    }
+    sponsor.add_header("Misc");
     add_flag(sponsor, "Color markers on progress bar", &S::sb_markers);
     add_flag(sponsor, "Don't skip segments again", &S::sb_once,
              "A segment skipped once plays when you seek back to it");
+    add_steps(sponsor, "Minimum segment duration", &S::sb_min_seconds, {0, 1, 2, 3, 5},
+              {"None", "1 sec", "2 sec", "3 sec", "5 sec"}, "Shorter segments are not skipped");
+    add_flag(sponsor, "Send skip statistics", &S::sb_stats,
+             "Count your skips on sponsor.ajay.app, as SmartTube does");
+    add_flag(sponsor, "Use alternative server", &S::sb_alt_server,
+             "api.sponsor.ajay.app, when the main one refuses to work");
+    sponsor.add_action(kSbClearExcluded, "Clear excluded channels").description =
+        "Channels excluded from SponsorBlock (video menu) skip again";
 
     // One-shot tiles.
     tiles_.push_back({"Network test", Icon::network, nullptr, kNetTest});
@@ -453,6 +461,31 @@ void SettingsScreen::add_steps(ui::Form &form, const char *label, int Settings::
     bindings_.push_back(std::move(binding));
 }
 
+void SettingsScreen::add_raw_steps(ui::Form &form, const char *label, int *value,
+                                   std::vector<int> values, std::vector<std::string> labels,
+                                   const char *description)
+{
+    Binding binding;
+    binding.id = next_binding_id_++;
+    binding.raw = value;
+    int index = 0;
+    for (std::size_t i = 0; i < values.size(); ++i)
+        if (values[i] == *value)
+            index = static_cast<int>(i);
+    ui::FormRow &row =
+        form.add_stepper(binding.id, label, index, 0, static_cast<int>(values.size()) - 1, 1);
+    row.stepper.format = [labels](int step) -> std::string
+    {
+        if (step < 0 || step >= static_cast<int>(labels.size()))
+            return {};
+        return labels[static_cast<std::size_t>(step)];
+    };
+    if (description != nullptr)
+        row.description = description;
+    binding.values = std::move(values);
+    bindings_.push_back(std::move(binding));
+}
+
 void SettingsScreen::add_section(ui::Form &form, int section)
 {
     Binding binding;
@@ -480,6 +513,12 @@ bool SettingsScreen::apply_binding(int id)
         }
         else if (binding.flag != nullptr)
             settings.*binding.flag = form().toggle_value(id);
+        else if (binding.raw != nullptr)
+        {
+            const int index = form().stepper_value(id);
+            if (index >= 0 && index < static_cast<int>(binding.values.size()))
+                *binding.raw = binding.values[static_cast<std::size_t>(index)];
+        }
         else if (binding.number != nullptr)
         {
             const int index = form().stepper_value(id);
@@ -661,6 +700,17 @@ void SettingsScreen::activate(int id)
             context_.toasts.push(ui::StatusKind::success, "Account backed up", where);
         else
             context_.toasts.push(ui::StatusKind::warning, "Copy not possible", where);
+        return;
+    }
+    if (id == kSbClearExcluded)
+    {
+        const std::size_t count = context_.sb_excluded.size();
+        context_.sb_excluded.clear();
+        context_.sb_excluded_changed = true;
+        context_.toasts.push(ui::StatusKind::info, "SponsorBlock",
+                             count == 0 ? std::string("No channels were excluded")
+                                        : std::to_string(count) + " channels skip again",
+                             2.5f);
         return;
     }
     if (id == kNetTest)

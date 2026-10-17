@@ -1244,6 +1244,13 @@ struct Service::Impl
                             break;
                         video.info.captions = variant.captions;
                     }
+                    // The seek preview sheets, likewise from any client.
+                    for (const VideoInfo &variant : variants)
+                    {
+                        if (!video.info.storyboard_spec.empty())
+                            break;
+                        video.info.storyboard_spec = variant.storyboard_spec;
+                    }
                     video.state = Load::ready;
                     video.stage.clear();
                     video.source_client = info.client;
@@ -1259,6 +1266,12 @@ struct Service::Impl
                 FeedPage related_page;
                 if (tube.related(video_id, &related_page))
                 {
+                    if (!related_page.channel_avatar.empty())
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        video.channel_avatar = related_page.channel_avatar;
+                        video.revision++;
+                    }
                     if (!related_page.chapters.empty())
                     {
                         std::lock_guard<std::mutex> lock(mutex);
@@ -2016,6 +2029,7 @@ void Service::request_video(std::string video_id, CodecChoice choice)
     impl_->video.like_status.clear();
     impl_->video.history_status.clear();
     impl_->video.chapters.clear();
+    impl_->video.channel_avatar.clear();
     impl_->video.subscribed = false;
     impl_->video.source_client.clear();
     impl_->video.attempts.clear();

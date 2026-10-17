@@ -88,8 +88,11 @@ class SettingsScreen final : public Screen
         bool Settings::*flag = nullptr;
         int Settings::*number = nullptr;
         std::vector<int> values;
-        int section = -1; // Settings::hidden_sections bit; the toggle reads "shown"
+        int section = -1;   // Settings::hidden_sections bit; the toggle reads "shown"
+        int *raw = nullptr; // an array element (Settings::sb_act[i])
     };
+    void add_raw_steps(ui::Form &form, const char *label, int *value, std::vector<int> values,
+                       std::vector<std::string> labels, const char *description = nullptr);
     void add_flag(ui::Form &form, const char *label, bool Settings::*flag,
                   const char *description = nullptr);
     void add_steps(ui::Form &form, const char *label, int Settings::*number,
