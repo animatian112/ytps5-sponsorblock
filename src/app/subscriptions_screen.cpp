@@ -110,7 +110,7 @@ void SubscriptionsScreen::update(const InputFrame &input, float dt, ui::Feedback
         refresh_from_service();
     }
 
-    const yt::FeedView view = context_.service.feed(kind_);
+    const yt::FeedBrief view = context_.service.feed_brief(kind_);
 
     // First load once the account is known.
     if (!requested_ && view.state == yt::Load::idle)
@@ -130,8 +130,7 @@ void SubscriptionsScreen::update(const InputFrame &input, float dt, ui::Feedback
     if (subs_.items().size() != before)
         more_requested_ = false;
 
-    if (!more_requested_ && view.state == yt::Load::ready && !view.continuation.empty() &&
-        subs_.at_last_row())
+    if (!more_requested_ && view.state == yt::Load::ready && view.more && subs_.at_last_row())
     {
         more_requested_ = true;
         context_.service.request_more(kind_);

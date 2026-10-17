@@ -2335,6 +2335,21 @@ FeedView Service::search_feed() const
     return impl_->filtered(impl_->search, FeedKind::search);
 }
 
+FeedBrief Service::feed_brief(FeedKind kind) const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    const FeedView *view =
+        kind == FeedKind::search ? &impl_->search : const_cast<Impl &>(*impl_).slot(kind);
+    FeedBrief brief;
+    if (view == nullptr)
+        return brief;
+    brief.state = view->state;
+    brief.more = !view->continuation.empty();
+    brief.empty = view->items.empty();
+    brief.revision = view->revision;
+    return brief;
+}
+
 void Service::set_preferences(const Preferences &preferences)
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);

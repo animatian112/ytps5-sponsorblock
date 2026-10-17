@@ -1319,8 +1319,26 @@ void App::update(const InputFrame &input, float dt)
             avatar_focus_ = false;
         if (rail_focused_ && avatar_focus_)
         {
-            // The account picture beside the search orb.
-            if (input.is_pressed(Action::confirm))
+            // The account picture beside the search orb: Cross switches to
+            // the next remembered account at once; Square (or Cross with one
+            // account) opens the account menu to add or pick one.
+            const auto accounts = service_.saved_accounts();
+            if (input.is_pressed(Action::confirm) && accounts.size() >= 2)
+            {
+                std::size_t active = 0;
+                for (std::size_t i = 0; i < accounts.size(); ++i)
+                    if (accounts[i].active)
+                        active = i;
+                const std::size_t next = (active + 1) % accounts.size();
+                feedback_.play(audio::Cue::select);
+                service_.switch_account(static_cast<int>(next));
+                toasts_.push(ui::StatusKind::info,
+                             "Switching to " + (accounts[next].name.empty()
+                                                    ? "account " + std::to_string(next + 1)
+                                                    : accounts[next].name),
+                             {}, 2.0f);
+            }
+            else if (input.is_pressed(Action::confirm) || input.is_pressed(Action::west))
             {
                 feedback_.play(audio::Cue::select);
                 open_account_menu();

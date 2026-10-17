@@ -10,7 +10,9 @@
 
 #include <pthread.h>
 
+#include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -277,7 +279,13 @@ void ThumbCache::pump()
     {
         std::lock_guard<std::mutex> lock(impl_->mutex);
         ++impl_->frame;
-        ready.swap(impl_->ready);
+        // A few uploads a frame: a burst of finished downloads uploaded at
+        // once made the UI hitch; the rest wait for the next frames.
+        constexpr std::size_t kUploadsPerFrame = 3;
+        const std::size_t take = std::min(kUploadsPerFrame, impl_->ready.size());
+        ready.assign(std::make_move_iterator(impl_->ready.begin()),
+                     std::make_move_iterator(impl_->ready.begin() + static_cast<long>(take)));
+        impl_->ready.erase(impl_->ready.begin(), impl_->ready.begin() + static_cast<long>(take));
         for (const Impl::Ready &item : ready)
             impl_->in_flight.erase(item.key);
         // Drop queued downloads no card has asked for lately.

@@ -303,7 +303,7 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
 {
     namespace sb = yt::sponsorblock;
     const Settings &settings = context_.settings;
-    const yt::VideoView view = context_.service.video();
+    const yt::VideoView &view = video_view();
     // SponsorBlock off, or this channel excluded from it (video menu).
     const bool excluded = !view.info.channel_id.empty() &&
                           std::find(context_.sb_excluded.begin(), context_.sb_excluded.end(),
@@ -472,7 +472,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             consumed_player_ = true;
             ended_ = false;
             // Videos under 5 minutes start over unless the setting keeps them.
-            const double length = context_.service.video().info.length_s;
+            const double length = video_view().info.length_s;
             if (resume_s_ > 0.0 &&
                 (context_.settings.resume_short || length <= 0.0 || length >= 300.0))
                 player_->seek(resume_s_);
@@ -482,7 +482,8 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         }
     }
 
-    const yt::VideoView view = context_.service.video();
+    const yt::VideoView &view = video_view();
+    waiting_s_ = player_ == nullptr && view.state == yt::Load::loading ? waiting_s_ + dt : 0.0f;
 
     // A new video handed to an already open player must start: the app only
     // moved active_video, so kick the service when the target diverges.
@@ -684,14 +685,10 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     if (!view.history_status.empty() && history_toast_for_ != view.info.video_id)
     {
         history_toast_for_ = view.info.video_id;
+        // Only a failure is worth a word now that history works.
         if (view.history_status != "ok")
             context_.toasts.push(ui::StatusKind::warning, "Not added to YouTube history",
                                  view.history_status, 4.0f);
-        else if (!history_ok_shown_)
-        {
-            history_ok_shown_ = true;
-            context_.toasts.push(ui::StatusKind::info, "Added to your YouTube history", {}, 2.5f);
-        }
     }
     update_captions();
 
@@ -1005,6 +1002,17 @@ void PlayerScreen::choose_shuffle()
     shuffle_pick_ = pool[rng_ % pool.size()]->video_id;
 }
 
+const yt::VideoView &PlayerScreen::video_view() const
+{
+    const std::uint64_t revision = context_.service.video_revision();
+    if (revision != view_cache_revision_)
+    {
+        view_cache_revision_ = revision;
+        view_cache_ = context_.service.video();
+    }
+    return view_cache_;
+}
+
 const yt::FeedItem *PlayerScreen::next_suggestion() const
 {
     // The first suggestion that is not this video: the list YouTube answers
@@ -1065,7 +1073,7 @@ void PlayerScreen::reopen()
 
 void PlayerScreen::open_menu(PlayerChrome::Command command)
 {
-    const yt::VideoView view = context_.service.video();
+    const yt::VideoView &view = video_view();
     switch (command)
     {
     case PlayerChrome::Command::open_captions:
@@ -1231,7 +1239,7 @@ void PlayerScreen::apply_pick()
     const int pick = chrome_.picked();
     const PlayerChrome::Panel panel = chrome_.panel();
     chrome_.close_panel();
-    const yt::VideoView view = context_.service.video();
+    const yt::VideoView &view = video_view();
     switch (panel)
     {
     case PlayerChrome::Panel::captions:
@@ -1314,7 +1322,7 @@ void PlayerScreen::jump_chapter(int step)
 
 void PlayerScreen::update_captions()
 {
-    const yt::VideoView view = context_.service.video();
+    const yt::VideoView &view = video_view();
     // Settings > Subtitles > Subtitle language: on by itself until the user
     // picks captions (or Off) in the player.
     const int language = context_.settings.subtitle_language;
@@ -1402,7 +1410,7 @@ void PlayerScreen::draw_hud(ui::Canvas &canvas, const Context &context) const
 void PlayerScreen::draw(const Context &context, Frame &frame) const
 {
     ui::Canvas canvas{frame.scene, context.fonts, frame.glass_texture, clock_};
-    const yt::VideoView view = context.service.video();
+    const yt::VideoView &view = video_view();
 
     // The picture, letterboxed into the virtual canvas.
     if (texture_ != 0 && texture_width_ > 0 && texture_height_ > 0)
@@ -1500,7 +1508,7 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
         canvas.list.arc(gfx::kVirtualWidth * 0.5f, gfx::kVirtualHeight * 0.5f, 52.0f, 7.0f, start,
                         sweep, gfx::Color::rgb(0xe52d27));
         // Only a long wait says more: what the app is waiting on.
-        if (view.waiting_s >= 8.0f)
+        if (waiting_s_ >= 8.0f)
         {
             if (!view.stage.empty())
                 ui::text(canvas.list, context.fonts.regular, view.stage, gfx::kVirtualWidth * 0.5f,

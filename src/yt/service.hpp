@@ -45,6 +45,16 @@ struct FeedView
     std::uint64_t revision = 0;
 };
 
+// A feed's state without its items: what the screens read every frame
+// (copying a whole feed sixty times a second made the UI stall now and then).
+struct FeedBrief
+{
+    Load state = Load::idle;
+    bool more = false; // a continuation exists
+    bool empty = true; // no items (before filtering)
+    std::uint64_t revision = 0;
+};
+
 struct VideoView
 {
     Load state = Load::idle;
@@ -236,6 +246,7 @@ class Service
         bool mixes = false;
         bool operator==(const Preferences &) const = default;
     };
+    FeedBrief feed_brief(FeedKind kind) const;
     // Cheap to call every frame: only a change refreshes the feeds.
     void set_preferences(const Preferences &preferences);
 

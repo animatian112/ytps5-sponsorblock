@@ -101,7 +101,6 @@ class PlayerScreen final : public Screen
     float clock_ = 0.0f;
     double history_reported_s_ = 0.0; // the position last sent to watch history
     std::string history_toast_for_;   // the video whose history result was shown
-    bool history_ok_shown_ = false;   // "added to history" shows once per session
 
     // Choices made in the player's menus; they last until the app closes.
     int quality_override_ = 0; // a height cap; 0 follows Settings
@@ -117,6 +116,12 @@ class PlayerScreen final : public Screen
     std::uint32_t rng_ = 0x9e3779b9u;
     // Jumps to the next (1) or previous (-1) chapter.
     void jump_chapter(int step);
+    // The service's video state, copied only when it changed (it carries the
+    // format list and the description: a copy every frame stalled the UI).
+    const yt::VideoView &video_view() const;
+    mutable yt::VideoView view_cache_;
+    mutable std::uint64_t view_cache_revision_ = ~0ull;
+    float waiting_s_ = 0.0f; // how long the current video has been loading
     std::vector<yt::Chapter> chapters_;
     yt::Storyboard storyboard_; // the seek preview frames of playing_id_
     std::string storyboard_for_;
@@ -146,7 +151,6 @@ class PlayerScreen final : public Screen
     // them, and the segment under the playhead (for the Triangle hint).
     yt::sponsorblock::Skipper sponsor_;
     std::string sponsor_video_;
-    int sponsor_scope_ = -1;
     yt::sponsorblock::Options sponsor_options_;
     std::uint64_t sponsor_revision_ = 0;
     std::string sponsor_here_;

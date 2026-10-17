@@ -156,7 +156,7 @@ void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedbac
     }
 
     const std::size_t before = feed_.items().size();
-    const yt::FeedView view = context_.service.feed(yt::FeedKind::home);
+    const yt::FeedBrief view = context_.service.feed_brief(yt::FeedKind::home);
     if (use_rows_)
     {
         rows_.set_active(true);
@@ -166,7 +166,7 @@ void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedbac
             context_.nav.video_id = rows_.activated();
             rows_.clear_activation();
         }
-        if (!more_requested_ && !view.continuation.empty() && rows_.near_end())
+        if (!more_requested_ && view.more && rows_.near_end())
         {
             more_requested_ = true;
             context_.service.request_more(yt::FeedKind::home);
@@ -184,7 +184,7 @@ void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedbac
     if (feed_.items().size() != before)
         more_requested_ = false;
 
-    if (!more_requested_ && !view.continuation.empty() && feed_.at_last_row())
+    if (!more_requested_ && view.more && feed_.at_last_row())
     {
         more_requested_ = true;
         context_.service.request_more(yt::FeedKind::home);
@@ -196,8 +196,8 @@ void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedbac
 void HomeScreen::draw(const Context &context, Frame &frame) const
 {
     ui::Canvas canvas{frame.scene, context.fonts, frame.glass_texture, clock_};
-    const yt::FeedView view = context.service.feed(yt::FeedKind::home);
-    if (view.state == yt::Load::loading && view.items.empty())
+    const yt::FeedBrief view = context.service.feed_brief(yt::FeedKind::home);
+    if (view.state == yt::Load::loading && view.empty)
     {
         ui::Skeleton bones;
         bones.style.theme = youtube_theme();
@@ -213,7 +213,7 @@ void HomeScreen::draw(const Context &context, Frame &frame) const
 
     // Nothing to show: the last log lines name what the network did, so a
     // failure is readable on the television without FTP.
-    if (view.items.empty() && view.state != yt::Load::loading)
+    if (view.empty && view.state != yt::Load::loading)
     {
         std::string lines[8];
         const std::size_t count = yt::log::recent(lines, 8);

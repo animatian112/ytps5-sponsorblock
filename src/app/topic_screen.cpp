@@ -87,7 +87,7 @@ void TopicScreen::update(const InputFrame &input, float dt, ui::Feedback &feedba
         seen_revision_ = revision;
         refresh();
     }
-    const yt::FeedView view = context_.service.feed(yt::FeedKind::topic);
+    const yt::FeedBrief view = context_.service.feed_brief(yt::FeedKind::topic);
     bool at_end = false;
     if (use_rows_)
     {
@@ -113,8 +113,7 @@ void TopicScreen::update(const InputFrame &input, float dt, ui::Feedback &feedba
         at_end = grid_.at_last_row();
         grid_.update(dt, context_);
     }
-    if (mine() && !more_requested_ && view.state == yt::Load::ready && !view.continuation.empty() &&
-        at_end)
+    if (mine() && !more_requested_ && view.state == yt::Load::ready && view.more && at_end)
     {
         more_requested_ = true;
         context_.service.request_more(yt::FeedKind::topic);

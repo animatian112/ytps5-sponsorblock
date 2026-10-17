@@ -566,8 +566,8 @@ void SearchScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     // has one the service can follow.
     if (!in_channel_)
     {
-        const yt::FeedView view = context_.service.search_feed();
-        if (!more_requested_ && view.state == yt::Load::ready && !view.continuation.empty() &&
+        const yt::FeedBrief view = context_.service.feed_brief(yt::FeedKind::search);
+        if (!more_requested_ && view.state == yt::Load::ready && view.more &&
             results_.at_last_row())
         {
             more_requested_ = true;
