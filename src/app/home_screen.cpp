@@ -6,6 +6,8 @@
 // its own item list and only touches the service when the revision changed.
 
 #include "app/home_screen.hpp"
+
+#include <algorithm>
 #include "yt/log.hpp"
 
 #include "app/theme.hpp"
@@ -146,13 +148,18 @@ void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedbac
     const std::uint64_t revision = context_.service.revision(yt::FeedKind::home);
     const std::uint64_t subscriptions = context_.service.revision(yt::FeedKind::subscriptions);
     const std::uint64_t history = context_.service.revision(yt::FeedKind::history);
-    if (revision != seen_revision_ || subscriptions != seen_subscriptions_ ||
-        history != seen_history_)
+    // Feeds arrive in bursts (Home's extra pages, history, subscriptions):
+    // the rows are rebuilt at most twice a second, not once per answer.
+    refresh_wait_ = std::max(0.0f, refresh_wait_ - dt);
+    if ((revision != seen_revision_ || subscriptions != seen_subscriptions_ ||
+         history != seen_history_) &&
+        (refresh_wait_ <= 0.0f || feed_.items().empty()))
     {
         seen_revision_ = revision;
         seen_subscriptions_ = subscriptions;
         seen_history_ = history;
         refresh_from_service();
+        refresh_wait_ = 0.5f;
     }
 
     const std::size_t before = feed_.items().size();

@@ -17,7 +17,8 @@
 namespace yt
 {
 class Service;
-}
+class Lounge;
+} // namespace yt
 
 namespace hui::gfx
 {
@@ -54,7 +55,10 @@ struct Nav
     // "Add to playlist" from the player: the app's playlist picker for this video.
     bool add_to_playlist = false;
     yt::FeedItem playlist_item;
-    bool quit = false; // leave the app
+    bool backup_settings = false;  // Settings > General > Back up settings
+    bool restore_settings = false; // ... and Restore
+    bool new_tv_code = false;      // Settings > Remote control > New TV code
+    bool quit = false;             // leave the app
 };
 
 } // namespace app
@@ -62,6 +66,25 @@ struct Nav
 
 namespace hui::app
 {
+
+// Cast from the phone: what the linked phone asked for (the app fills it
+// in, the player screen takes it), and what the player reports back.
+struct Remote
+{
+    // Asked: -1 nothing; set by the app, cleared by the player.
+    std::string start_video; // the next request_video of this id starts at start_s
+    double start_s = -1.0;
+    int paused = -1; // 0 play, 1 pause
+    double seek_s = -1.0;
+    bool next = false;
+    bool previous = false;
+    // Reported by the player every frame (state: 1 playing, 2 paused,
+    // 3 buffering, 0 ended, -1 nothing open).
+    std::string video;
+    double position_s = 0.0;
+    double duration_s = 0.0;
+    int state = -1;
+};
 
 struct Context
 {
@@ -94,6 +117,9 @@ struct Context
     // sb_excluded_changed after editing so the app stores the list.
     std::vector<std::string> &sb_excluded;
     bool sb_excluded_changed = false;
+    Remote remote;
+    // The remote control's TV code and status for Settings (null: none).
+    const yt::Lounge *lounge = nullptr;
 };
 
 } // namespace hui::app

@@ -227,6 +227,8 @@ void PlayerScreen::leave()
         if (!id.empty())
             context_.resume.remember(id, player_->clock_s(), player_->duration_s());
     }
+    context_.remote.state = -1;
+    context_.remote.video.clear();
     reset_sponsorblock();
     player_.reset();
     drop_texture();
@@ -278,6 +280,12 @@ void PlayerScreen::request_video(const std::string &video_id)
         skipped_ends_.clear();
         audio_track_.clear(); // a track id belongs to one video
     }
+    // The phone asked for this video from a point (Cast from the phone).
+    Remote &remote = context_.remote;
+    if (remote.start_s >= 0.0 && remote.start_video == video_id)
+        resume_s_ = remote.start_s > 1.0 ? remote.start_s : -1.0;
+    remote.start_s = -1.0;
+    remote.start_video.clear();
     requested_id_ = video_id;
     // Keep the app's notion of the open video in step, so the divergence check
     // in update() only fires on a video genuinely handed in from outside.
@@ -493,6 +501,8 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         request_video(context_.active_video);
         return;
     }
+
+    update_remote();
 
     if (view.revision != video_revision_)
     {
@@ -903,8 +913,18 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         }
     }
 
+    // Circle leaves the player; with "double back" the first press only asks.
+    back_armed_ = std::max(0.0f, back_armed_ - dt);
     if (input.is_pressed(Action::back) && !back_used)
-        context_.nav.leave_player = true;
+    {
+        if (!settings.player_double_back || back_armed_ > 0.0f)
+            context_.nav.leave_player = true;
+        else
+        {
+            back_armed_ = 2.0f;
+            context_.toasts.push(ui::StatusKind::info, "Press Circle again to exit", {}, 2.0f);
+        }
+    }
 
     // The rows sit under the block and slide up with it: the chapters,
     // then the suggestions.
@@ -1038,6 +1058,64 @@ const yt::FeedItem *PlayerScreen::next_suggestion() const
             return &item;
     }
     return nullptr;
+}
+
+void PlayerScreen::update_remote()
+{
+    Remote &remote = context_.remote;
+    if (remote.next)
+    {
+        remote.next = false;
+        play_next();
+        return;
+    }
+    if (remote.previous)
+    {
+        remote.previous = false;
+        if (!played_.empty() && (player_ == nullptr || player_->clock_s() < 5.0))
+        {
+            const std::string id = played_.back();
+            played_.pop_back();
+            request_video(id);
+        }
+        else if (player_ != nullptr)
+            player_->seek(0.0);
+        chrome_.show();
+        return;
+    }
+    // Pause, play and seek wait for the video to be open.
+    if (player_ != nullptr)
+    {
+        if (remote.paused >= 0)
+        {
+            if (remote.paused == 0 && ended_)
+            {
+                ended_ = false;
+                player_->seek(0.0);
+            }
+            player_->set_paused(remote.paused == 1);
+            remote.paused = -1;
+            chrome_.show();
+        }
+        if (remote.seek_s >= 0.0)
+        {
+            player_->seek(remote.seek_s);
+            remote.seek_s = -1.0;
+            chrome_.show();
+        }
+    }
+    // What the phone shows.
+    remote.video = playing_id_.empty() ? requested_id_ : playing_id_;
+    if (player_ == nullptr)
+    {
+        remote.state = remote.video.empty() ? -1 : 3;
+        remote.position_s = resume_s_ > 0.0 ? resume_s_ : 0.0;
+        remote.duration_s = 0.0;
+        return;
+    }
+    remote.position_s = player_->clock_s();
+    remote.duration_s = player_->duration_s();
+    remote.state = ended_ ? 0 : player_->paused() ? 2 : player_->buffered_s() <= 0.0 ? 3 : 1;
 }
 
 void PlayerScreen::play_next()
@@ -1395,8 +1473,10 @@ void PlayerScreen::draw_captions(ui::Canvas &canvas, const Context &context) con
         else // without the box a dark copy underneath keeps it readable
             ui::text(canvas.list, context.fonts.semibold, line, gfx::kVirtualWidth * 0.5f + 2.0f,
                      y + size + 2.0f, size, gfx::Color::rgb(0x000000, 0.9f), gfx::Align::center);
+        static const std::uint32_t kInks[] = {0xffffff, 0xffe14d, 0x7fe7ff};
         ui::text(canvas.list, context.fonts.semibold, line, gfx::kVirtualWidth * 0.5f, y + size,
-                 size, gfx::Color::rgb(0xffffff), gfx::Align::center);
+                 size, gfx::Color::rgb(kInks[std::clamp(context.settings.subtitle_color, 0, 2)]),
+                 gfx::Align::center);
         y += pitch;
     }
 }
@@ -1415,10 +1495,15 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
     // The picture, letterboxed into the virtual canvas.
     if (texture_ != 0 && texture_width_ > 0 && texture_height_ > 0)
     {
-        const float scale = std::min(gfx::kVirtualWidth / static_cast<float>(texture_width_),
-                                     gfx::kVirtualHeight / static_cast<float>(texture_height_));
-        const float width = static_cast<float>(texture_width_) * scale;
-        const float height = static_cast<float>(texture_height_) * scale;
+        // Settings > Player > Video zoom: fit, fill (bars cropped), stretch.
+        const float sx = gfx::kVirtualWidth / static_cast<float>(texture_width_);
+        const float sy = gfx::kVirtualHeight / static_cast<float>(texture_height_);
+        const int zoom = context.settings.video_zoom;
+        const float scale = zoom == 1 ? std::max(sx, sy) : std::min(sx, sy);
+        const float width =
+            zoom == 2 ? gfx::kVirtualWidth : static_cast<float>(texture_width_) * scale;
+        const float height =
+            zoom == 2 ? gfx::kVirtualHeight : static_cast<float>(texture_height_) * scale;
         const gfx::Rect target{(gfx::kVirtualWidth - width) * 0.5f,
                                (gfx::kVirtualHeight - height) * 0.5f, width, height};
         canvas.list.image(texture_, target, gfx::kFullUv, gfx::Color::rgb(0xffffff), 0.0f);

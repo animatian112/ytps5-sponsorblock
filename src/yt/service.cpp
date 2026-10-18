@@ -156,6 +156,8 @@ struct Service::Impl
     } job;
     std::vector<ChannelItem> blocked; // <token file>.blocked: id TAB name
     Service::Preferences preferences;
+    std::string region_gl = "US"; // the worker's copy, taken with each job
+    std::string region_hl = "en";
     std::string account_channel;
     std::uint64_t resolved_revision = 0;
     ChannelItem resolved_channel;
@@ -249,6 +251,41 @@ struct Service::Impl
     {
         load_accounts();
         load_blocked();
+        load_hidden();
+    }
+
+    // "Not interested" videos, kept out of every feed for good:
+    // <token file>.hidden, one video id a line (the newest 2000).
+    std::vector<std::string> hidden;
+    std::string hidden_path() const
+    {
+        return auth.token_path().empty() ? std::string() : auth.token_path() + ".hidden";
+    }
+    void load_hidden()
+    {
+        hidden.clear();
+        std::string data;
+        if (hidden_path().empty() || !hui::save::read_file(hidden_path(), &data, 64u << 10))
+            return;
+        std::size_t at = 0;
+        while (at < data.size())
+        {
+            std::size_t end = data.find('\n', at);
+            if (end == std::string::npos)
+                end = data.size();
+            if (end - at == 11)
+                hidden.push_back(data.substr(at, 11));
+            at = end + 1;
+        }
+    }
+    void save_hidden() const
+    {
+        if (hidden_path().empty())
+            return;
+        std::string data;
+        for (const std::string &id : hidden)
+            data += id + '\n';
+        (void)hui::save::write_atomic(hidden_path(), data);
     }
 
     std::string blocked_path() const
@@ -316,11 +353,14 @@ struct Service::Impl
         const bool watched = (home && p.watched_home) || (subs && p.watched_subscriptions);
         const bool streams = subs && p.streams_subscriptions;
         const bool mixes = p.mixes && kind != FeedKind::library;
-        if (blocked.empty() && !shorts && !watched && !streams && !mixes)
+        if (blocked.empty() && hidden.empty() && !shorts && !watched && !streams && !mixes)
             return out;
         const auto drop = [&](const FeedItem &item)
         {
             if (is_blocked(item))
+                return true;
+            if (!hidden.empty() && item.video_id.size() == 11 &&
+                std::find(hidden.begin(), hidden.end(), item.video_id) != hidden.end())
                 return true;
             if (shorts && item.short_form)
                 return true;
@@ -611,17 +651,92 @@ struct Service::Impl
             }
         }
         log::line("channel: page tabs=%zu items=%zu", page.tabs.size(), page.items.size());
+        const std::vector<ChannelTab> tabs = page.tabs;
         {
             std::lock_guard<std::mutex> lock(mutex);
             channel.state = Load::ready;
             channel.channel = std::move(page.channel);
+            channel.channel.channel_id = channel_id;
             channel.tabs = std::move(page.tabs);
             channel.selected_tab = selected;
             channel.error.clear();
             channel.revision++;
         }
-        publish(FeedKind::channel, Load::ready, std::move(page.items), std::move(page.continuation),
-                {});
+        // The channel as SmartTube / YouTube lay it out, one row each: its
+        // uploads (newest first), the home page's own rows (popular videos,
+        // featured playlists...), then Shorts, Live and its playlists, and
+        // the channels it features. The rows arrive one by one.
+        std::vector<FeedItem> home = std::move(page.items);
+        const auto lower = [](std::string text)
+        {
+            for (char &ch : text)
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            return text;
+        };
+        std::vector<FeedItem> rows;
+        const auto add_row =
+            [&](std::vector<FeedItem> &items, const std::string &shelf, std::size_t limit)
+        {
+            std::size_t added = 0;
+            for (FeedItem &item : items)
+            {
+                if (added >= limit)
+                    break;
+                item.shelf = shelf;
+                rows.push_back(std::move(item));
+                ++added;
+            }
+        };
+        bool uploads = false;
+        if (channel_id.size() == 24 && channel_id.rfind("UC", 0) == 0)
+        {
+            FeedPage page_uploads;
+            if (tube.browse("VLUU" + channel_id.substr(2), &page_uploads) &&
+                !page_uploads.items.empty())
+            {
+                add_row(page_uploads.items, "Videos", 60);
+                uploads = true;
+            }
+        }
+        // The home page's rows; its own "Videos" row repeats the uploads.
+        std::vector<FeedItem> channels_row;
+        for (FeedItem &item : home)
+        {
+            const std::string shelf = lower(item.shelf);
+            if (item.is_channel() || shelf == "channels")
+            {
+                item.shelf = "Channels";
+                channels_row.push_back(std::move(item));
+                continue;
+            }
+            if (uploads && (shelf == "videos" || shelf == "uploads"))
+                continue;
+            if (item.shelf.empty())
+                item.shelf = uploads ? "Featured" : "Videos";
+            rows.push_back(std::move(item));
+        }
+        publish(FeedKind::channel, Load::ready, rows, {}, {});
+        for (const char *wanted : {"shorts", "live", "playlists"})
+        {
+            for (const ChannelTab &tab : tabs)
+            {
+                if (lower(tab.title) != wanted || tab.params.empty())
+                    continue;
+                FeedPage tab_page;
+                if (tube.channel_tab(channel_id, tab.params, &tab_page) && !tab_page.items.empty())
+                {
+                    add_row(tab_page.items, tab.title, 40);
+                    publish(FeedKind::channel, Load::ready, rows, {}, {});
+                }
+                break;
+            }
+        }
+        if (!channels_row.empty())
+        {
+            add_row(channels_row, "Channels", 30);
+            publish(FeedKind::channel, Load::ready, rows, {}, {});
+        }
+        log::line("channel: %zu cards in rows", rows.size());
     }
 
     void do_channel_tab(int index)
@@ -1500,7 +1615,11 @@ struct Service::Impl
                     return;
                 taken = job;
                 job = Job{};
+                region_gl = preferences.gl;
+                region_hl = preferences.hl;
             }
+            // Settings > General > Language/Country, for every request below.
+            tube.set_region(region_gl, region_hl);
 
             if (taken.sign_out)
             {
@@ -1904,6 +2023,14 @@ std::pair<bool, std::string> Service::action_result() const
 void Service::hide_item(const std::string &video_id)
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (video_id.size() == 11 &&
+        std::find(impl_->hidden.begin(), impl_->hidden.end(), video_id) == impl_->hidden.end())
+    {
+        impl_->hidden.push_back(video_id);
+        if (impl_->hidden.size() > 2000)
+            impl_->hidden.erase(impl_->hidden.begin());
+        impl_->save_hidden();
+    }
     for (FeedKind kind : {FeedKind::home, FeedKind::subscriptions, FeedKind::history,
                           FeedKind::topic, FeedKind::related, FeedKind::search})
     {
@@ -2001,6 +2128,16 @@ void Service::request_channel(std::string channel_id)
     impl_->job.channel_tab = false;
     impl_->channel.state = Load::loading;
     impl_->channel.error.clear();
+    if (impl_->channel.channel.channel_id != impl_->job.channel_id)
+    {
+        // Another channel: nothing of the last one stays on screen.
+        impl_->channel.channel = ChannelItem{};
+        impl_->channel.channel.channel_id = impl_->job.channel_id;
+        impl_->channel.tabs.clear();
+        impl_->channel_feed.items.clear();
+        impl_->channel_feed.state = Load::loading;
+        impl_->channel_feed.revision++;
+    }
     impl_->channel.revision++;
     impl_->wake.notify_all();
 }
@@ -2355,7 +2492,15 @@ void Service::set_preferences(const Preferences &preferences)
     std::lock_guard<std::mutex> lock(impl_->mutex);
     if (impl_->preferences == preferences)
         return;
+    const bool region =
+        impl_->preferences.gl != preferences.gl || impl_->preferences.hl != preferences.hl;
     impl_->preferences = preferences;
+    if (region)
+    {
+        // Another country: Home and the topics are asked for again.
+        impl_->job.home = true;
+        impl_->wake.notify_all();
+    }
     // The filtered views changed: every screen rebuilds its cards.
     for (FeedView *view : {&impl_->home, &impl_->subscriptions, &impl_->related, &impl_->history,
                            &impl_->topic, &impl_->library, &impl_->search})

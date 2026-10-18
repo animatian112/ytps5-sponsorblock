@@ -244,6 +244,8 @@ class Service
         bool watched_subscriptions = false;
         bool streams_subscriptions = false;
         bool mixes = false;
+        std::string gl = "US"; // the feeds' country ...
+        std::string hl = "en"; // ... and language
         bool operator==(const Preferences &) const = default;
     };
     FeedBrief feed_brief(FeedKind kind) const;

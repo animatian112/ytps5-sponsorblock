@@ -61,6 +61,7 @@ class SettingsScreen final : public Screen
         general,
         search,
         sponsorblock,
+        remote,
         network,
         updates,
         about,
@@ -106,6 +107,7 @@ class SettingsScreen final : public Screen
     // The Accounts page lists the remembered accounts; it is rebuilt each
     // time it opens and when the list changes.
     void rebuild_accounts();
+    void refresh_remote();
     std::string accounts_key_;
     void apply(int id, ui::Feedback &feedback);
     void activate(int id);

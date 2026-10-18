@@ -43,6 +43,7 @@ struct Sink
 {
     std::string *body;
     std::size_t limit;
+    const std::function<bool(std::string_view)> *stream = nullptr;
 };
 
 std::size_t on_write(char *data, std::size_t size, std::size_t count, void *user)
@@ -51,6 +52,8 @@ std::size_t on_write(char *data, std::size_t size, std::size_t count, void *user
     const std::size_t bytes = size * count;
     if (bytes == 0)
         return 0;
+    if (sink->stream != nullptr && *sink->stream)
+        return (*sink->stream)(std::string_view(data, bytes)) ? bytes : 0;
 
     const std::size_t used = sink->body->size();
     const std::size_t room = sink->limit > used ? sink->limit - used : 0;
@@ -109,7 +112,7 @@ Response perform(const Request &request)
         return response;
     }
 
-    Sink sink{&response.body, request.max_bytes};
+    Sink sink{&response.body, request.max_bytes, &request.on_body};
 
     curl_slist *headers = nullptr;
     for (const Header &header : request.headers)

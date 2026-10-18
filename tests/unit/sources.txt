@@ -52,4 +52,6 @@ src/yt/watch.cpp
 src/yt/captions.cpp
 src/yt/chapters.cpp
 src/yt/storyboard.cpp
+src/yt/lounge.cpp
+src/yt/lounge_chunks.cpp
 src/app/resume_store.cpp

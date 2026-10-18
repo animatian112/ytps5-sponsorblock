@@ -58,6 +58,8 @@ class PlayerScreen final : public Screen
 
   private:
     void request_video(const std::string &video_id);
+    // Cast from the phone: its commands, and what the player reports back.
+    void update_remote();
     yt::CodecChoice codec_choice() const;
     void drop_texture();
     void draw_hud(ui::Canvas &canvas, const Context &context) const;
@@ -121,7 +123,8 @@ class PlayerScreen final : public Screen
     const yt::VideoView &video_view() const;
     mutable yt::VideoView view_cache_;
     mutable std::uint64_t view_cache_revision_ = ~0ull;
-    float waiting_s_ = 0.0f; // how long the current video has been loading
+    float waiting_s_ = 0.0f;  // how long the current video has been loading
+    float back_armed_ = 0.0f; // "double back": seconds the second Circle still exits
     std::vector<yt::Chapter> chapters_;
     yt::Storyboard storyboard_; // the seek preview frames of playing_id_
     std::string storyboard_for_;

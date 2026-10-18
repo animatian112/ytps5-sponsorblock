@@ -73,6 +73,11 @@ constexpr Extra kExtras[] = {
     {41, &Settings::sb_min_seconds, nullptr, 0, 10},
     {42, nullptr, &Settings::sb_alt_server, 0, 1},
     {43, nullptr, &Settings::sb_stats, 0, 1},
+    {44, &Settings::video_zoom, nullptr, 0, 2},
+    {45, &Settings::subtitle_color, nullptr, 0, 2},
+    {46, nullptr, &Settings::player_double_back, 0, 1},
+    {47, &Settings::region, nullptr, 0, Settings::kRegionCount - 1},
+    {48, nullptr, &Settings::remote_control, 0, 1},
 };
 // 60 + i: Settings::sb_act[i].
 constexpr std::uint8_t kSbActionKey = 60;
@@ -146,7 +151,8 @@ bool decode_settings(std::string_view data, Settings *settings)
     s.codec_vp9 = r.get_bool();
     s.codec_av1 = r.get_bool();
     s.max_height = r.get<std::uint16_t>();
-    if (s.max_height != 720 && s.max_height != 1080 && s.max_height != 1440 && s.max_height != 2160)
+    if (s.max_height != 720 && s.max_height != 1080 && s.max_height != 1440 &&
+        s.max_height != 2160 && s.max_height != 4320)
         s.max_height = 1080;
     if (!s.codec_avc && !s.codec_vp9 && !s.codec_av1)
         s.codec_avc = true;

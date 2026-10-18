@@ -75,6 +75,8 @@ class InnerTube
     // Timeout of one HTTP call, in seconds (default 20). The player path runs
     // a chain of clients, so the caller lowers it to keep the total bounded.
     void set_timeout(long seconds);
+    // The country and language the feeds are answered for ("US", "en").
+    void set_region(const std::string &gl, const std::string &hl);
 
     // HTTP status of the last call; 401 means the token has to be refreshed.
     long last_status() const;

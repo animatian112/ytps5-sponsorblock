@@ -48,6 +48,7 @@ class HomeScreen final : public Screen
 
   private:
     void refresh_from_service();
+    float refresh_wait_ = 0.0f; // seconds until the rows may be rebuilt again
 
     Context &context_;
     FeedView feed_;

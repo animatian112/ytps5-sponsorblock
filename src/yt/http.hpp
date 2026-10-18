@@ -11,7 +11,9 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace yt::http
@@ -47,6 +49,9 @@ struct Request
     std::string body;
     long timeout_s = 20;
     std::size_t max_bytes = 8u << 20;
+    // Streaming: each piece of the body as it arrives (a long poll), instead
+    // of collecting it; returning false ends the transfer.
+    std::function<bool(std::string_view)> on_body;
 };
 
 // Defined by the platform backend. Sets CURLOPT_NOSIGNAL / CAINFO / SO_NBIO

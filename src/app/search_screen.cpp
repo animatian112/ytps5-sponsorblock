@@ -285,8 +285,9 @@ void SearchScreen::open_channel(std::size_t index)
 {
     if (index >= channel_items_.size())
         return;
-    open_channel_item(channel_items_[index]);
-    channel_external_ = false;
+    // The channel's own page, not a page inside the search.
+    context_.pending_channel = channel_items_[index];
+    context_.nav.open_channel = true;
 }
 
 bool SearchScreen::uses_back() const

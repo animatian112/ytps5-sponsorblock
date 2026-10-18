@@ -13,6 +13,7 @@
 #include "core/settings.hpp"
 #include "core/tween.hpp"
 #include "ui/components.hpp"
+#include "yt/lounge.hpp"
 #include "yt/service.hpp"
 #include "yt/update.hpp"
 
@@ -146,6 +147,9 @@ class App
     Telemetry telemetry_;
     yt::Service &service_;
     std::unique_ptr<ThumbCache> thumbs_;
+    // Cast from the phone (Settings > Remote control).
+    std::unique_ptr<yt::Lounge> lounge_;
+    std::vector<std::string> remote_list_;
     std::string active_video_;
     ResumeStore resume_;
     yt::ChannelItem pending_channel_;
@@ -186,6 +190,7 @@ class App
     // The sidebar: SmartTube's sections, My videos, Blocked Channels, the
     // pinned channels and Settings; each entry's tag names its target.
     void rebuild_rail();
+    void pump_remote();
     // The service's content filters and history switch, from the settings.
     yt::Service::Preferences preferences() const;
     int rail_position(std::size_t screen) const;

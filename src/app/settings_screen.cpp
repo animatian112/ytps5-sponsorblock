@@ -4,6 +4,8 @@
 
 #include "app/settings_screen.hpp"
 
+#include "yt/lounge.hpp"
+
 #include "app/icons.hpp"
 
 #include "app/theme.hpp"
@@ -108,6 +110,11 @@ enum : int
     kAbout,
     kAddAccount,
     kSbClearExcluded,
+    kBackupSettings,
+    kRestoreSettings,
+    kRemoteNewCode,
+    kRemoteCode,
+    kRemoteStatus,
     kAccountBase = 100, // + the index of a remembered account
 };
 
@@ -120,11 +127,11 @@ constexpr float kTileGap = 18.0f;
 constexpr float kGridX = 170.0f;
 constexpr float kGridY = 200.0f;
 
-constexpr int kHeights[] = {720, 1080, 1440, 2160};
+constexpr int kHeights[] = {720, 1080, 1440, 2160, 4320};
 
 int height_to_index(int height)
 {
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 5; ++i)
     {
         if (kHeights[i] == height)
             return i;
@@ -136,8 +143,8 @@ int index_to_height(int index)
 {
     if (index < 0)
         index = 0;
-    if (index > 3)
-        index = 3;
+    if (index > 4)
+        index = 4;
     return kHeights[index];
 }
 
@@ -302,6 +309,10 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     add_flag(player, "Show quality info", &S::show_quality);
     add_flag(player, "Show button tooltips", &S::show_tooltips);
     add_flag(player, "Suggestions", &S::suggestions, "The row of videos under the controls");
+    add_steps(player, "Video zoom", &S::video_zoom, {0, 1, 2}, {"Fit", "Fill", "Stretch"},
+              "Fit shows the whole picture; Fill crops the black bars; Stretch fills the screen");
+    add_flag(player, "Exit from the player: double back", &S::player_double_back,
+             "Circle twice to leave a video, so a stray press does not end it");
     player.add_header("Video formats");
     player.add_toggle(kCodecAvc, "AVC (H.264)", context_.settings.codec_avc);
     player.add_toggle(kCodecVp9, "VP9", context_.settings.codec_vp9);
@@ -310,14 +321,14 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
              "Steadier on the CPU decoder; 1080p at most");
 
     ui::FormRow &resolution = player.add_stepper(
-        kMaxHeight, "Maximum resolution", height_to_index(context_.settings.max_height), 0, 3, 1);
+        kMaxHeight, "Maximum resolution", height_to_index(context_.settings.max_height), 0, 4, 1);
     // The codec ceilings (VP9 720p, AV1 480p) cap the stream below this value
     // while decoding runs on the CPU; the selector's log line names what it picked.
     resolution.description = "Software decoding caps VP9 at 720p and AVC at 1080p; Auto lifts it";
     resolution.stepper.format = [](int value) -> std::string
     {
-        static const char *const kLabels[] = {"720p", "1080p", "1440p", "2160p"};
-        if (value < 0 || value > 3)
+        static const char *const kLabels[] = {"720p", "1080p", "1440p", "4K", "8K"};
+        if (value < 0 || value > 4)
             return "1080p";
         return kLabels[value];
     };
@@ -348,6 +359,7 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     }
     add_steps(subtitles, "Text size", &S::subtitle_size, {0, 1, 2}, {"Small", "Medium", "Large"});
     add_flag(subtitles, "Background", &S::subtitle_background, "A dark box behind the text");
+    add_steps(subtitles, "Text color", &S::subtitle_color, {0, 1, 2}, {"White", "Yellow", "Cyan"});
 
     // ---- General ----
     ui::Form &general = add_tile("General", Icon::general);
@@ -362,6 +374,17 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         add_steps(general, "Boot to section", &S::boot_section, values, labels,
                   "The section the app opens on");
     }
+    {
+        std::vector<int> values;
+        std::vector<std::string> labels;
+        for (int i = 0; i < S::kRegionCount; ++i)
+        {
+            values.push_back(i);
+            labels.emplace_back(S::kRegions[i][2]);
+        }
+        add_steps(general, "Language/Country", &S::region, values, labels,
+                  "The country and language YouTube picks Home, Trending and search results for");
+    }
     add_flag(general, "History", &S::history_enabled,
              "Off pauses history: YouTube is not told what you watch");
     add_steps(general, "Screen dimming", &S::dim_minutes, {0, 1, 3, 5, 10, 30},
@@ -369,6 +392,11 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
               "Darken the screen when nothing happens (not while a video plays)");
     general.add_toggle(kHaptics, "Haptics", context_.settings.haptics).description =
         "Rumble on clicks and drags";
+    general.add_header("Backup");
+    general.add_action(kBackupSettings, "Back up settings").description =
+        "Copy all settings to /download0/hui/backup";
+    general.add_action(kRestoreSettings, "Restore settings").description =
+        "Load the settings from the backup (applies at the next start)";
     general.add_header("Hide content");
     add_flag(general, "Hide Shorts from Home", &S::hide_shorts_home);
     add_flag(general, "Hide Shorts from Subscriptions", &S::hide_shorts_subscriptions);
@@ -419,6 +447,16 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         "Channels excluded from SponsorBlock (video menu) skip again";
 
     // One-shot tiles.
+    // ---- Remote control (SmartTube's "Link with TV code") ----
+    ui::Form &remote = add_tile("Remote control", Icon::remote);
+    add_flag(remote, "Cast from the phone", &S::remote_control,
+             "The YouTube app on your phone controls this console");
+    remote.add_header("Link your phone");
+    remote.add_value(kRemoteCode, "TV code", "...").description =
+        "YouTube app on the phone: Settings > Watch on TV > Link with TV code";
+    remote.add_value(kRemoteStatus, "Status", "Off");
+    remote.add_action(kRemoteNewCode, "New TV code").description =
+        "Get another code (phones linked before stay linked)";
     tiles_.push_back({"Network test", Icon::network, nullptr, kNetTest});
     tiles_.push_back({"Updates", Icon::updates, nullptr, kCheckUpdates});
     tiles_.push_back({"About", Icon::about, nullptr, kAbout});
@@ -578,6 +616,34 @@ void SettingsScreen::rebuild_accounts()
     }
 }
 
+void SettingsScreen::refresh_remote()
+{
+    ui::Form *form = nullptr;
+    for (Tile &tile : tiles_)
+        if (tile.icon == Icon::remote)
+            form = tile.form.get();
+    if (form == nullptr)
+        return;
+    std::string code = "Off";
+    std::string state = "Off";
+    if (context_.settings.remote_control && context_.lounge != nullptr)
+    {
+        const yt::Lounge::Status status = context_.lounge->status();
+        code = !status.code.empty()   ? status.code
+               : status.error.empty() ? "Getting a code..."
+                                      : "-";
+        state = status.connected
+                    ? "Linked" + (status.remote.empty() ? std::string() : ": " + status.remote)
+                : !status.error.empty() ? status.error
+                                        : "Waiting for a phone";
+    }
+    if (form->value_text(kRemoteCode) != code)
+        form->set_value_text(kRemoteCode, code);
+    if (form->value_text(kRemoteStatus) != state)
+        form->set_value_text(kRemoteStatus, state);
+    form->set_disabled(kRemoteNewCode, !context_.settings.remote_control);
+}
+
 void SettingsScreen::enter()
 {
     open_ = -1;
@@ -702,6 +768,21 @@ void SettingsScreen::activate(int id)
             context_.toasts.push(ui::StatusKind::warning, "Copy not possible", where);
         return;
     }
+    if (id == kBackupSettings)
+    {
+        context_.nav.backup_settings = true;
+        return;
+    }
+    if (id == kRemoteNewCode)
+    {
+        context_.nav.new_tv_code = true;
+        return;
+    }
+    if (id == kRestoreSettings)
+    {
+        context_.nav.restore_settings = true;
+        return;
+    }
     if (id == kSbClearExcluded)
     {
         const std::size_t count = context_.sb_excluded.size();
@@ -817,6 +898,8 @@ void SettingsScreen::update(const InputFrame &input, float dt, ui::Feedback &fee
             form().update(dt);
     }
 
+    refresh_remote();
+
     {
         std::vector<std::pair<std::string, std::string>> done;
         {
@@ -894,6 +977,8 @@ const char *icon_name(SettingsScreen::Icon icon)
         return "set_search";
     case SettingsScreen::Icon::general:
         return "set_general";
+    case SettingsScreen::Icon::remote:
+        return "set_remote";
     case SettingsScreen::Icon::network:
         return "set_network";
     case SettingsScreen::Icon::updates:
@@ -947,6 +1032,12 @@ void SettingsScreen::draw_icon(gfx::DrawList &list, Icon icon, const gfx::Rect &
         }
         list.circle(cx, cy, s * 0.72f, ink);
         list.circle(cx, cy, s * 0.3f, hole);
+        break;
+    case Icon::remote: // a screen with cast waves in its corner
+        list.rounded_rect({cx - s, cy - s * 0.7f, s * 2.0f, s * 1.4f}, 6.0f, ink);
+        list.rounded_rect({cx - s * 0.82f, cy - s * 0.52f, s * 1.64f, s * 1.04f}, 3.0f, hole);
+        list.ring(cx - s * 0.82f, cy + s * 0.52f, s * 0.6f, s * 0.12f, ink);
+        list.circle(cx - s * 0.82f, cy + s * 0.52f, s * 0.18f, ink);
         break;
     case Icon::network: // a globe
         list.ring(cx, cy, s * 0.9f, s * 0.12f, ink);

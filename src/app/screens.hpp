@@ -34,6 +34,8 @@ inline constexpr std::size_t kLoginScreen = 13;
 inline constexpr std::size_t kPlayerScreen = 14;
 // One playlist's videos (opened from a playlist card), not a tab.
 inline constexpr std::size_t kBrowseScreen = 15;
+// A channel's page (opened from any channel card or button), not a tab.
+inline constexpr std::size_t kChannelScreen = 16;
 inline constexpr std::size_t kTabCount = 13;
 
 std::unique_ptr<Screen> make_home_screen(Context &context);
@@ -42,6 +44,7 @@ std::unique_ptr<Screen> make_subscriptions_screen(Context &context);
 std::unique_ptr<Screen> make_history_screen(Context &context);
 std::unique_ptr<Screen> make_playlists_screen(Context &context);
 std::unique_ptr<Screen> make_browse_screen(Context &context);
+std::unique_ptr<Screen> make_channel_screen(Context &context);
 std::unique_ptr<Screen> make_topic_screen(Context &context, const char *id, const char *title,
                                           const char *browse_id);
 std::unique_ptr<Screen> make_settings_screen(Context &context);

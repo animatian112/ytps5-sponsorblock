@@ -111,6 +111,19 @@ struct Settings
     int sb_min_seconds = 1;     // segments shorter than this are not skipped
     bool sb_alt_server = false; // api.sponsor.ajay.app
     bool sb_stats = true;       // tell the database which segments were skipped
+    // More of SmartTube's options.
+    int video_zoom = 0;              // 0 fit, 1 fill (crop the bars), 2 stretch
+    int subtitle_color = 0;          // 0 white, 1 yellow, 2 cyan
+    bool player_double_back = false; // Circle twice leaves the player
+    bool remote_control = true;      // Cast from the phone (Link with TV code)
+    int region = 0;                  // index into kRegions: the feeds' country and language
+    static constexpr int kRegionCount = 14;
+    static constexpr const char *kRegions[kRegionCount][3] = {
+        {"US", "en", "United States"}, {"GB", "en", "United Kingdom"}, {"CA", "en", "Canada"},
+        {"AU", "en", "Australia"},     {"IN", "en", "India"},          {"DE", "de", "Germany"},
+        {"FR", "fr", "France"},        {"ES", "es", "Spain"},          {"IT", "it", "Italy"},
+        {"BR", "pt", "Brazil"},        {"MX", "es", "Mexico"},         {"JP", "ja", "Japan"},
+        {"KR", "ko", "South Korea"},   {"NL", "nl", "Netherlands"}};
 
     static constexpr int kSpeedCount = 8;
     static constexpr double kSpeeds[kSpeedCount] = {0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0};

@@ -75,7 +75,9 @@ struct ThumbCache::Impl
     // ---- frame side ----
     std::unordered_map<std::string, Entry> entries;
     // Queue of keys waiting for a download slot, and the ones in flight.
-    std::unordered_map<std::string, bool> in_flight;
+    // Queued or running downloads; the value is the frame the picture was
+    // last asked for (its priority), looked up instead of searching the queue.
+    std::unordered_map<std::string, std::uint64_t> in_flight;
     std::uint64_t clock = 0;
     std::uint64_t frame = 0;
     // A decoded image the workers produced; uploaded by pump().
@@ -118,9 +120,17 @@ struct ThumbCache::Impl
                     return;
                 ++active;
                 auto newest = work.begin();
+                std::uint64_t newest_asked = 0;
                 for (auto it = work.begin(); it != work.end(); ++it)
-                    if (it->asked > newest->asked)
+                {
+                    const auto found = in_flight.find(it->url);
+                    const std::uint64_t asked = found != in_flight.end() ? found->second : 0;
+                    if (asked >= newest_asked)
+                    {
                         newest = it;
+                        newest_asked = asked;
+                    }
+                }
                 key = std::move(newest->url);
                 work.erase(newest);
             }
@@ -217,22 +227,15 @@ std::uint32_t ThumbCache::texture(const std::string &url)
         impl_->entries.erase(it); // try a failed one again
     }
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (impl_->in_flight.find(url) == impl_->in_flight.end())
+    const auto found = impl_->in_flight.find(url);
+    if (found == impl_->in_flight.end())
     {
-        impl_->in_flight[url] = true;
+        impl_->in_flight.emplace(url, impl_->frame);
         impl_->work.push_back({url, impl_->frame});
         impl_->wake.notify_one();
     }
     else
-    {
-        // Still queued: drawn again this frame, so it moves up.
-        for (Job &job : impl_->work)
-            if (job.url == url)
-            {
-                job.asked = impl_->frame;
-                break;
-            }
-    }
+        found->second = impl_->frame; // drawn again: it moves up the queue
     return 0;
 }
 
@@ -292,7 +295,9 @@ void ThumbCache::pump()
         const std::uint64_t now = impl_->frame;
         for (auto job = impl_->work.begin(); job != impl_->work.end();)
         {
-            if (now - job->asked > kStaleFrames)
+            const auto found = impl_->in_flight.find(job->url);
+            const std::uint64_t asked = found != impl_->in_flight.end() ? found->second : 0;
+            if (now - asked > kStaleFrames)
             {
                 impl_->in_flight.erase(job->url);
                 job = impl_->work.erase(job);

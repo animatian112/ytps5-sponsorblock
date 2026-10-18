@@ -2019,6 +2019,20 @@ bool parse_channel_page(std::string_view json, ChannelPage *page)
     std::string continuation;
     walk_feed(root, &feed, &continuation);
     page->items = std::move(feed.items);
+    // Featured / related channels the page lists become channel cards on a
+    // row of their own.
+    for (const ChannelItem &other : feed.channels)
+    {
+        if (other.channel_id.size() != 24 || other.channel_id == page->channel.channel_id)
+            continue;
+        FeedItem card;
+        card.video_id = other.channel_id;
+        card.title = other.name;
+        card.thumbnail_url = other.thumbnail_url;
+        card.detail = other.subscribers;
+        card.shelf = "Channels";
+        page->items.push_back(std::move(card));
+    }
     if (!continuation.empty())
         page->continuation = std::move(continuation);
 
@@ -2419,6 +2433,8 @@ struct InnerTube::Impl
 
     std::string access_token;
     std::string visitor_data;
+    std::string gl = "US";
+    std::string hl = "en";
     std::string client_name = kWebClientName;
     std::string client_version = kWebClientVersion;
     long timeout_s = 20;
@@ -2556,7 +2572,10 @@ struct InnerTube::Impl
         out += client.name;
         out += "\",\"clientVersion\":\"";
         out += client.version;
-        out += "\",\"hl\":\"en\",\"gl\":\"US\"";
+        out += "\",\"hl\":";
+        append_json_string(out, hl);
+        out += ",\"gl\":";
+        append_json_string(out, gl);
         if (client.extra != nullptr && *client.extra != '\0')
         {
             out += ',';
@@ -2890,6 +2909,14 @@ bool InnerTube::signed_in() const
 void InnerTube::set_timeout(long seconds)
 {
     impl_->timeout_s = seconds;
+}
+
+void InnerTube::set_region(const std::string &gl, const std::string &hl)
+{
+    if (!gl.empty())
+        impl_->gl = gl;
+    if (!hl.empty())
+        impl_->hl = hl;
 }
 
 bool InnerTube::home(FeedPage *page, const std::string &continuation)

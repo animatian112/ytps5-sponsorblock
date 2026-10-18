@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "app/app.hpp"
+
 #include "app/icons.hpp"
 
 #include "app/screens.hpp"
@@ -18,6 +19,7 @@
 
 #include <GL/glcorearb.h>
 
+#include <algorithm>
 #include <cstdio>
 
 namespace hui::app
@@ -94,11 +96,17 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     : fonts_(fonts), data_root_(std::move(data_root)), settings_(settings), service_(service),
       thumbs_(std::make_unique<ThumbCache>(batch, &delete_texture, 192)),
       resume_(data_root_.empty() ? std::string() : data_root_ + "/resume.txt"),
-      context_{fonts_,      telemetry_,       settings_,       false,       *thumbs_,
-               batch,       service_,         toasts_,         nav_,        active_video_,
-               resume_,     pending_channel_, pending_browse_, play_queue_, section_items_,
-               sb_excluded_}
+      context_{
+          fonts_,          telemetry_,  settings_,      false,         *thumbs_, batch,
+          service_,        toasts_,     nav_,           active_video_, resume_,  pending_channel_,
+          pending_browse_, play_queue_, section_items_, sb_excluded_,  false,    Remote{},
+          nullptr}
 {
+    if (!data_root_.empty())
+    {
+        lounge_ = std::make_unique<yt::Lounge>(data_root_, "SmartTube on PS5");
+        context_.lounge = lounge_.get();
+    }
     toasts_.style.theme = youtube_theme();
     toasts_.style.anchor = ui::ToastAnchor::top_right;
     toasts_.style.max_visible = 3;
@@ -242,6 +250,7 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     screens_.push_back(make_login_screen(context_));
     screens_.push_back(make_player_screen(context_));
     screens_.push_back(make_browse_screen(context_));
+    screens_.push_back(make_channel_screen(context_));
     load_sb_excluded();
     // Settings > General > Boot to section.
     static const std::size_t kBoot[Settings::kBootSectionCount] = {
@@ -632,7 +641,9 @@ void App::open_card_menu(const yt::FeedItem &item)
         entries.push_back({"Add/Remove from playlist", kPickPlaylist});
         entries.push_back({"Add to new playlist", kPickNewPlaylist});
     }
-    if (signed_in && !item.not_interested_token.empty())
+    // Not interested: this video goes (the channel stays); YouTube is told
+    // when the card carried its token.
+    if (video || !item.not_interested_token.empty())
         entries.push_back({"Not interested", kPickNotInterested});
     if (signed_in && !item.dont_recommend_token.empty())
         entries.push_back({"Don't recommend channel", kPickDontRecommend});
@@ -756,6 +767,9 @@ yt::Service::Preferences App::preferences() const
     p.watched_subscriptions = settings_.hide_watched_subscriptions;
     p.streams_subscriptions = settings_.hide_streams_subscriptions;
     p.mixes = settings_.hide_mixes;
+    const int region = std::clamp(settings_.region, 0, Settings::kRegionCount - 1);
+    p.gl = Settings::kRegions[region][0];
+    p.hl = Settings::kRegions[region][1];
     return p;
 }
 
@@ -1217,8 +1231,11 @@ void App::apply_card_pick(int pick)
         break;
     }
     case kPickNotInterested:
-        service_.send_feedback(item.not_interested_token,
-                               "Got it. You'll see fewer videos like this");
+        if (service_.signed_in() && !item.not_interested_token.empty())
+            service_.send_feedback(item.not_interested_token,
+                                   "Got it. You'll see fewer videos like this");
+        else
+            toasts_.push(ui::StatusKind::info, "Video hidden", item.title, 2.0f);
         service_.hide_item(item.video_id);
         break;
     case kPickDontRecommend:
@@ -1290,6 +1307,8 @@ void App::update(const InputFrame &input, float dt)
     else
         token_retry_s_ = 0.0f;
     context_.nav = Nav{};
+
+    pump_remote();
 
     // The auto-update card is answered first: while it shows it holds the
     // frame, so the screen below never sees the input it answers with.
@@ -1535,26 +1554,26 @@ void App::update(const InputFrame &input, float dt)
         if (current_ != player)
         {
             // Circle in the player comes back here: a playlist page too.
-            player_return_ = current_ == kBrowseScreen ? kBrowseScreen : previous_tab();
+            player_return_ =
+                current_ == kBrowseScreen || current_ == kChannelScreen ? current_ : previous_tab();
             show(player); // the player screen reads the id when it enters
         }
     }
     if (ask.open_channel && !pending_channel_.channel_id.empty())
     {
-        // The player's Channel button: the search screen shows the page.
-        // Circle there comes back to the section it was opened from.
-        if (current_ < kTabCount && current_ != kSearchScreen)
-            channel_return_ = current_;
-        else if (current_ != kSearchScreen)
-            channel_return_ = previous_tab() == kSearchScreen ? kHomeScreen : previous_tab();
+        // The channel's own page, as on YouTube; Circle there comes back to
+        // where it was opened (the player's section when it was the player).
+        if (current_ != kChannelScreen)
+            channel_return_ =
+                current_ < kTabCount || current_ == kBrowseScreen ? current_ : previous_tab();
         active_video_.clear();
         service_.request_close_video();
-        if (current_ == kSearchScreen)
-            screens_[current_]->enter(); // already here: open the new page
+        if (current_ == kChannelScreen)
+            screens_[current_]->enter(); // already here: open the new channel
         else
-            show(kSearchScreen);
+            show(kChannelScreen);
     }
-    if (ask.leave_channel && current_ == kSearchScreen)
+    if (ask.leave_channel && current_ == kChannelScreen)
         show(channel_return_);
     if (ask.leave_browse && current_ == kBrowseScreen)
         show(previous_tab());
@@ -1562,7 +1581,8 @@ void App::update(const InputFrame &input, float dt)
     {
         active_video_.clear();
         service_.request_close_video();
-        show(player_return_ == kBrowseScreen ? kBrowseScreen : previous_tab());
+        show(player_return_ == kBrowseScreen || player_return_ == kChannelScreen ? player_return_
+                                                                                 : previous_tab());
     }
     if (ask.go_to && ask.screen_index >= 0 &&
         static_cast<std::size_t>(ask.screen_index) < kTabCount)
@@ -1593,6 +1613,40 @@ void App::update(const InputFrame &input, float dt)
     }
     if (context_.settings_changed)
         settings_changed_ = true;
+    if (ask.backup_settings || ask.restore_settings)
+    {
+        // SmartTube's settings backup: the settings file, the pinned
+        // channels and the SponsorBlock exclusions, copied as they are.
+        const std::string backup = data_root_ + "/backup";
+        (void)save::ensure_directory(backup);
+        if (ask.backup_settings)
+            save_settings(); // the file on disk is what gets copied: make it current
+        int copied = 0;
+        for (const char *name : {kSettingsFile, "/pins.txt", "/sb_excluded.txt"})
+        {
+            const std::string from = (ask.backup_settings ? data_root_ : backup) + name;
+            const std::string to = (ask.backup_settings ? backup : data_root_) + name;
+            std::string data;
+            if (save::read_file(from, &data, 1u << 20) && save::write_atomic(to, data).empty())
+                ++copied;
+        }
+        if (ask.backup_settings)
+            toasts_.push(copied > 0 ? ui::StatusKind::success : ui::StatusKind::warning,
+                         copied > 0 ? "Settings backed up" : "Nothing backed up", backup, 3.0f);
+        else if (copied > 0)
+        {
+            // The restored values take over now; the settings pages show
+            // them after the next start.
+            settings_ = load_settings(data_root_);
+            load_pins();
+            load_sb_excluded();
+            rebuild_rail();
+            toasts_.push(ui::StatusKind::success, "Settings restored",
+                         "Some pages show the new values after a restart", 3.5f);
+        }
+        else
+            toasts_.push(ui::StatusKind::warning, "No backup found", backup, 3.0f);
+    }
 
     // Signing in unlocks the personalized feed and lets the app keep a second
     // copy of the token where the user can reach it.
@@ -1621,6 +1675,17 @@ void App::update(const InputFrame &input, float dt)
     }
     was_signed_in_ = signed_in;
 
+    if (ask.new_tv_code && lounge_ != nullptr)
+        lounge_->new_code();
+    if (lounge_ != nullptr && lounge_->running())
+    {
+        const Remote &remote = context_.remote;
+        if (current_ == kPlayerScreen)
+            lounge_->report(remote.video, remote.position_s, remote.duration_s, remote.state);
+        else
+            lounge_->report(std::string(), 0.0, 0.0, -1);
+    }
+
     toasts_.update(dt, feedback_);
     updates_.update(dt, feedback_);
 
@@ -1638,6 +1703,79 @@ void App::update(const InputFrame &input, float dt)
         save_delay_ -= dt;
         if (save_delay_ <= 0.0f)
             save_settings();
+    }
+}
+
+void App::pump_remote()
+{
+    // Settings > Remote control: the lounge runs while it is on.
+    if (!started_ || lounge_ == nullptr)
+        return;
+    if (settings_.remote_control != lounge_->running())
+    {
+        if (settings_.remote_control)
+            lounge_->start();
+        else
+            lounge_->stop();
+    }
+    Remote &remote = context_.remote;
+    for (yt::Lounge::Command &command : lounge_->take_commands())
+    {
+        using Kind = yt::Lounge::Command::Kind;
+        const bool in_player = current_ == kPlayerScreen;
+        switch (command.kind)
+        {
+        case Kind::play_video:
+            if (!command.videos.empty())
+                remote_list_ = command.videos; // the phone's queue, for Next/Previous
+            if (in_player && active_video_ == command.video_id)
+                remote.seek_s = command.time_s; // the same video: just move
+            else
+            {
+                remote.start_video = command.video_id;
+                remote.start_s = command.time_s;
+                context_.nav.open_video = true;
+                context_.nav.video_id = command.video_id;
+            }
+            break;
+        case Kind::play:
+            remote.paused = 0;
+            break;
+        case Kind::pause:
+            remote.paused = 1;
+            break;
+        case Kind::seek:
+            remote.seek_s = command.time_s;
+            break;
+        case Kind::stop:
+            if (in_player)
+                context_.nav.leave_player = true;
+            break;
+        case Kind::next:
+        case Kind::previous:
+        {
+            // Through the phone's queue when the video is in it, otherwise
+            // what the player's own Next / Previous do.
+            const auto at = std::find(remote_list_.begin(), remote_list_.end(), active_video_);
+            const bool next = command.kind == Kind::next;
+            if (at != remote_list_.end() &&
+                (next ? at + 1 != remote_list_.end() : at != remote_list_.begin()))
+            {
+                const std::string &id = next ? *(at + 1) : *(at - 1);
+                remote.start_video = id;
+                remote.start_s = 0.0;
+                context_.nav.open_video = true;
+                context_.nav.video_id = id;
+            }
+            else if (next)
+                remote.next = true;
+            else
+                remote.previous = true;
+            break;
+        }
+        case Kind::volume:
+            break; // the console's volume is the TV's
+        }
     }
 }
 
