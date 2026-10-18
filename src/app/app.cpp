@@ -741,6 +741,21 @@ std::vector<yt::FeedItem> App::current_section(const std::string &video_id) cons
     case kPlayerScreen:
         kinds = {yt::FeedKind::related};
         break;
+    case kChannelScreen:
+    {
+        // A channel page: the row the video sits in (its Videos, a playlist
+        // row...), so Shuffle plays that channel's videos, not suggestions.
+        const std::vector<yt::FeedItem> items = service_.feed(yt::FeedKind::channel).items;
+        const auto found = std::find_if(items.begin(), items.end(), [&](const yt::FeedItem &item)
+                                        { return item.video_id == video_id; });
+        if (found == items.end())
+            return {};
+        std::vector<yt::FeedItem> row;
+        for (const yt::FeedItem &item : items)
+            if (item.shelf == found->shelf && !item.is_channel())
+                row.push_back(item);
+        return row;
+    }
     default:
         kinds = {yt::FeedKind::topic, yt::FeedKind::home};
         break;
