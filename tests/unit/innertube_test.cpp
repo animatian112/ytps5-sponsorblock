@@ -522,3 +522,26 @@ TEST(InnerTube, AShowsSeasonsAreALabelNotSeconds)
     EXPECT_DOUBLE_EQ(page.items[0].length_s, 0.0);
     EXPECT_EQ(page.items[0].badge, "8 seasons");
 }
+
+// A TV playlist page hands out its videos a page at a time: the video list's
+// own nextContinuationData is the next page, in the first answer and after.
+TEST(InnerTube, PagesAPlaylistsVideoList)
+{
+    const char *first = R"({"contents":{"tvBrowseRenderer":{"content":{"tvSurfaceContentRenderer":
+      {"content":{"twoColumnRenderer":{"rightColumn":{"playlistVideoListRenderer":{
+        "contents":[{"tileRenderer":{"metadata":{"tileMetadataRenderer":{"title":{"simpleText":"One"}}},
+          "onSelectCommand":{"watchEndpoint":{"videoId":"eeeeeeeeeee"}}}}],
+        "continuations":[{"nextContinuationData":{"continuation":"PAGE2"}}]}}}}}}}}})";
+    yt::FeedPage page;
+    ASSERT_TRUE(yt::parse_feed_page(first, &page)) << page.error;
+    ASSERT_EQ(page.items.size(), 1u);
+    EXPECT_EQ(page.continuation, "PAGE2");
+
+    const char *next = R"({"continuationContents":{"playlistVideoListContinuation":{
+        "contents":[{"tileRenderer":{"metadata":{"tileMetadataRenderer":{"title":{"simpleText":"Two"}}},
+          "onSelectCommand":{"watchEndpoint":{"videoId":"fffffffffff"}}}}],
+        "continuations":[{"nextContinuationData":{"continuation":"PAGE3"}}]}}})";
+    ASSERT_TRUE(yt::parse_feed_page(next, &page)) << page.error;
+    ASSERT_EQ(page.items.size(), 1u);
+    EXPECT_EQ(page.continuation, "PAGE3");
+}

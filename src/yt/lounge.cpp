@@ -125,7 +125,34 @@ struct Lounge::Impl
     double duration = 0.0;
     int state = -1;
     int sent_state = -2;
-    std::string sent_video;
+    std::string sent_video = "\x01"; // differs from any id: nowPlaying goes out first
+    std::string list_id;
+    std::string current_index = "0";
+    std::string cpn; // a playback nonce per video, as the TV apps send
+
+    // The phone's YouTube app reads every field of these; a missing one has
+    // crashed it, so they always go out whole. (Called with mutex held.)
+    std::string fields() const
+    {
+        char text[256];
+        std::snprintf(text, sizeof(text),
+                      "&req0_currentTime=%.3f&req0_state=%d&req0_duration=%.3f"
+                      "&req0_loadedTime=%.3f&req0_seekableStartTime=0&req0_seekableEndTime=%.3f",
+                      position, state, duration, duration > 0.0 ? duration : position, duration);
+        return text + std::string("&req0_cpn=") + encode(cpn);
+    }
+    std::string now_playing() const
+    {
+        if (video_id.empty())
+            return "req0__sc=nowPlaying"; // nothing open: the bare event
+        return "req0__sc=nowPlaying&req0_videoId=" + encode(video_id) +
+               "&req0_listId=" + encode(list_id) + "&req0_currentIndex=" + encode(current_index) +
+               fields();
+    }
+    std::string state_change() const
+    {
+        return "req0__sc=onStateChange" + fields();
+    }
     std::chrono::steady_clock::time_point last_sent{};
 
     std::string bind_query() const
@@ -245,16 +272,23 @@ struct Lounge::Impl
             }
             if (name_ == "updatePlaylist" || command.video_id.empty())
                 push = false; // only the list changed
-            if (!command.video_id.empty())
             {
                 std::lock_guard<std::mutex> lock(mutex);
-                video_id = command.video_id;
-                position = command.time_s;
-                state = 3;
-                outbox.push_back("req0__sc=nowPlaying&req0_videoId=" + encode(command.video_id) +
-                                 "&req0_currentTime=" + std::to_string(command.time_s) +
-                                 "&req0_state=3&req0_currentIndex=0&req0_listId=");
-                wake.notify_all();
+                if (yyjson_obj_get(args, "listId") != nullptr)
+                    list_id = str(args, "listId");
+                if (yyjson_obj_get(args, "currentIndex") != nullptr)
+                    current_index = str(args, "currentIndex");
+                if (current_index.empty())
+                    current_index = "0";
+                if (!command.video_id.empty() && command.video_id != video_id)
+                {
+                    video_id = command.video_id;
+                    cpn = random_letters(16, now_seed());
+                    position = command.time_s;
+                    duration = 0.0;
+                    state = 3;
+                    wake.notify_all(); // nowPlaying for the new video
+                }
             }
         }
         else if (name_ == "play")
@@ -290,15 +324,29 @@ struct Lounge::Impl
                     if (!who.empty())
                         status.remote = who;
                 }
+                if (name_ == "remoteConnected")
+                {
+                    // What the TV apps tell a phone that just joined.
+                    outbox.push_back("req0__sc=onHasPreviousNextChanged&req0_hasPrevious=true"
+                                     "&req0_hasNext=true");
+                    outbox.push_back("req0__sc=onVolumeChanged&req0_volume=100&req0_muted=false");
+                    outbox.push_back(now_playing());
+                    wake.notify_all();
+                }
             }
             else if (name_ == "remoteDisconnected")
             {
                 status.connected = false;
                 status.remote.clear();
             }
-            else if (name_ == "getNowPlaying" || name_ == "getVolume")
+            else if (name_ == "getNowPlaying")
             {
-                sent_state = -2; // answer with the state at once
+                outbox.push_back(now_playing());
+                wake.notify_all();
+            }
+            else if (name_ == "getVolume")
+            {
+                outbox.push_back("req0__sc=onVolumeChanged&req0_volume=100&req0_muted=false");
                 wake.notify_all();
             }
         }
@@ -446,7 +494,8 @@ struct Lounge::Impl
                           [&]
                           {
                               return stopping || generation != run || !outbox.empty() ||
-                                     (!sid.empty() && state != sent_state);
+                                     (!sid.empty() &&
+                                      (state != sent_state || video_id != sent_video));
                           });
                 if (stopping || generation != run)
                     return;
@@ -457,14 +506,11 @@ struct Lounge::Impl
                 }
                 else
                 {
+                    // A new video is announced with nowPlaying, a change of
+                    // the same one with onStateChange.
+                    message = video_id != sent_video ? now_playing() : state_change();
                     sent_state = state;
                     sent_video = video_id;
-                    char text[256];
-                    std::snprintf(text, sizeof(text),
-                                  "req0__sc=onStateChange&req0_currentTime=%.1f&req0_state=%d"
-                                  "&req0_duration=%.1f&req0_loadedTime=%.1f&req0_cpn=",
-                                  position, state, duration, position);
-                    message = text;
                 }
             }
             send(message);
@@ -639,6 +685,8 @@ void Lounge::report(const std::string &video_id, double position_s, double durat
         return;
     const auto now = std::chrono::steady_clock::now();
     const bool changed = state != impl_->state || video_id != impl_->video_id;
+    if (video_id != impl_->video_id)
+        impl_->cpn = random_letters(16, now_seed());
     impl_->video_id = video_id;
     impl_->position = position_s;
     impl_->duration = duration_s;

@@ -694,6 +694,20 @@ struct Service::Impl
             if (tube.browse("VLUU" + channel_id.substr(2), &page_uploads) &&
                 !page_uploads.items.empty())
             {
+                // The uploads list comes a page at a time: fill the row.
+                for (int extra = 0; extra < 3 && page_uploads.items.size() < 60 &&
+                                    !page_uploads.continuation.empty();
+                     ++extra)
+                {
+                    FeedPage next;
+                    if (!tube.browse("VLUU" + channel_id.substr(2), &next,
+                                     page_uploads.continuation) ||
+                        next.items.empty())
+                        break;
+                    page_uploads.continuation = next.continuation;
+                    for (FeedItem &item : next.items)
+                        page_uploads.items.push_back(std::move(item));
+                }
                 add_row(page_uploads.items, "Videos", 60);
                 uploads = true;
             }

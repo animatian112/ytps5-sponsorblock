@@ -1899,7 +1899,10 @@ bool parse_feed_page(std::string_view json, FeedPage *page)
     // The TV client pages with nextContinuationData: the section list's own
     // token (not a shelf's) is the next page of a TV feed, in the first
     // answer and in the continuation answers alike.
-    for (const char *list : {"sectionListContinuation", "sectionListRenderer"})
+    // A playlist page pages its own video list the same way (the TV client
+    // hands out a playlist 15-25 videos at a time), and so do grids.
+    for (const char *list : {"playlistVideoListContinuation", "playlistVideoListRenderer",
+                             "sectionListContinuation", "sectionListRenderer", "gridContinuation"})
     {
         yyjson_val *section = find_object(root, list);
         yyjson_val *next = yyjson_obj_get(
