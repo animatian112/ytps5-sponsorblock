@@ -451,7 +451,9 @@ struct Lounge::Impl
             return !stopping && generation == run && !want_code;
         };
         const http::Response response = http::perform(request);
-        if (response.status == 400 || response.status == 404 || response.status == 410)
+        // Any refusal ends the session: answering it with an instant new
+        // poll hammered YouTube and starved the video's own downloads.
+        if (response.status != 0 && !response.http_ok())
         {
             log::line("lounge: session gone (%ld)", response.status);
             return false;
@@ -517,6 +519,25 @@ struct Lounge::Impl
         }
     }
 
+    // Waits `seconds` (cut short by a new-code request); false when the run
+    // is over.
+    bool idle(std::uint64_t run, int seconds)
+    {
+        for (int i = 0; i < seconds * 10; ++i)
+        {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (stopping || generation != run)
+                    return false;
+                if (want_code)
+                    return true;
+            }
+            struct timespec pause = {0, 100000000};
+            nanosleep(&pause, nullptr);
+        }
+        return true;
+    }
+
     void main_loop(std::uint64_t run)
     {
         int failures = 0;
@@ -544,21 +565,39 @@ struct Lounge::Impl
                     fetch_code();
                 if (bind())
                 {
-                    failures = 0;
+                    const auto bound = std::chrono::steady_clock::now();
+                    auto asked = bound;
                     while (poll(run))
                     {
-                        std::lock_guard<std::mutex> lock(mutex);
-                        if (stopping || generation != run)
+                        const bool quick =
+                            std::chrono::steady_clock::now() - asked < std::chrono::seconds(3);
+                        {
+                            std::lock_guard<std::mutex> lock(mutex);
+                            if (stopping || generation != run)
+                                return;
+                            if (want_code)
+                                break; // a new code: fetch it, then bind again
+                        }
+                        // A poll that answers at once is never repeated at
+                        // once: at most one every 3 s.
+                        if (quick && !idle(run, 3))
                             return;
-                        if (want_code)
-                            break; // a new code: fetch it, then bind again
+                        asked = std::chrono::steady_clock::now();
                     }
-                    continue;
+                    // A session that lasted a while was a good one; one that
+                    // died at once backs off like a failure.
+                    if (std::chrono::steady_clock::now() - bound > std::chrono::seconds(60))
+                    {
+                        failures = 0;
+                        if (!idle(run, 2))
+                            return;
+                        continue;
+                    }
                 }
             }
-            // Back off: 5 s, 10 s ... up to a minute between tries.
+            // Back off: 5 s, 10 s ... up to two minutes between tries.
             ++failures;
-            const int wait = std::min(60, 5 * failures);
+            const int wait = std::min(120, 5 * failures);
             for (int i = 0; i < wait * 10; ++i)
             {
                 {
