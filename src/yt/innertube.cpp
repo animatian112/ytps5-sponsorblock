@@ -3454,6 +3454,7 @@ bool InnerTube::player_variants(const std::string &video_id, std::vector<VideoIn
     std::string last_client;
     bool any = false;
     bool agree = true;
+    bool gated = false;
 
     for (const Client &client : kPlayerClients)
     {
@@ -3512,15 +3513,16 @@ bool InnerTube::player_variants(const std::string &video_id, std::vector<VideoIn
         if (answered)
             continue;
 
+        // The bot gate on one client is not the end: the first client asks
+        // without the account, and the signed-in TV clients behind it are
+        // usually let through. Only when nobody answers does it become
+        // "sign in first".
         if (reason.find("not a bot") != std::string::npos ||
             reason.find("LOGIN_REQUIRED") != std::string::npos ||
             reason.find("Sign in") != std::string::npos)
         {
-            log::line("player: %s", chain.c_str());
-            impl_->error = "login_required";
-            if (error != nullptr)
-                *error = "login_required";
-            return false;
+            gated = true;
+            continue;
         }
 
         if (!any)
@@ -3541,6 +3543,13 @@ bool InnerTube::player_variants(const std::string &video_id, std::vector<VideoIn
     {
         impl_->error.clear();
         return true;
+    }
+    if (gated)
+    {
+        impl_->error = "login_required";
+        if (error != nullptr)
+            *error = "login_required";
+        return false;
     }
     impl_->error = agree ? last_reason : last_reason + " (" + last_client + ")";
     if (error != nullptr)

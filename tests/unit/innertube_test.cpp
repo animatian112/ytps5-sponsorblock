@@ -6,6 +6,7 @@
 // (tests/fixtures/*.json): the walker has to survive renamed renderers, and
 // it must never surface an ad.
 
+#include "http_stub.hpp"
 #include "yt/codec.hpp"
 #include "yt/innertube.hpp"
 
@@ -544,4 +545,47 @@ TEST(InnerTube, PagesAPlaylistsVideoList)
     ASSERT_TRUE(yt::parse_feed_page(next, &page)) << page.error;
     ASSERT_EQ(page.items.size(), 1u);
     EXPECT_EQ(page.continuation, "PAGE3");
+}
+
+// The anonymous first client meeting YouTube's "not a bot" gate is not the
+// end: the signed-in clients behind it are still asked, and their answer plays.
+TEST(InnerTube, TheBotGateOnOneClientFallsThroughToTheNext)
+{
+    const std::string ok = fixture("player_ok.json");
+    hui::testing::HttpStub::instance().set_handler(
+        [ok](const yt::http::Request &request) -> yt::http::Response
+        {
+            yt::http::Response response;
+            if (request.url.find("/player") == std::string::npos)
+            {
+                response.status = 404;
+                return response;
+            }
+            response.status = 200;
+            response.body = request.body.find("VISIONOS") != std::string::npos
+                                ? R"({"playabilityStatus":{"status":"LOGIN_REQUIRED",)"
+                                  R"("reason":"Sign in to confirm you're not a bot"}})"
+                                : ok;
+            return response;
+        });
+    yt::InnerTube tube;
+    tube.set_access_token("token");
+    std::vector<yt::VideoInfo> variants;
+    std::string error;
+    EXPECT_TRUE(tube.player_variants("aaaaaaaaaaa", &variants, &error)) << error;
+    EXPECT_FALSE(variants.empty());
+
+    // Every client gated: then it is "sign in first".
+    hui::testing::HttpStub::instance().set_handler(
+        [](const yt::http::Request &request) -> yt::http::Response
+        {
+            yt::http::Response response;
+            response.status = request.url.find("/player") == std::string::npos ? 404 : 200;
+            response.body = R"({"playabilityStatus":{"status":"LOGIN_REQUIRED",)"
+                            R"("reason":"Sign in to confirm you're not a bot"}})";
+            return response;
+        });
+    EXPECT_FALSE(tube.player_variants("aaaaaaaaaaa", &variants, &error));
+    EXPECT_EQ(error, "login_required");
+    hui::testing::HttpStub::instance().clear();
 }
