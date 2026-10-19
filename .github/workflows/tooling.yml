@@ -208,8 +208,36 @@ jobs:
               print(f"{archive}: {len(names)} entries, flat and all 0777")
           PY
 
+      # The homebrew catalog (darkxex/ps5-homebrew-catalog) and ProsperoStore want the app
+      # folder at the top of the archive; the in-app updater keeps the flat ZIP above. Same
+      # files and 0777 modes, under "<title>/".
+      - name: Build the catalog ZIP (app folder at the top)
+        run: |
+          python3 - "dist/$TITLE_ID.zip" "dist/SmartTube-$TITLE_ID.zip" "$TITLE_ID" <<'PY'
+          import sys, zipfile
+          flat, out, title = sys.argv[1:4]
+          with zipfile.ZipFile(flat) as src, zipfile.ZipFile(out, "w") as dst:
+              top = zipfile.ZipInfo(title + "/", date_time=(1980, 1, 1, 0, 0, 0))
+              top.external_attr = (0o40777 << 16) | 0x10
+              dst.writestr(top, b"")
+              for info in src.infolist():
+                  copy = zipfile.ZipInfo(title + "/" + info.filename, date_time=info.date_time)
+                  copy.external_attr = info.external_attr
+                  copy.compress_type = info.compress_type
+                  copy.create_system = info.create_system
+                  dst.writestr(copy, src.read(info.filename))
+          with zipfile.ZipFile(out) as z:
+              assert z.testzip() is None, "damaged entry"
+              names = z.namelist()
+              assert all(n.startswith(title + "/") for n in names), "an entry outside the folder"
+              assert title + "/eboot.bin" in names and title + "/sce_sys/param.json" in names
+              wrong = [i.filename for i in z.infolist() if (i.external_attr >> 16) & 0o777 != 0o777]
+              assert not wrong, f"entries not stored as 0777: {wrong[:3]}"
+              print(f"{out}: {len(names)} entries under {title}/")
+          PY
+
       - name: Write release checksums
-        run: cd dist && sha256sum "$TITLE_ID.zip" > SHA256SUMS
+        run: cd dist && sha256sum "$TITLE_ID.zip" "SmartTube-$TITLE_ID.zip" > SHA256SUMS
 
       # Signed provenance: this ZIP was built by this workflow from this commit. Anyone can check a
       # downloaded copy with `gh attestation verify <file> -R <owner>/<repo>`. Not for pull requests
@@ -226,6 +254,7 @@ jobs:
           name: ${{ steps.label.outputs.artifact }}
           path: |
             dist/${{ env.TITLE_ID }}.zip
+            dist/SmartTube-${{ env.TITLE_ID }}.zip
             dist/SHA256SUMS
           if-no-files-found: error
           compression-level: 0
@@ -259,13 +288,15 @@ jobs:
           mapfile -d '' files < <(find . -type f -print0)
           shopt -s nullglob
           folder_zips=(PPSA*.zip)
-          # The artifact holds exactly these two files at its root.
-          if (( ${#files[@]} != 2 || ${#folder_zips[@]} != 1 )) || [[ ! -f SHA256SUMS ]]; then
-            echo "Expected exactly one app-folder ZIP and SHA256SUMS at the artifact root." >&2
+          catalog_zips=(SmartTube-PPSA*.zip)
+          # The artifact holds exactly these three files at its root.
+          if (( ${#files[@]} != 3 || ${#folder_zips[@]} != 1 || ${#catalog_zips[@]} != 1 )) || [[ ! -f SHA256SUMS ]]; then
+            echo "Expected the flat ZIP, the catalog ZIP and SHA256SUMS at the artifact root." >&2
             exit 1
           fi
           sha256sum -c SHA256SUMS
           echo "folder_zip=${folder_zips[0]}" >> "$GITHUB_OUTPUT"
+          echo "catalog_zip=${catalog_zips[0]}" >> "$GITHUB_OUTPUT"
           echo "checksum=SHA256SUMS" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub release
@@ -273,12 +304,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
           FOLDER_ZIP: ${{ steps.package.outputs.folder_zip }}
+          CATALOG_ZIP: ${{ steps.package.outputs.catalog_zip }}
           CHECKSUM: ${{ steps.package.outputs.checksum }}
         shell: bash
         run: |
           set -euo pipefail
           TAG=$VERSION
-          assets=("release/$FOLDER_ZIP" "release/$CHECKSUM")
+          assets=("release/$FOLDER_ZIP" "release/$CATALOG_ZIP" "release/$CHECKSUM")
           # The files of a release come from the run of its tag, once. A release without a
           # ZIP (notes written in advance, or a draft) gets them and keeps its title and
           # notes; one that already has a ZIP is never touched, because the catalog records
