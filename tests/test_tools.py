@@ -223,8 +223,11 @@ class ToolTests(unittest.TestCase):
         self.assertNotIn("ffpfsc", workflow.lower())
         self.assertNotIn("mkpfs", workflow.lower())
         self.assertIn("run: make app", workflow)
-        self.assertIn('sha256sum "$TITLE_ID.zip" > SHA256SUMS', workflow)
-        self.assertIn('assets=("release/$FOLDER_ZIP" "release/$CHECKSUM")', workflow)
+        # The flat ZIP (in-app updates) and the catalog ZIP (app folder at the top).
+        self.assertIn('sha256sum "$TITLE_ID.zip" "SmartTube-$TITLE_ID.zip" > SHA256SUMS', workflow)
+        self.assertIn(
+            'assets=("release/$FOLDER_ZIP" "release/$CATALOG_ZIP" "release/$CHECKSUM")', workflow
+        )
         # The ZIP is attested (signed provenance) once final, before the upload.
         attest = (
             "uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
