@@ -70,6 +70,7 @@ struct VideoView
     // timestamps (yt/chapters.hpp). Empty when it has none.
     std::vector<Chapter> chapters;
     std::string channel_avatar; // the channel's picture (from the watch page)
+    std::string date_text;      // the watch page's upload line ("May 1, 2024")
     std::string error;
     // What the pipeline is doing right now ("Player info", "Streams",
     // "Decoder"): the player screen shows it instead of guessing.

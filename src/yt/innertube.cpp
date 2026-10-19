@@ -570,6 +570,35 @@ std::string lockup_author(yyjson_val *metadata)
     return {};
 }
 
+// The views and age of a lockup ("1.2M views • 3 days ago"): the metadata
+// parts the author line skips, joined the way the other cards word it.
+std::string lockup_detail(yyjson_val *metadata)
+{
+    yyjson_val *content = yyjson_obj_get(metadata, "metadata");
+    yyjson_val *view_model = yyjson_obj_get(content, "contentMetadataViewModel");
+    yyjson_val *rows = yyjson_obj_get(view_model, "metadataRows");
+    std::string out;
+    for (std::size_t row = 0, rows_n = yyjson_arr_size(rows); row < rows_n; ++row)
+    {
+        yyjson_val *parts = yyjson_obj_get(yyjson_arr_get(rows, row), "metadataParts");
+        for (std::size_t part = 0, parts_n = yyjson_arr_size(parts); part < parts_n; ++part)
+        {
+            yyjson_val *text = yyjson_obj_get(yyjson_arr_get(parts, part), "text");
+            yyjson_val *content_text = yyjson_obj_get(text, "content");
+            const char *line = yyjson_is_str(content_text) ? yyjson_get_str(content_text) : nullptr;
+            if (line == nullptr || *line == '\0')
+                continue;
+            const std::size_t length = std::strlen(line);
+            const bool age = (length >= 3 && contains_text(line + length - 3, "ago")) ||
+                             contains_text(line, "Streamed") || contains_text(line, "Premiere");
+            if (!age && !contains_text(line, "views") && !contains_text(line, "watching"))
+                continue;
+            out += (out.empty() ? "" : " \xE2\x80\xA2 ") + std::string(line);
+        }
+    }
+    return out;
+}
+
 // The subscriber row of a lockup metadata: the metadataParts[0].text.content
 // of the row whose text ends in "subscribers".
 std::string lockup_subscriber_text(yyjson_val *metadata)
@@ -776,6 +805,7 @@ void collect_lockup(yyjson_val *obj, FeedPage *page)
     item.video_id = video_id;
     item.title = lockup_title(lockup_metadata);
     item.author = lockup_author(lockup_metadata);
+    item.detail = lockup_detail(lockup_metadata);
     item.thumbnail_url = lockup_thumbnail(lockup);
     item.live = contains_text(content_type.c_str(), "live");
     item.length_s =
@@ -1872,6 +1902,7 @@ bool parse_feed_page(std::string_view json, FeedPage *page)
     page->channels.clear();
     page->continuation.clear();
     page->error.clear();
+    page->date_text.clear();
     if (json.empty())
     {
         page->error = "bad json";
@@ -1943,6 +1974,21 @@ bool parse_feed_page(std::string_view json, FeedPage *page)
             thumbs = yyjson_obj_get(find_object(root, "channelThumbnail"), "thumbnails");
         if (yyjson_arr_size(thumbs) > 0)
             page->channel_avatar = largest_thumbnail(thumbs);
+    }
+
+    // The upload line of a watch page: the web primary info's dateText, the
+    // TV client's metadata dateText or publishedTimeText.
+    for (const char *holder :
+         {"videoPrimaryInfoRenderer", "videoMetadataRenderer", "videoDescriptionHeaderRenderer"})
+    {
+        yyjson_val *info = find_object(root, holder);
+        for (const char *field : {"dateText", "publishDate", "publishedTimeText"})
+        {
+            if (page->date_text.empty())
+                page->date_text = text_of(yyjson_obj_get(info, field));
+        }
+        if (!page->date_text.empty())
+            break;
     }
 
     // The account's standing toward the video (a /next answer).
@@ -2300,6 +2346,15 @@ bool parse_video_info(std::string_view json, VideoInfo *info)
         yyjson_obj_get(yyjson_obj_get(root, "storyboards"), "playerStoryboardSpecRenderer"),
         "spec");
     info->view_count = string_field(details, "viewCount");
+    {
+        // The upload date: the web clients' microformat (the TV client's
+        // answer usually has none; the watch page's date line covers it).
+        yyjson_val *micro =
+            yyjson_obj_get(yyjson_obj_get(root, "microformat"), "playerMicroformatRenderer");
+        info->publish_date = string_field(micro, "publishDate");
+        if (info->publish_date.empty())
+            info->publish_date = string_field(micro, "uploadDate");
+    }
     info->length_s = number_field(details, "lengthSeconds", 0.0);
     yyjson_val *live = yyjson_obj_get(details, "isLiveContent");
     info->live = yyjson_is_bool(live) && yyjson_get_bool(live);

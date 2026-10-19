@@ -26,6 +26,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <ctime>
 
 namespace hui::app
 {
@@ -43,6 +45,50 @@ std::string grouped_digits(const std::string &digits)
         grouped += digits[i];
     }
     return grouped;
+}
+
+// Days since 1970-01-01 of a civil date (Howard Hinnant's days_from_civil).
+long long days_from_civil(int y, int m, int d)
+{
+    y -= m <= 2 ? 1 : 0;
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const int yoe = y - era * 400;
+    const int doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return static_cast<long long>(era) * 146097 + doe - 719468;
+}
+
+// When the video went up: "May 1, 2024 (2 years ago)" from the player's
+// publish date, else the watch page's own line ("Premiered Oct 3, 2026").
+std::string upload_line(const yt::VideoView &view)
+{
+    int y = 0;
+    int m = 0;
+    int d = 0;
+    if (std::sscanf(view.info.publish_date.c_str(), "%d-%d-%d", &y, &m, &d) == 3 && y > 2004 &&
+        m >= 1 && m <= 12 && d >= 1 && d <= 31)
+    {
+        static const char *const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+        char text[64];
+        std::snprintf(text, sizeof(text), "%s %d, %d", kMonths[m - 1], d, y);
+        std::string out = text;
+        const long long now = static_cast<long long>(std::time(nullptr)) / 86400;
+        const long long days = now - days_from_civil(y, m, d);
+        if (days >= 0 && now > 19000) // a console clock that was never set says nothing
+        {
+            const auto ago = [](long long n, const char *unit)
+            { return std::to_string(n) + " " + unit + (n == 1 ? "" : "s") + " ago"; };
+            const std::string age = days == 0    ? std::string("today")
+                                    : days < 7   ? ago(days, "day")
+                                    : days < 31  ? ago(days / 7, "week")
+                                    : days < 365 ? ago(days / 30 > 0 ? days / 30 : 1, "month")
+                                                 : ago(days / 365, "year");
+            out += " (" + age + ")";
+        }
+        return out;
+    }
+    return view.date_text;
 }
 
 // "Fri Oct 16  10:34 AM", as SmartTube shows it in the player.
@@ -572,7 +618,10 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         {
             ui::CardItem card;
             card.title = item.title.empty() ? item.video_id : item.title;
+            // The channel, then the views and how long ago it went up.
             card.subtitle = item.author;
+            if (!item.detail.empty())
+                card.subtitle += (card.subtitle.empty() ? "" : " \xE2\x80\xA2 ") + item.detail;
             card.texture = context_.thumbs.texture(card_thumbnail(item));
             card.image_aspect = 16.0f / 9.0f;
             if (item.live)
@@ -624,6 +673,9 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         if (!view.info.view_count.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") +
                     grouped_digits(view.info.view_count) + " views";
+        // When it was uploaded.
+        if (const std::string uploaded = upload_line(view); !uploaded.empty())
+            meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + uploaded;
         // The chapter playing, after the channel and views.
         if (player_ != nullptr && !chapters_.empty())
         {
@@ -1266,6 +1318,8 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
             }
             head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + grouped + " views";
         }
+        if (const std::string uploaded = upload_line(view); !uploaded.empty())
+            head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + uploaded;
         if (!head.empty())
             lines.push_back(head);
         const std::string text =

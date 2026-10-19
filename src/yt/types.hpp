@@ -123,7 +123,8 @@ struct VideoInfo
     // The seek preview sheets: playerStoryboardSpecRenderer.spec
     // ("url|w#h#count#cols#rows#interval#name#sigh|..."), see yt/storyboard.hpp.
     std::string storyboard_spec;
-    std::string view_count; // videoDetails.viewCount, digits
+    std::string view_count;   // videoDetails.viewCount, digits
+    std::string publish_date; // microformat publishDate ("2024-05-01..."), empty if absent
     std::vector<CaptionTrack> captions;
     int preroll_ads = 0;
     // std::chrono::steady_clock milliseconds when the URLs start to play:
@@ -239,6 +240,8 @@ struct FeedPage
     std::vector<Chapter> chapters;
     // A watch page's channel picture (the owner line's avatar).
     std::string channel_avatar;
+    // A watch page's upload line ("May 1, 2024", "Premiered 3 hours ago").
+    std::string date_text;
     bool ok() const
     {
         return error.empty();

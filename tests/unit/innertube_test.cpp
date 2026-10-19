@@ -589,3 +589,32 @@ TEST(InnerTube, TheBotGateOnOneClientFallsThroughToTheNext)
     EXPECT_EQ(error, "login_required");
     hui::testing::HttpStub::instance().clear();
 }
+
+// Upload dates: a lockup card carries its views and age, a watch page its
+// upload line, and the player answer its microformat publish date.
+TEST(InnerTube, ReadsUploadDates)
+{
+    const char *lockup = R"({"contents":[{"lockupViewModel":{"contentId":"ggggggggggg",
+      "contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+      "metadata":{"lockupMetadataViewModel":{"title":{"content":"A lockup"},
+        "metadata":{"contentMetadataViewModel":{"metadataRows":[
+          {"metadataParts":[{"text":{"content":"Some Channel"}}]},
+          {"metadataParts":[{"text":{"content":"12K views"}},{"text":{"content":"3 weeks ago"}}]}]}}}}}}],
+      "videoPrimaryInfoRenderer":{"dateText":{"simpleText":"May 1, 2024"}}})";
+    yt::FeedPage page;
+    ASSERT_TRUE(yt::parse_feed_page(lockup, &page)) << page.error;
+    ASSERT_EQ(page.items.size(), 1u);
+    EXPECT_EQ(page.items[0].author, "Some Channel");
+    EXPECT_EQ(page.items[0].detail, "12K views \xE2\x80\xA2 3 weeks ago");
+    EXPECT_EQ(page.date_text, "May 1, 2024");
+
+    yt::VideoInfo info;
+    std::string player = fixture("player_ok.json");
+    const std::size_t brace = player.rfind('}');
+    ASSERT_NE(brace, std::string::npos);
+    player.insert(
+        brace,
+        R"(,"microformat":{"playerMicroformatRenderer":{"publishDate":"2024-05-01T07:00:00-07:00"}})");
+    ASSERT_TRUE(yt::parse_video_info(player, &info)) << info.error;
+    EXPECT_EQ(info.publish_date.substr(0, 10), "2024-05-01");
+}
