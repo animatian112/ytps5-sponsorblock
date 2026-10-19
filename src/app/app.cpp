@@ -15,6 +15,7 @@
 #include "gfx/gl_batch.hpp"
 #include "gfx/renderer.hpp"
 #include "ui/components.hpp"
+#include "yt/innertube.hpp"
 #include "yt/service.hpp"
 
 #include <GL/glcorearb.h>
@@ -638,6 +639,7 @@ void App::open_card_menu(const yt::FeedItem &item)
         entries.push_back({"Remove from history", kPickRemoveHistory});
     if (signed_in && video)
     {
+        entries.push_back({"Save to Watch later", kPickWatchLater}); // one press
         entries.push_back({"Add/Remove from playlist", kPickPlaylist});
         entries.push_back({"Add to new playlist", kPickNewPlaylist});
     }
@@ -785,6 +787,8 @@ yt::Service::Preferences App::preferences() const
     const int region = std::clamp(settings_.region, 0, Settings::kRegionCount - 1);
     p.gl = Settings::kRegions[region][0];
     p.hl = Settings::kRegions[region][1];
+    p.search_params =
+        yt::search_params(settings_.search_sort, settings_.search_date, settings_.search_duration);
     return p;
 }
 

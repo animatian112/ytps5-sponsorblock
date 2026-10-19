@@ -78,6 +78,10 @@ constexpr Extra kExtras[] = {
     {46, nullptr, &Settings::player_double_back, 0, 1},
     {47, &Settings::region, nullptr, 0, Settings::kRegionCount - 1},
     {48, nullptr, &Settings::remote_control, 0, 1},
+    {49, &Settings::search_sort, nullptr, 0, 3},
+    {50, &Settings::search_date, nullptr, 0, 5},
+    {51, &Settings::search_duration, nullptr, 0, 3},
+    {52, &Settings::video_brightness, nullptr, 0, 100},
 };
 // 60 + i: Settings::sb_act[i].
 constexpr std::uint8_t kSbActionKey = 60;

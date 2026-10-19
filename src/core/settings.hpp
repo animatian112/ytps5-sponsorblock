@@ -116,7 +116,13 @@ struct Settings
     int subtitle_color = 0;          // 0 white, 1 yellow, 2 cyan
     bool player_double_back = false; // Circle twice leaves the player
     bool remote_control = true;      // Cast from the phone (Link with TV code)
-    int region = 0;                  // index into kRegions: the feeds' country and language
+    // Search filters (yt::search_params): sort, upload date, duration.
+    int search_sort = 0;     // 0 relevance, 1 upload date, 2 view count, 3 rating
+    int search_date = 0;     // 0 any, 1 hour, 2 today, 3 week, 4 month, 5 year
+    int search_duration = 0; // 0 any, 1 under 4 min, 2 4-20 min, 3 over 20 min
+    // The player's brightness, 100 (no dimming) .. 0 (a black screen).
+    int video_brightness = 100;
+    int region = 0; // index into kRegions: the feeds' country and language
     static constexpr int kRegionCount = 14;
     static constexpr const char *kRegions[kRegionCount][3] = {
         {"US", "en", "United States"}, {"GB", "en", "United Kingdom"}, {"CA", "en", "Canada"},

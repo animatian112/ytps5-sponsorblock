@@ -60,6 +60,9 @@ class PlayerScreen final : public Screen
     void request_video(const std::string &video_id);
     // Cast from the phone: its commands, and what the player reports back.
     void update_remote();
+    // The comments panel's lines from the service's comments of this video.
+    std::vector<std::string> comment_lines() const;
+    void update_extras(float dt);
     yt::CodecChoice codec_choice() const;
     void drop_texture();
     void draw_hud(ui::Canvas &canvas, const Context &context) const;
@@ -123,8 +126,12 @@ class PlayerScreen final : public Screen
     const yt::VideoView &video_view() const;
     mutable yt::VideoView view_cache_;
     mutable std::uint64_t view_cache_revision_ = ~0ull;
-    float waiting_s_ = 0.0f;  // how long the current video has been loading
-    float back_armed_ = 0.0f; // "double back": seconds the second Circle still exits
+    float waiting_s_ = 0.0f;     // how long the current video has been loading
+    float back_armed_ = 0.0f;    // "double back": seconds the second Circle still exits
+    float sleep_left_s_ = -1.0f; // the sleep timer (-1: off)
+    bool sleep_at_end_ = false;  // ... or stop at the end of this video
+    std::uint64_t comments_seen_ = 0;
+    bool comments_asked_more_ = false;
     std::vector<yt::Chapter> chapters_;
     yt::Storyboard storyboard_; // the seek preview frames of playing_id_
     std::string storyboard_for_;

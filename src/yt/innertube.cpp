@@ -14,6 +14,8 @@
 
 #include "yt/innertube.hpp"
 
+#include "yt/comments.hpp"
+
 #include "yt/http.hpp"
 #include "yt/log.hpp"
 
@@ -2493,6 +2495,7 @@ struct InnerTube::Impl
     std::string visitor_data;
     std::string gl = "US";
     std::string hl = "en";
+    std::string search_params; // the search filters (search_params())
     std::string client_name = kWebClientName;
     std::string client_version = kWebClientVersion;
     long timeout_s = 20;
@@ -2969,6 +2972,62 @@ void InnerTube::set_timeout(long seconds)
     impl_->timeout_s = seconds;
 }
 
+std::string search_params(int sort, int date, int duration)
+{
+    // A protobuf: field 1 the sort order, field 2 a message of filters
+    // (1 upload date, 2 type: videos, 3 duration).
+    static const int kSort[] = {0, 2, 3, 1};     // relevance, upload date, view count, rating
+    static const int kDuration[] = {0, 1, 3, 2}; // any, short, medium, long
+    std::string bytes;
+    if (sort > 0 && sort < 4)
+    {
+        bytes += '\x08';
+        bytes += static_cast<char>(kSort[sort]);
+    }
+    std::string filters;
+    if (date > 0 && date < 6)
+    {
+        filters += '\x08';
+        filters += static_cast<char>(date);
+    }
+    if (date > 0 || duration > 0)
+    {
+        filters += '\x10'; // videos only: dates and lengths are a video's
+        filters += '\x01';
+    }
+    if (duration > 0 && duration < 4)
+    {
+        filters += '\x18';
+        filters += static_cast<char>(kDuration[duration]);
+    }
+    if (!filters.empty())
+    {
+        bytes += '\x12';
+        bytes += static_cast<char>(filters.size());
+        bytes += filters;
+    }
+    static const char kBase64[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    for (std::size_t i = 0; i < bytes.size(); i += 3)
+    {
+        const unsigned a = static_cast<unsigned char>(bytes[i]);
+        const unsigned b = i + 1 < bytes.size() ? static_cast<unsigned char>(bytes[i + 1]) : 0;
+        const unsigned c = i + 2 < bytes.size() ? static_cast<unsigned char>(bytes[i + 2]) : 0;
+        const unsigned n = (a << 16) | (b << 8) | c;
+        out += kBase64[(n >> 18) & 63];
+        out += kBase64[(n >> 12) & 63];
+        out += i + 1 < bytes.size() ? kBase64[(n >> 6) & 63] : '=';
+        out += i + 2 < bytes.size() ? kBase64[n & 63] : '=';
+    }
+    return out;
+}
+
+void InnerTube::set_search_params(const std::string &params)
+{
+    impl_->search_params = params;
+}
+
 void InnerTube::set_region(const std::string &gl, const std::string &hl)
 {
     if (!gl.empty())
@@ -3242,6 +3301,8 @@ bool InnerTube::search(const std::string &query, FeedPage *page, const std::stri
     if (continuation.empty())
     {
         extra = field_string("query", query);
+        if (!impl_->search_params.empty())
+            extra += "," + field_string("params", impl_->search_params);
         target = query;
     }
     else
@@ -3667,6 +3728,36 @@ bool InnerTube::channel_tab(const std::string &channel_id, const std::string &pa
     const bool parsed = impl_->feed_call("browse", extra, params, page);
     if (!parsed)
         page->error = impl_->error;
+    return parsed;
+}
+
+bool InnerTube::comments(const std::string &video_id, const std::string &continuation,
+                         std::vector<Comment> *out, std::string *next)
+{
+    if (out == nullptr || next == nullptr)
+        return false;
+    out->clear();
+    next->clear();
+    // The web watch page names the comment section; its token pages it.
+    std::string token = continuation;
+    if (token.empty())
+    {
+        Impl::Attempt page =
+            impl_->post_once("next", field_string("videoId", video_id), kWebReelClient, true);
+        impl_->log_line("next", "comments", page, 0);
+        if (!page.http_ok)
+            return false;
+        token = comments_token(page.body);
+        if (token.empty())
+        {
+            impl_->error = "Comments are turned off";
+            return false;
+        }
+    }
+    Impl::Attempt answer =
+        impl_->post_once("next", field_string("continuation", token), kWebReelClient, true);
+    const bool parsed = answer.http_ok && parse_comments(answer.body, out, next);
+    impl_->log_line("next", "comments page", answer, out->size());
     return parsed;
 }
 

@@ -49,6 +49,9 @@ class PlayerChrome
         open_chapters,
         cycle_mode, // the playback mode button: next, shuffle, repeat, pause, close
         pick,       // a panel choice: panel() and picked()
+        open_comments,
+        open_sleep,
+        open_dim,
     };
     enum class Panel
     {
@@ -59,6 +62,9 @@ class PlayerChrome
         audio,
         info,
         chapters,
+        comments,
+        sleep,
+        dim,
     };
 
     // The video's chapters: marks on the seek bar, the current one's name
@@ -159,6 +165,21 @@ class PlayerChrome
     {
         return panel_;
     }
+    // A reading panel's text arrived or grew (comments): the focus stays.
+    void set_panel_options(std::vector<std::string> options);
+    int panel_focus() const
+    {
+        return panel_focus_;
+    }
+    int panel_count() const
+    {
+        return static_cast<int>(panel_options_.size());
+    }
+    // A sleep timer is set: its button is lit.
+    void set_sleep_on(bool on)
+    {
+        sleep_on_ = on;
+    }
     int picked() const
     {
         return picked_;
@@ -211,6 +232,9 @@ class PlayerChrome
         info,
         chapters,
         mode,
+        comments,
+        sleep,
+        dim,
     };
     enum class Zone
     {
@@ -276,6 +300,7 @@ class PlayerChrome
     float seek_hold_ = 0.0f; // shows the target, not the clock, just after a seek
 
     Panel panel_ = Panel::none;
+    bool sleep_on_ = false;
     std::string panel_title_;
     std::vector<std::string> panel_options_;
     int panel_selected_ = -1;

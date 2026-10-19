@@ -311,6 +311,11 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     add_flag(player, "Suggestions", &S::suggestions, "The row of videos under the controls");
     add_steps(player, "Video zoom", &S::video_zoom, {0, 1, 2}, {"Fit", "Fill", "Stretch"},
               "Fit shows the whole picture; Fill crops the black bars; Stretch fills the screen");
+    add_steps(player, "Screen dimming", &S::video_brightness,
+              {100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0},
+              {"100% (off)", "90%", "80%", "70%", "60%", "50%", "40%", "30%", "20%", "10%",
+               "0% (screen off)"},
+              "Darkens the video; at 0% only the sound plays on");
     add_flag(player, "Exit from the player: double back", &S::player_double_back,
              "Circle twice to leave a video, so a stray press does not end it");
     player.add_header("Video formats");
@@ -411,6 +416,13 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     ui::Form &search = add_tile("Search", Icon::search);
     add_flag(search, "Show keyboard automatically", &S::keyboard_auto,
              "The keyboard opens as soon as Search does");
+    search.add_header("Filters (Triangle on the Search page)");
+    add_steps(search, "Sort by", &S::search_sort, {0, 1, 2, 3},
+              {"Relevance", "Upload date", "View count", "Rating"});
+    add_steps(search, "Upload date", &S::search_date, {0, 1, 2, 3, 4, 5},
+              {"Any time", "Last hour", "Today", "This week", "This month", "This year"});
+    add_steps(search, "Length", &S::search_duration, {0, 1, 2, 3},
+              {"Any", "Under 4 minutes", "4-20 minutes", "Over 20 minutes"});
 
     // ---- SponsorBlock (SmartTube's page) ----
     ui::Form &sponsor = add_tile("SponsorBlock", Icon::sponsorblock);

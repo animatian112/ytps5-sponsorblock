@@ -51,6 +51,7 @@ src/yt/update.cpp
 src/yt/watch.cpp
 src/yt/captions.cpp
 src/yt/chapters.cpp
+src/yt/comments.cpp
 src/yt/storyboard.cpp
 src/yt/lounge.cpp
 src/yt/lounge_chunks.cpp

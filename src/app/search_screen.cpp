@@ -80,6 +80,20 @@ SearchScreen::SearchScreen(Context &context) : context_(context)
     field_.set_bounds({kContentX, 140.0f, kContentW, 64.0f});
     field_.set_active(true);
 
+    // The search filters (Settings > Search keeps the same values).
+    filters_.style.theme = youtube_theme();
+    filters_.style.panel = true;
+    filters_.style.on_page = false;
+    filters_.set_bounds({1120.0f, 230.0f, 720.0f, 330.0f});
+    filters_.add_header("Search filters");
+    filters_.add_choice(1, "Sort by", {"Relevance", "Upload date", "View count", "Rating"},
+                        context_.settings.search_sort);
+    filters_.add_choice(2, "Upload date",
+                        {"Any time", "Last hour", "Today", "This week", "This month", "This year"},
+                        context_.settings.search_date);
+    filters_.add_choice(3, "Length", {"Any", "Under 4 minutes", "4-20 minutes", "Over 20 minutes"},
+                        context_.settings.search_duration);
+
     // The PlayStation's own keyboard: a full-width dark band at the bottom,
     // grey keys, the focused one white with dark text, Done a lighter key; Square
     // deletes, Triangle types a space, L2 shifts, R2 switches to symbols.
@@ -198,6 +212,46 @@ void SearchScreen::enter()
     }
 }
 
+std::string SearchScreen::filter_summary() const
+{
+    static const char *const kSort[] = {"", "Upload date", "View count", "Rating"};
+    static const char *const kDate[] = {"",          "Last hour",  "Today",
+                                        "This week", "This month", "This year"};
+    static const char *const kLength[] = {"", "Under 4 min", "4-20 min", "Over 20 min"};
+    const Settings &s = context_.settings;
+    std::string out;
+    for (const char *part :
+         {kSort[std::clamp(s.search_sort, 0, 3)], kDate[std::clamp(s.search_date, 0, 5)],
+          kLength[std::clamp(s.search_duration, 0, 3)]})
+        if (*part != '\0')
+            out += (out.empty() ? "" : "  \xE2\x80\xA2  ") + std::string(part);
+    return out;
+}
+
+void SearchScreen::update_filters(const InputFrame &input, ui::Feedback &feedback)
+{
+    Settings &s = context_.settings;
+    const ui::Event event = filters_.handle(input, feedback);
+    if (event == ui::Event::changed)
+    {
+        s.search_sort = filters_.choice_index(1);
+        s.search_date = filters_.choice_index(2);
+        s.search_duration = filters_.choice_index(3);
+        context_.settings_changed = true;
+    }
+    if (event == ui::Event::cancelled || input.is_pressed(Action::north))
+    {
+        filters_open_ = false;
+        filters_.set_active(false);
+        // The service takes the new filters with the next frame's
+        // preferences; the search goes out after that.
+        const int now = s.search_sort * 100 + s.search_date * 10 + s.search_duration;
+        if (now != filters_before_ && has_searched_)
+            search_again_ = true;
+    }
+    filters_.update(1.0f / 60.0f);
+}
+
 void SearchScreen::run_search()
 {
     has_searched_ = true;
@@ -292,7 +346,7 @@ void SearchScreen::open_channel(std::size_t index)
 
 bool SearchScreen::uses_back() const
 {
-    return in_channel_ || spot_ != Spot::field;
+    return in_channel_ || filters_open_ || spot_ != Spot::field;
 }
 
 void SearchScreen::open_channel_item(const yt::ChannelItem &channel)
@@ -542,6 +596,30 @@ void SearchScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             seen_revision_ = revision;
             refresh_results();
         }
+        if (search_again_)
+        {
+            search_again_ = false;
+            run_search();
+        }
+        if (filters_open_)
+        {
+            update_filters(input, feedback);
+            return;
+        }
+        if (spot_ != Spot::keyboard && input.is_pressed(Action::north))
+        {
+            // Triangle: the filter panel (on the keyboard it types a space).
+            const Settings &s = context_.settings;
+            filters_.set_choice(1, s.search_sort);
+            filters_.set_choice(2, s.search_date);
+            filters_.set_choice(3, s.search_duration);
+            filters_before_ = s.search_sort * 100 + s.search_date * 10 + s.search_duration;
+            filters_open_ = true;
+            filters_.enter();
+            filters_.set_focus(1);
+            filters_.set_active(true);
+            return;
+        }
         update_search(input, feedback);
     }
 
@@ -634,6 +712,24 @@ void SearchScreen::draw(const Context &context, Frame &frame) const
     }
     results_.draw(canvas, context);
 
+    if (!in_channel_)
+    {
+        // Which filters the next search carries, above the field.
+        const std::string summary = filter_summary();
+        const std::string line = summary.empty() ? std::string("Triangle: search filters")
+                                                 : "Filters: " + summary + "   (Triangle)";
+        ui::text(canvas.list, context.fonts.regular, line.c_str(), kContentX, 122.0f, 20.0f,
+                 summary.empty() ? gfx::Color::rgb(0x777777) : gfx::Color::rgb(0xcfcfcf));
+    }
+    if (filters_open_)
+    {
+        ui::Canvas overlay{frame.overlay, context.fonts, frame.glass_texture, clock_};
+        overlay.list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
+                                  gfx::Color::rgb(0x000000, 0.45f));
+        filters_.draw(overlay);
+        return;
+    }
+
     if (spot_ != Spot::keyboard)
         return;
 
@@ -662,7 +758,7 @@ bool SearchScreen::wants_rail_focus() const
     // Only the results grid is a vertical list here; the field, the horizontal
     // channel row and the tab bar never hand the focus to the rail. A channel
     // page that has not answered owns no focus at all.
-    if (in_channel_ && channel_loading())
+    if (filters_open_ || (in_channel_ && channel_loading()))
         return false;
     return spot_ == Spot::results && results_.wants_rail_focus();
 }

@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include "yt/comments.hpp"
 #include "yt/types.hpp"
 
 #include <memory>
@@ -16,6 +17,12 @@
 
 namespace yt
 {
+
+// YouTube's search filter parameter (the "params" of /search): sort 0
+// relevance, 1 upload date, 2 view count, 3 rating; date 0 any, 1 last hour,
+// 2 today, 3 this week, 4 this month, 5 this year; duration 0 any, 1 under
+// 4 minutes, 2 4-20 minutes, 3 over 20 minutes. Empty when nothing is set.
+std::string search_params(int sort, int date, int duration);
 
 class InnerTube
 {
@@ -77,6 +84,12 @@ class InnerTube
     void set_timeout(long seconds);
     // The country and language the feeds are answered for ("US", "en").
     void set_region(const std::string &gl, const std::string &hl);
+    // A page of a video's comments (web /next); an empty continuation asks
+    // for the first page. next is the following page's token ("" at the end).
+    bool comments(const std::string &video_id, const std::string &continuation,
+                  std::vector<Comment> *out, std::string *next);
+    // The search filters (search_params()) every new search carries.
+    void set_search_params(const std::string &params);
 
     // HTTP status of the last call; 401 means the token has to be refreshed.
     long last_status() const;

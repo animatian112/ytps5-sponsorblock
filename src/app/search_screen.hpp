@@ -40,7 +40,7 @@ class SearchScreen final : public Screen
         // Left and right turn the channel tabs while the tab bar has the
         // focus; L1/R1 stay the app's section keys on every screen.
         return in_channel_ ? "Circle back   Left/Right: tab   Options quit"
-                           : "Circle back   Left: menu   Options quit";
+                           : "Circle back   Triangle: filters   Options quit";
     }
     void enter() override;
     const yt::FeedItem *focused_item() const override
@@ -78,6 +78,9 @@ class SearchScreen final : public Screen
     void update_search(const InputFrame &input, ui::Feedback &feedback);
     void update_channel(const InputFrame &input, ui::Feedback &feedback);
     void draw_channel(ui::Canvas &canvas, const Context &context) const;
+    // Triangle's filter panel (sort, upload date, length).
+    void update_filters(const InputFrame &input, ui::Feedback &feedback);
+    std::string filter_summary() const;
     // The channel page has not answered yet: no component owns the focus.
     bool channel_loading() const;
 
@@ -106,6 +109,10 @@ class SearchScreen final : public Screen
     std::uint64_t seen_channel_revision_ = 0;
     std::uint64_t seen_channel_feed_revision_ = 0;
     float clock_ = 0.0f;
+    ui::Form filters_;
+    bool filters_open_ = false;
+    int filters_before_ = 0;    // the filters when the panel opened, packed
+    bool search_again_ = false; // the filters changed: search once they apply
 };
 
 } // namespace hui::app

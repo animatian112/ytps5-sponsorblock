@@ -160,6 +160,9 @@ std::vector<PlayerChrome::Button> PlayerChrome::bottom_buttons() const
     if (audio_tracks_)
         out.push_back(Button::audio);
     out.push_back(Button::info);
+    out.push_back(Button::comments);
+    out.push_back(Button::sleep);
+    out.push_back(Button::dim);
     return out;
 }
 
@@ -202,6 +205,12 @@ std::string PlayerChrome::tooltip(Button button) const
         return "Video info";
     case Button::chapters:
         return "Chapters";
+    case Button::comments:
+        return "Comments";
+    case Button::sleep:
+        return sleep_on_ ? "Sleep timer (on)" : "Sleep timer";
+    case Button::dim:
+        return "Screen dimming";
     case Button::mode:
     {
         static const char *const kModes[] = {"Play next", "Repeat the video", "Pause at the end",
@@ -217,7 +226,7 @@ bool PlayerChrome::lit(Button button) const
     return (button == Button::mode && mode_ == 4) || (button == Button::like && liked_) ||
            (button == Button::dislike && disliked_) ||
            (button == Button::subscribe && subscribed_) ||
-           (button == Button::captions && captions_on_);
+           (button == Button::captions && captions_on_) || (button == Button::sleep && sleep_on_);
 }
 
 void PlayerChrome::show()
@@ -306,6 +315,12 @@ PlayerChrome::Command PlayerChrome::press(Button button)
         return Command::open_chapters;
     case Button::mode:
         return Command::cycle_mode;
+    case Button::comments:
+        return Command::open_comments;
+    case Button::sleep:
+        return Command::open_sleep;
+    case Button::dim:
+        return Command::open_dim;
     }
     return Command::none;
 }
@@ -321,6 +336,13 @@ void PlayerChrome::open_panel(Panel panel, std::string title, std::vector<std::s
         selected >= 0 && selected < static_cast<int>(panel_options_.size()) ? selected : 0;
     picked_ = -1;
     show();
+}
+
+void PlayerChrome::set_panel_options(std::vector<std::string> options)
+{
+    panel_options_ = std::move(options);
+    panel_focus_ =
+        std::clamp(panel_focus_, 0, std::max(0, static_cast<int>(panel_options_.size()) - 1));
 }
 
 void PlayerChrome::close_panel()
@@ -349,7 +371,7 @@ PlayerChrome::Command PlayerChrome::handle_panel(const InputFrame &input, ui::Fe
             panel_focus_ = next;
             feedback.play(audio::Cue::focus);
         }
-        else if (panel_ != Panel::info) // reading the text: the end is no mistake
+        else if (panel_ != Panel::info && panel_ != Panel::comments) // reading: no mistake
             feedback.play(audio::Cue::error);
         return Command::none;
     }
@@ -585,6 +607,10 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
     case Button::chapters:
         name = "chapters";
         break;
+    case Button::comments:
+    case Button::sleep:
+    case Button::dim:
+        break; // drawn below
     case Button::mode:
     {
         // SmartTube's playback mode icons.
@@ -696,6 +722,27 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
     case Button::mode: // two arrows in a loop
         list.ring(cx, cy, 18.0f, 4.0f, ink);
         triangle(list, cx + 18.0f, cy - 4.0f, 14.0f, 1.0f, ink);
+        break;
+    case Button::comments: // a speech bubble
+        list.rounded_rect({cx - 20.0f, cy - 16.0f, 40.0f, 26.0f}, 6.0f, ink);
+        triangle(list, cx - 8.0f, cy + 14.0f, 10.0f, 1.0f, ink);
+        for (int i = 0; i < 2; ++i)
+            list.rounded_rect({cx - 12.0f, cy - 9.0f + static_cast<float>(i) * 9.0f, 24.0f, 3.0f},
+                              1.0f, gfx::Color::rgb(0x202020));
+        break;
+    case Button::sleep: // a moon
+        list.circle(cx, cy, 18.0f, ink);
+        list.circle(cx + 9.0f, cy - 7.0f, 15.0f, gfx::Color::rgb(0x202020));
+        break;
+    case Button::dim: // a sun, half dark
+        list.ring(cx, cy, 12.0f, 3.5f, ink);
+        list.rounded_rect({cx - 12.0f, cy - 12.0f, 12.0f, 24.0f}, 6.0f, ink);
+        for (int i = 0; i < 8; ++i)
+        {
+            const float angle = static_cast<float>(i) * 0.785398f;
+            list.line(cx + std::cos(angle) * 17.0f, cy + std::sin(angle) * 17.0f,
+                      cx + std::cos(angle) * 23.0f, cy + std::sin(angle) * 23.0f, 3.0f, ink);
+        }
         break;
     case Button::chapters: // a list with bullets
         for (int i = 0; i < 3; ++i)
@@ -891,7 +938,7 @@ void PlayerChrome::draw_panel(ui::Canvas &canvas, const ui::Fonts &fonts) const
     // SmartTube's settings panel: a header band with the title, then the
     // choices with radio circles (red for the current one). The description
     // reads as text: tighter lines, Up and Down scroll it.
-    const bool reading = panel_ == Panel::info;
+    const bool reading = panel_ == Panel::info || panel_ == Panel::comments;
     constexpr float kWidth = 720.0f;
     constexpr float kHeader = 170.0f;
     const float row_height = reading ? 38.0f : 96.0f;

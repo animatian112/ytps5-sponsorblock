@@ -7,6 +7,7 @@
 #pragma once
 
 #include "yt/player.hpp"
+#include "yt/comments.hpp"
 #include "yt/types.hpp"
 
 #include <cstdint>
@@ -71,6 +72,9 @@ struct VideoView
     std::vector<Chapter> chapters;
     std::string channel_avatar; // the channel's picture (from the watch page)
     std::string date_text;      // the watch page's upload line ("May 1, 2024")
+    // Return YouTube Dislike's counts (-1: not known).
+    long long likes = -1;
+    long long dislikes = -1;
     std::string error;
     // What the pipeline is doing right now ("Player info", "Streams",
     // "Decoder"): the player screen shows it instead of guessing.
@@ -83,6 +87,17 @@ struct VideoView
     // itag 248 1080p: 403 Forbidden"); cleared once one of them plays.
     std::vector<std::string> attempts;
     bool unauthorized = false;
+    std::uint64_t revision = 0;
+};
+
+// The comments of the playing video, a page at a time.
+struct CommentsView
+{
+    Load state = Load::idle;
+    std::string video_id;
+    std::vector<Comment> items;
+    bool more = false; // another page exists
+    std::string error;
     std::uint64_t revision = 0;
 };
 
@@ -161,6 +176,10 @@ class Service
     // (0 open, 1 subscribe) and resolved_revision() moves.
     void resolve_channel(std::string video_id, std::string name, int purpose);
     std::uint64_t resolved_revision() const;
+    // The video's comments: the first page, or (more) the next one.
+    void request_comments(std::string video_id, bool more);
+    CommentsView comments() const;
+    std::uint64_t comments_revision() const;
     std::pair<ChannelItem, int> resolved_channel() const;
     // SmartTube's "Block the channel": kept on this console; feed() leaves
     // out every card of a blocked channel (by id, or by name when the card
@@ -245,8 +264,9 @@ class Service
         bool watched_subscriptions = false;
         bool streams_subscriptions = false;
         bool mixes = false;
-        std::string gl = "US"; // the feeds' country ...
-        std::string hl = "en"; // ... and language
+        std::string gl = "US";     // the feeds' country ...
+        std::string hl = "en";     // ... and language
+        std::string search_params; // yt::search_params() of the search filters
         bool operator==(const Preferences &) const = default;
     };
     FeedBrief feed_brief(FeedKind kind) const;

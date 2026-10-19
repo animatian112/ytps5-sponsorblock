@@ -9,6 +9,8 @@
 
 #include "app/player_screen.hpp"
 
+#include "yt/comments.hpp"
+
 #include "yt/chapters.hpp"
 
 #include "platform/ps5/system.hpp"
@@ -549,6 +551,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     }
 
     update_remote();
+    update_extras(dt);
 
     if (view.revision != video_revision_)
     {
@@ -676,6 +679,10 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         // When it was uploaded.
         if (const std::string uploaded = upload_line(view); !uploaded.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + uploaded;
+        // Return YouTube Dislike's counts.
+        if (view.likes >= 0 && view.dislikes >= 0)
+            meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + yt::compact_count(view.likes) +
+                    " likes / " + yt::compact_count(view.dislikes) + " dislikes";
         // The chapter playing, after the channel and views.
         if (player_ != nullptr && !chapters_.empty())
         {
@@ -804,6 +811,9 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         case PlayerChrome::Command::open_audio:
         case PlayerChrome::Command::open_info:
         case PlayerChrome::Command::open_chapters:
+        case PlayerChrome::Command::open_comments:
+        case PlayerChrome::Command::open_sleep:
+        case PlayerChrome::Command::open_dim:
             open_menu(command);
             break;
         case PlayerChrome::Command::cycle_mode:
@@ -947,7 +957,15 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     {
         end_handled_ = true;
         const bool tall = texture_width_ > 0 && texture_height_ > texture_width_;
-        const int mode = settings.loop_shorts && tall ? 1 : settings.playback_mode;
+        int mode = settings.loop_shorts && tall ? 1 : settings.playback_mode;
+        if (sleep_at_end_)
+        {
+            // Sleep timer "End of this video": stop here, whatever comes next.
+            sleep_at_end_ = false;
+            chrome_.set_sleep_on(false);
+            mode = 2;
+            context_.toasts.push(ui::StatusKind::info, "Sleep timer", "Playback stopped", 4.0f);
+        }
         if (mode == 1)
         {
             player_->seek(0.0);
@@ -1320,6 +1338,9 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
         }
         if (const std::string uploaded = upload_line(view); !uploaded.empty())
             head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + uploaded;
+        if (view.likes >= 0 && view.dislikes >= 0)
+            head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + yt::compact_count(view.likes) +
+                    " likes / " + yt::compact_count(view.dislikes) + " dislikes";
         if (!head.empty())
             lines.push_back(head);
         const std::string text =
@@ -1343,6 +1364,48 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
         chrome_.open_panel(PlayerChrome::Panel::info,
                            view.info.title.empty() ? std::string("Info") : view.info.title,
                            std::move(lines), -1);
+        break;
+    }
+    case PlayerChrome::Command::open_comments:
+    {
+        const std::string id = playing_id_.empty() ? requested_id_ : playing_id_;
+        if (!id.empty())
+            context_.service.request_comments(id, false);
+        comments_seen_ = context_.service.comments_revision();
+        comments_asked_more_ = false;
+        chrome_.open_panel(PlayerChrome::Panel::comments, "Comments", comment_lines(), -1);
+        break;
+    }
+    case PlayerChrome::Command::open_sleep:
+    {
+        // SmartTube's sleep timer: stop after a while, or at the video's end.
+        std::vector<std::string> options{
+            "Off",        "15 minutes", "30 minutes",       "45 minutes",
+            "60 minutes", "90 minutes", "End of this video"};
+        int selected = sleep_at_end_ ? 6 : sleep_left_s_ > 0.0f ? -1 : 0;
+        if (sleep_left_s_ > 0.0f)
+            options[0] = "Off (" + std::to_string(static_cast<int>(sleep_left_s_ / 60.0f) + 1) +
+                         " min left)";
+        chrome_.open_panel(PlayerChrome::Panel::sleep, "Sleep timer", std::move(options), selected);
+        break;
+    }
+    case PlayerChrome::Command::open_dim:
+    {
+        // SmartTube's screen dimming: 100% is the picture as it is, 0% black
+        // (the sound plays on).
+        std::vector<std::string> options;
+        int selected = 0;
+        for (int level = 100, i = 0; level >= 0; level -= 10, ++i)
+        {
+            options.push_back(std::to_string(level) + "%" +
+                              (level == 100 ? "  (no dimming)"
+                               : level == 0 ? "  (screen off)"
+                                            : ""));
+            if (level == context_.settings.video_brightness)
+                selected = i;
+        }
+        chrome_.open_panel(PlayerChrome::Panel::dim, "Screen dimming", std::move(options),
+                           selected);
         break;
     }
     case PlayerChrome::Command::open_audio:
@@ -1427,9 +1490,110 @@ void PlayerScreen::apply_pick()
         if (pick >= 0 && pick < static_cast<int>(chapters_.size()) && player_ != nullptr)
             player_->seek(chapters_[static_cast<std::size_t>(pick)].start_s);
         break;
+    case PlayerChrome::Panel::sleep:
+    {
+        static const float kMinutes[] = {0.0f, 15.0f, 30.0f, 45.0f, 60.0f, 90.0f};
+        sleep_at_end_ = pick == 6;
+        sleep_left_s_ = pick >= 1 && pick <= 5 ? kMinutes[pick] * 60.0f : -1.0f;
+        chrome_.set_sleep_on(sleep_at_end_ || sleep_left_s_ > 0.0f);
+        context_.toasts.push(ui::StatusKind::info, "Sleep timer",
+                             sleep_at_end_ ? std::string("Stops at the end of this video")
+                             : sleep_left_s_ > 0.0f
+                                 ? "Stops in " + std::to_string(static_cast<int>(kMinutes[pick])) +
+                                       " minutes"
+                                 : std::string("Off"),
+                             2.0f);
+        break;
+    }
+    case PlayerChrome::Panel::dim:
+        if (pick >= 0 && pick <= 10)
+        {
+            context_.settings.video_brightness = 100 - pick * 10;
+            context_.settings_changed = true;
+        }
+        break;
     case PlayerChrome::Panel::info:
+    case PlayerChrome::Panel::comments:
     case PlayerChrome::Panel::none:
         break;
+    }
+}
+
+std::vector<std::string> PlayerScreen::comment_lines() const
+{
+    const yt::CommentsView view = context_.service.comments();
+    std::vector<std::string> lines;
+    for (const yt::Comment &comment : view.items)
+    {
+        std::string head = comment.author.empty() ? std::string("Someone") : comment.author;
+        if (!comment.published.empty())
+            head += "  \xE2\x80\xA2  " + comment.published;
+        if (!comment.likes.empty())
+            head += "  \xE2\x80\xA2  " + comment.likes + " likes";
+        if (!comment.replies.empty())
+            head += "  \xE2\x80\xA2  " + comment.replies + " replies";
+        lines.push_back(head);
+        std::size_t at = 0;
+        const std::string &text = comment.text;
+        while (at <= text.size() && context_.fonts.regular.font != nullptr)
+        {
+            const std::size_t end = text.find('\n', at);
+            const std::string paragraph =
+                text.substr(at, end == std::string::npos ? std::string::npos : end - at);
+            if (!paragraph.empty())
+                for (const std::string &line :
+                     context_.fonts.regular.font->wrap(paragraph, 26.0f, 440.0f))
+                    lines.push_back("    " + line);
+            if (end == std::string::npos)
+                break;
+            at = end + 1;
+        }
+        lines.push_back(" ");
+        if (lines.size() > 3000)
+            break;
+    }
+    if (view.state == yt::Load::loading || view.more)
+        lines.push_back(view.state == yt::Load::loading ? "Loading comments..."
+                                                        : "More comments load as you scroll");
+    else if (lines.empty())
+        lines.push_back(view.error.empty() ? std::string("No comments.") : view.error);
+    return lines;
+}
+
+void PlayerScreen::update_extras(float dt)
+{
+    // The comments panel grows as pages arrive, and asks for the next page
+    // when it is read near its end.
+    if (chrome_.panel() == PlayerChrome::Panel::comments)
+    {
+        const std::uint64_t revision = context_.service.comments_revision();
+        if (revision != comments_seen_)
+        {
+            comments_seen_ = revision;
+            comments_asked_more_ = false;
+            chrome_.set_panel_options(comment_lines());
+        }
+        const yt::CommentsView view = context_.service.comments();
+        if (!comments_asked_more_ && view.more && view.state == yt::Load::ready &&
+            chrome_.panel_focus() >= chrome_.panel_count() - 12)
+        {
+            comments_asked_more_ = true;
+            context_.service.request_comments(view.video_id, true);
+        }
+    }
+    // The sleep timer: the video pauses when it runs out.
+    if (sleep_left_s_ > 0.0f)
+    {
+        sleep_left_s_ -= dt;
+        if (sleep_left_s_ <= 0.0f)
+        {
+            sleep_left_s_ = -1.0f;
+            chrome_.set_sleep_on(sleep_at_end_);
+            if (player_ != nullptr)
+                player_->set_paused(true);
+            chrome_.show();
+            context_.toasts.push(ui::StatusKind::info, "Sleep timer", "Playback paused", 4.0f);
+        }
     }
 }
 
@@ -1561,6 +1725,12 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
         const gfx::Rect target{(gfx::kVirtualWidth - width) * 0.5f,
                                (gfx::kVirtualHeight - height) * 0.5f, width, height};
         canvas.list.image(texture_, target, gfx::kFullUv, gfx::Color::rgb(0xffffff), 0.0f);
+        // Settings > Player > Screen dimming: 100% leaves the picture, 0% is black.
+        const int brightness = std::clamp(context.settings.video_brightness, 0, 100);
+        if (brightness < 100)
+            canvas.list.rounded_rect(
+                {0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
+                gfx::Color::rgb(0x000000, 1.0f - static_cast<float>(brightness) / 100.0f));
     }
     else
     {

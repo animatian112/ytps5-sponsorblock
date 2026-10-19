@@ -149,6 +149,9 @@ struct Service::Impl
         int switch_index = 0;
         // A card's channel looked up from its watch page (TV Home tiles
         // carry none): purpose 0 opens it, 1 subscribes to it.
+        bool comments = false;
+        bool comments_more = false;
+        std::string comments_video;
         bool resolve = false;
         std::string resolve_video;
         std::string resolve_name;
@@ -157,9 +160,12 @@ struct Service::Impl
     std::vector<ChannelItem> blocked; // <token file>.blocked: id TAB name
     Service::Preferences preferences;
     std::string region_gl = "US"; // the worker's copy, taken with each job
+    std::string search_params;    // ... and the search filters
     std::string region_hl = "en";
     std::string account_channel;
     std::uint64_t resolved_revision = 0;
+    CommentsView comments;
+    std::string comments_next;
     ChannelItem resolved_channel;
     int resolved_purpose = 0;
 
@@ -712,6 +718,19 @@ struct Service::Impl
                 uploads = true;
             }
         }
+        // Its most popular uploads: YouTube keeps them as the "UULP" list.
+        bool popular = false;
+        if (channel_id.size() == 24 && channel_id.rfind("UC", 0) == 0)
+        {
+            FeedPage page_popular;
+            if (tube.browse("VLUULP" + channel_id.substr(2), &page_popular) &&
+                !page_popular.items.empty())
+            {
+                add_row(page_popular.items, "Popular", 40);
+                popular = true;
+                publish(FeedKind::channel, Load::ready, rows, {}, {});
+            }
+        }
         // The home page's rows; its own "Videos" row repeats the uploads.
         std::vector<FeedItem> channels_row;
         for (FeedItem &item : home)
@@ -724,6 +743,8 @@ struct Service::Impl
                 continue;
             }
             if (uploads && (shelf == "videos" || shelf == "uploads"))
+                continue;
+            if (popular && (shelf == "popular" || shelf == "popular videos"))
                 continue;
             if (item.shelf.empty())
                 item.shelf = uploads ? "Featured" : "Videos";
@@ -1422,6 +1443,24 @@ struct Service::Impl
                 }
                 else
                     publish(FeedKind::related, Load::failed, {}, {}, tube.last_error());
+                // The like and dislike counts (Return YouTube Dislike); best
+                // effort, a few seconds at most.
+                {
+                    const http::Response votes = http::get(
+                        "https://returnyoutubedislikeapi.com/votes?videoId=" + video_id, {}, 6);
+                    long long likes = -1;
+                    long long dislikes = -1;
+                    if (votes.http_ok() && parse_votes(votes.body, &likes, &dislikes))
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        if (video.info.video_id == video_id || video.info.video_id.empty())
+                        {
+                            video.likes = likes;
+                            video.dislikes = dislikes;
+                            video.revision++;
+                        }
+                    }
+                }
                 return;
             }
         }
@@ -1633,9 +1672,11 @@ struct Service::Impl
                 job = Job{};
                 region_gl = preferences.gl;
                 region_hl = preferences.hl;
+                search_params = preferences.search_params;
             }
             // Settings > General > Language/Country, for every request below.
             tube.set_region(region_gl, region_hl);
+            tube.set_search_params(search_params);
 
             if (taken.sign_out)
             {
@@ -1812,6 +1853,41 @@ struct Service::Impl
                     video.revision++;
                 }
             }
+            if (taken.comments)
+            {
+                std::string token;
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    token = taken.comments_more && comments.video_id == taken.comments_video
+                                ? comments_next
+                                : std::string();
+                }
+                if (!taken.comments_more || !token.empty())
+                {
+                    std::vector<Comment> page;
+                    std::string next;
+                    const bool ok = tube.comments(taken.comments_video, token, &page, &next);
+                    std::lock_guard<std::mutex> lock(mutex);
+                    if (comments.video_id == taken.comments_video)
+                    {
+                        if (ok)
+                        {
+                            for (Comment &comment : page)
+                                comments.items.push_back(std::move(comment));
+                            comments_next = next;
+                            comments.more = !next.empty();
+                            comments.state = Load::ready;
+                        }
+                        else
+                        {
+                            comments.state = comments.items.empty() ? Load::failed : Load::ready;
+                            comments.error = tube.last_error();
+                            comments.more = false;
+                        }
+                        comments.revision++;
+                    }
+                }
+            }
             if (taken.resolve)
             {
                 FeedPage page;
@@ -1865,7 +1941,7 @@ struct Service::Impl
                job.close_video || job.sign_in || job.cancel_sign_in || job.sign_out ||
                job.refresh || job.import_token || job.rate || job.subscribe ||
                !job.actions.empty() || job.add_account || job.switch_account || restore_previous ||
-               job.resolve;
+               job.resolve || job.comments;
     }
 };
 
@@ -1991,6 +2067,40 @@ std::string Service::account_channel() const
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->account_channel;
+}
+
+void Service::request_comments(std::string video_id, bool more)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (!more || impl_->comments.video_id != video_id)
+    {
+        if (!more && impl_->comments.video_id == video_id &&
+            impl_->comments.state != Load::failed && impl_->comments.state != Load::idle)
+            return; // already there (or on its way)
+        const std::uint64_t revision = impl_->comments.revision + 1;
+        impl_->comments = CommentsView{};
+        impl_->comments.video_id = video_id;
+        impl_->comments.state = Load::loading;
+        impl_->comments.revision = revision;
+        impl_->comments_next.clear();
+        more = false;
+    }
+    impl_->job.comments = true;
+    impl_->job.comments_more = more;
+    impl_->job.comments_video = std::move(video_id);
+    impl_->wake.notify_all();
+}
+
+CommentsView Service::comments() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->comments;
+}
+
+std::uint64_t Service::comments_revision() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->comments.revision;
 }
 
 void Service::resolve_channel(std::string video_id, std::string name, int purpose)
@@ -2184,6 +2294,8 @@ void Service::request_video(std::string video_id, CodecChoice choice)
     impl_->video.chapters.clear();
     impl_->video.channel_avatar.clear();
     impl_->video.date_text.clear();
+    impl_->video.likes = -1;
+    impl_->video.dislikes = -1;
     impl_->video.subscribed = false;
     impl_->video.source_client.clear();
     impl_->video.attempts.clear();
