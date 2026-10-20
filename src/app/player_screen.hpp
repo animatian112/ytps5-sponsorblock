@@ -109,6 +109,7 @@ class PlayerScreen final : public Screen
 
     // Choices made in the player's menus; they last until the app closes.
     int quality_override_ = 0; // a height cap; 0 follows Settings
+    int itag_override_ = 0;    // one format picked in "Video formats" (this video)
     std::string audio_track_;  // an audioTrack.id; empty plays the original
     double speed_ = 1.0;
     // Shuffle: the random pick from the section that plays next, chosen once
@@ -149,6 +150,7 @@ class PlayerScreen final : public Screen
     std::vector<double> skipped_ends_; // segments already skipped once (by end time)
     double resume_s_ = -1.0;           // where a reopened video continues
     std::vector<int> menu_heights_;
+    std::vector<int> menu_itags_;
     std::vector<std::string> menu_tracks_;
     // Subtitles: the language picked last is turned on again for the next
     // video that has it.

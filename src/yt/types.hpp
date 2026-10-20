@@ -65,6 +65,7 @@ struct Format
     std::string audio_track_name;
     bool audio_default = false;
     bool drc = false; // a dynamic-range-compressed copy of another format
+    bool hdr = false; // an HDR picture (qualityLabel "...HDR", a PQ/HLG transfer)
 };
 
 // One subtitle track of a video (captions.playerCaptionsTracklistRenderer).
@@ -270,6 +271,9 @@ struct CodecChoice
     // A height picked in the player's quality menu: that height is played if
     // the video has it, past the software-decoding ceilings (the user asked).
     int exact_height = 0;
+    // One exact format picked in the player's format list (its itag); it is
+    // played when the answer has it, whatever the codec settings say.
+    int exact_itag = 0;
     DecodeMode decode = DecodeMode::auto_detect;
     // audioTrack.id to play; empty picks the video's original track.
     std::string audio_track;

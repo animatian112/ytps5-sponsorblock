@@ -35,6 +35,7 @@ extern "C"
 #include <libavutil/dict.h>
 #include <libavutil/error.h>
 #include <libavutil/mathematics.h>
+#include <libavutil/opt.h>
 #include <libavutil/pixfmt.h>
 #include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
@@ -76,6 +77,8 @@ constexpr int kDecoderThreadsLarge = 6;
 // The largest picture handed to the screen (its own size); bigger ones are
 // scaled down while they are converted.
 constexpr int kMaxOutputWidth = 1920;
+// Threads that turn each decoded picture into RGBA (and scale it down).
+constexpr int kConvertThreads = 4;
 constexpr int kMaxOutputHeight = 1080;
 constexpr int kVideoPacketsPerUpdate = 4;
 constexpr int kAudioPacketsPerUpdate = 8;
@@ -417,6 +420,15 @@ class FfmpegPlayer final : public Player
     std::string quality_;
 
     SwsContext *sws_ = nullptr;
+    // The converter's shape (sws_ is rebuilt when it changes) and whether it
+    // runs on several threads (sws_scale_frame) or the single-threaded way.
+    int sws_src_w_ = 0;
+    int sws_src_h_ = 0;
+    int sws_src_format_ = -1;
+    int sws_dst_w_ = 0;
+    int sws_dst_h_ = 0;
+    bool sws_threaded_ = false;
+    AVFrame *sws_dst_ = nullptr;
     SwrContext *swr_ = nullptr;
     // Playback speed and the atempo graph that stretches the 48 kHz output
     // to it (none at 1x).
@@ -833,8 +845,17 @@ bool FfmpegPlayer::open_demuxer(Demuxer &demuxer, const std::string &url, bool v
         return false;
     }
     demuxer.codec->pkt_timebase = demuxer.stream->time_base;
-    demuxer.codec->thread_count =
-        video && demuxer.stream->codecpar->height > 1080 ? kDecoderThreadsLarge : kDecoderThreads;
+    const bool large = video && demuxer.stream->codecpar->height > 1080;
+    demuxer.codec->thread_count = large ? kDecoderThreadsLarge : kDecoderThreads;
+    if (large)
+    {
+        // Above 1080p the picture is scaled down to the screen anyway, which
+        // hides what the in-loop deblocking filter would smooth; skipping it
+        // and taking the decoder's faster paths saves a large share of the
+        // decoding work.
+        demuxer.codec->skip_loop_filter = AVDISCARD_ALL;
+        demuxer.codec->flags2 |= AV_CODEC_FLAG2_FAST;
+    }
     result = avcodec_open2(demuxer.codec, codec, nullptr);
     if (result < 0)
     {
@@ -1589,20 +1610,81 @@ void FfmpegPlayer::emit_video(AVFrame *frame)
         return;
     }
 
-    sws_ = sws_getCachedContext(sws_, source_width, source_height,
-                                static_cast<AVPixelFormat>(frame->format), width, height,
-                                AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
-    if (sws_ == nullptr)
+    if (sws_ == nullptr || sws_src_w_ != source_width || sws_src_h_ != source_height ||
+        sws_src_format_ != frame->format || sws_dst_w_ != width || sws_dst_h_ != height)
     {
-        release_video_buffer(target);
-        error_ = "sws_getCachedContext failed";
-        return;
+        // The conversion (and the scaling down of a big picture) runs on
+        // kConvertThreads threads: on one it was the frame thread's biggest
+        // cost above 1080p. A build without slice threads gets one thread.
+        if (sws_ != nullptr)
+            sws_freeContext(sws_);
+        sws_threaded_ = false;
+        sws_ = sws_alloc_context();
+        if (sws_ != nullptr)
+        {
+            av_opt_set_int(sws_, "srcw", source_width, 0);
+            av_opt_set_int(sws_, "srch", source_height, 0);
+            av_opt_set_int(sws_, "src_format", frame->format, 0);
+            av_opt_set_int(sws_, "dstw", width, 0);
+            av_opt_set_int(sws_, "dsth", height, 0);
+            av_opt_set_int(sws_, "dst_format", AV_PIX_FMT_RGBA, 0);
+            av_opt_set_int(sws_, "sws_flags", SWS_BILINEAR, 0);
+            av_opt_set_int(sws_, "threads", kConvertThreads, 0);
+            if (sws_init_context(sws_, nullptr, nullptr) < 0)
+            {
+                sws_freeContext(sws_);
+                sws_ = nullptr;
+            }
+            else
+                sws_threaded_ = true;
+        }
+        if (sws_ == nullptr)
+            sws_ = sws_getContext(source_width, source_height,
+                                  static_cast<AVPixelFormat>(frame->format), width, height,
+                                  AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+        if (sws_ == nullptr)
+        {
+            release_video_buffer(target);
+            error_ = "sws context failed";
+            return;
+        }
+        sws_src_w_ = source_width;
+        sws_src_h_ = source_height;
+        sws_src_format_ = frame->format;
+        sws_dst_w_ = width;
+        sws_dst_h_ = height;
+        log::line("ffmpeg: convert %dx%d -> %dx%d RGBA (%s)", source_width, source_height, width,
+                  height, sws_threaded_ ? "threaded" : "one thread");
     }
 
     std::uint8_t *destination[4] = {video_buffers_[target].bytes.get(), nullptr, nullptr, nullptr};
     const int destination_stride[4] = {width * 4, 0, 0, 0};
-    sws_scale(sws_, frame->data, frame->linesize, 0, source_height, destination,
-              destination_stride);
+    bool converted = false;
+    if (sws_threaded_)
+    {
+        // sws_scale_frame is the threaded entry: the pool slot is lent to it
+        // as the destination frame's buffer (freed by nobody: the pool owns it).
+        if (sws_dst_ == nullptr)
+            sws_dst_ = av_frame_alloc();
+        AVBufferRef *slot = sws_dst_ != nullptr ? av_buffer_create(
+                                                      destination[0], size,
+                                                      [](void *, std::uint8_t *) {}, nullptr, 0)
+                                                : nullptr;
+        if (slot != nullptr)
+        {
+            sws_dst_->buf[0] = slot;
+            sws_dst_->data[0] = destination[0];
+            sws_dst_->linesize[0] = destination_stride[0];
+            sws_dst_->width = width;
+            sws_dst_->height = height;
+            sws_dst_->format = AV_PIX_FMT_RGBA;
+            converted = sws_scale_frame(sws_, sws_dst_, frame) >= 0;
+            av_frame_unref(sws_dst_);
+        }
+    }
+    if (!converted)
+        sws_scale(sws_, frame->data, frame->linesize, 0, source_height, destination,
+                  destination_stride);
 
     const double pts = frame_pts(frame);
     if (video_queue_.size() >= video_queue_depth_)
@@ -2151,6 +2233,10 @@ void FfmpegPlayer::seek(double seconds)
         sws_freeContext(sws_);
         sws_ = nullptr;
     }
+    if (sws_dst_ != nullptr)
+        av_frame_free(&sws_dst_);
+    sws_src_w_ = sws_src_h_ = sws_dst_w_ = sws_dst_h_ = 0;
+    sws_src_format_ = -1;
     if (swr_ != nullptr)
     {
         swr_close(swr_);
@@ -2298,6 +2384,10 @@ void FfmpegPlayer::release()
         sws_freeContext(sws_);
         sws_ = nullptr;
     }
+    if (sws_dst_ != nullptr)
+        av_frame_free(&sws_dst_);
+    sws_src_w_ = sws_src_h_ = sws_dst_w_ = sws_dst_h_ = 0;
+    sws_src_format_ = -1;
     // Null in software mode, where the session was never created.
     hardware_.reset();
     release_demuxer(video_);

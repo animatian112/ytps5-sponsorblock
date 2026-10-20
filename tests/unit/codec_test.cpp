@@ -550,3 +550,25 @@ TEST(Codec, APickedHeightPlaysPastTheSoftwareCeiling)
 }
 
 } // namespace
+
+// A format picked from the full "Video formats" list plays as picked, even
+// when the codec settings would not have chosen it.
+TEST(Codec, AnExactFormatPickWins)
+{
+    std::vector<yt::Format> formats(2);
+    formats[0].itag = 137;
+    formats[0].codec = yt::Codec::avc;
+    formats[0].height = 1080;
+    formats[0].url = "https://a";
+    formats[1].itag = 400;
+    formats[1].codec = yt::Codec::av1;
+    formats[1].height = 1440;
+    formats[1].url = "https://b";
+    yt::CodecChoice choice;
+    choice.av1 = false;
+    EXPECT_EQ(yt::select_video_format(formats, choice)->itag, 137);
+    choice.exact_itag = 400;
+    EXPECT_EQ(yt::select_video_format(formats, choice)->itag, 400);
+    choice.exact_itag = 999; // gone from this answer: the usual choice
+    EXPECT_EQ(yt::select_video_format(formats, choice)->itag, 137);
+}

@@ -281,6 +281,7 @@ yt::CodecChoice PlayerScreen::codec_choice() const
         choice.max_height = quality_override_;
         choice.exact_height = quality_override_;
     }
+    choice.exact_itag = itag_override_;
     choice.audio_track = audio_track_;
     return choice;
 }
@@ -304,6 +305,7 @@ void PlayerScreen::request_video(const std::string &video_id)
             speed_ = context_.settings.speed();
         skipped_ends_.clear();
         audio_track_.clear(); // a track id belongs to one video
+        itag_override_ = 0;   // ... and so does a format (its height carries on)
     }
     // The phone asked for this video from a point (Cast from the phone).
     Remote &remote = context_.remote;
@@ -1234,53 +1236,51 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
     }
     case PlayerChrome::Command::open_quality:
     {
-        // The heights this video offers in the codecs Settings allow.
-        const yt::CodecChoice choice = codec_choice();
-        menu_heights_.clear();
+        // SmartTube's "Video formats": every picture this video offers, the
+        // highest first - "2160p, 60fps, 30.57Mbps, vp9, HDR".
+        std::vector<const yt::Format *> formats;
         for (const yt::Format &format : view.info.formats)
-        {
-            if (!yt::is_video_codec(format.codec) || format.height <= 0)
-                continue;
-            if ((format.codec == yt::Codec::avc && !choice.avc) ||
-                (format.codec == yt::Codec::vp9 && !choice.vp9) ||
-                (format.codec == yt::Codec::av1 && !choice.av1))
-                continue;
-            if (std::find(menu_heights_.begin(), menu_heights_.end(), format.height) ==
-                menu_heights_.end())
-                menu_heights_.push_back(format.height);
-        }
-        std::sort(menu_heights_.rbegin(), menu_heights_.rend());
+            if (yt::is_video_codec(format.codec) && format.height > 0 && !format.url.empty())
+                formats.push_back(&format);
+        std::stable_sort(formats.begin(), formats.end(),
+                         [](const yt::Format *a, const yt::Format *b)
+                         {
+                             if (a->height != b->height)
+                                 return a->height > b->height;
+                             if (static_cast<int>(a->fps + 0.5) != static_cast<int>(b->fps + 0.5))
+                                 return a->fps > b->fps;
+                             return a->bitrate > b->bitrate;
+                         });
+        menu_heights_.clear();
+        menu_itags_.clear();
         std::vector<std::string> options{"Auto (up to " +
                                          std::to_string(context_.settings.max_height) + "p)"};
-        int selected = 0;
-        for (std::size_t i = 0; i < menu_heights_.size(); ++i)
+        int selected = quality_override_ == 0 && itag_override_ == 0 ? 0 : -1;
+        for (const yt::Format *format : formats)
         {
-            // SmartTube's line: "1080p, 30fps, 5.02Mbps, avc", from the
-            // format that height would play.
-            yt::CodecChoice exact = choice;
-            exact.exact_height = menu_heights_[i];
-            exact.max_height = menu_heights_[i];
-            const yt::Format *format = yt::select_video_format(view.info.formats, exact);
-            std::string line = std::to_string(menu_heights_[i]) + "p";
-            if (format != nullptr && format->height == menu_heights_[i])
-            {
-                char extra[64];
-                std::snprintf(extra, sizeof(extra), ", %dfps, %.2fMbps, %s",
-                              static_cast<int>(format->fps + 0.5),
-                              static_cast<double>(format->bitrate) / 1e6,
-                              yt::codec_label(format->codec));
-                line += extra;
-                yt::CodecChoice ceiling = choice;
-                ceiling.max_height = 0;
-                const int limit = yt::codec_height_ceiling(format->codec, ceiling);
-                if (limit > 0 && format->height > limit)
-                    line += "  (may stutter)";
-            }
-            options.push_back(line);
-            if (menu_heights_[i] == quality_override_)
-                selected = static_cast<int>(i) + 1;
+            if (std::find(menu_itags_.begin(), menu_itags_.end(), format->itag) !=
+                menu_itags_.end())
+                continue;
+            char line[96];
+            std::snprintf(line, sizeof(line), "%dp, %dfps, %.2fMbps, %s%s", format->height,
+                          static_cast<int>(format->fps + 0.5),
+                          static_cast<double>(format->bitrate) / 1e6,
+                          yt::codec_label(format->codec), format->hdr ? ", HDR" : "");
+            options.emplace_back(line);
+            menu_heights_.push_back(format->height);
+            menu_itags_.push_back(format->itag);
+            if (format->itag == itag_override_)
+                selected = static_cast<int>(menu_itags_.size());
         }
-        chrome_.open_panel(PlayerChrome::Panel::quality, "Quality", std::move(options), selected);
+        if (selected < 0)
+            for (std::size_t i = 0; i < menu_heights_.size(); ++i)
+                if (menu_heights_[i] == quality_override_)
+                {
+                    selected = static_cast<int>(i) + 1;
+                    break;
+                }
+        chrome_.open_panel(PlayerChrome::Panel::quality, "Video formats", std::move(options),
+                           std::max(0, selected));
         break;
     }
     case PlayerChrome::Command::open_chapters:
@@ -1445,12 +1445,13 @@ void PlayerScreen::apply_pick()
     }
     case PlayerChrome::Panel::quality:
     {
-        const int height = pick <= 0 || pick > static_cast<int>(menu_heights_.size())
-                               ? 0
-                               : menu_heights_[static_cast<std::size_t>(pick - 1)];
-        if (height != quality_override_)
+        const bool exact = pick > 0 && pick <= static_cast<int>(menu_heights_.size());
+        const int height = exact ? menu_heights_[static_cast<std::size_t>(pick - 1)] : 0;
+        const int itag = exact ? menu_itags_[static_cast<std::size_t>(pick - 1)] : 0;
+        if (height != quality_override_ || itag != itag_override_)
         {
             quality_override_ = height;
+            itag_override_ = itag;
             reopen();
         }
         break;
@@ -1560,6 +1561,7 @@ void PlayerScreen::update_extras(float dt)
                 yt::log::line("player: %dp drops frames (%llu in 4 s); 1080p",
                               player_->source_height(), static_cast<unsigned long long>(fresh));
                 quality_override_ = 1080;
+                itag_override_ = 0;
                 context_.toasts.push(
                     ui::StatusKind::info, "Switched to 1080p",
                     "This video was too heavy to play smoothly at a higher quality", 4.0f);

@@ -1689,6 +1689,14 @@ bool read_format(yyjson_val *obj, Format *format)
     }
     yyjson_val *drc = yyjson_obj_get(obj, "isDrc");
     format->drc = yyjson_is_bool(drc) && yyjson_get_bool(drc);
+    {
+        const std::string label = string_field(obj, "qualityLabel");
+        const std::string transfer =
+            string_field(yyjson_obj_get(obj, "colorInfo"), "transferCharacteristics");
+        format->hdr = label.find("HDR") != std::string::npos ||
+                      transfer.find("SMPTEST2084") != std::string::npos ||
+                      transfer.find("ARIB_STD_B67") != std::string::npos;
+    }
     return true;
 }
 

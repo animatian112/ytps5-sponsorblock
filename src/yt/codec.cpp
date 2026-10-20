@@ -111,6 +111,18 @@ const Format *select_video_format(const std::vector<Format> &formats, const Code
     // only when none does the best ciphered format under the caps take over -
     // a refused ciphered URL still beats no stream, and the caller retries
     // past it. The lowest over-ceiling plain format stays the last resort.
+    if (choice.exact_itag > 0)
+    {
+        // One format picked from the full list: exactly that one.
+        for (const Format &format : formats)
+            if (format.itag == choice.exact_itag && is_video_codec(format.codec) &&
+                !format.url.empty())
+            {
+                log::line("video: selection %s (picked format)",
+                          describe_selection(&format, choice).c_str());
+                return &format;
+            }
+    }
     if (choice.exact_height > 0)
     {
         // The quality menu's pick: the best format at exactly that height,
