@@ -1539,6 +1539,42 @@ std::vector<std::string> PlayerScreen::comment_lines() const
 
 void PlayerScreen::update_extras(float dt)
 {
+    // Smooth over sharp: a picture above 1080p the CPU cannot decode in time
+    // (frames dropped every check, two checks running) goes to 1080p.
+    if (player_ != nullptr && !player_->paused() && !ended_ && player_->source_height() > 1080)
+    {
+        smooth_check_s_ += dt;
+        if (smooth_check_s_ >= 4.0f)
+        {
+            const std::uint64_t dropped = player_->dropped_frames();
+            const std::uint64_t fresh = dropped - std::min(dropped, smooth_dropped_);
+            smooth_dropped_ = dropped;
+            // The first check only sets the base (opening and seeking drop
+            // a few by nature).
+            const bool behind = smooth_check_s_ < 100.0f && fresh >= 12;
+            smooth_strikes_ = behind ? smooth_strikes_ + 1 : 0;
+            smooth_check_s_ = 0.0f;
+            if (smooth_strikes_ >= 2)
+            {
+                smooth_strikes_ = 0;
+                yt::log::line("player: %dp drops frames (%llu in 4 s); 1080p",
+                              player_->source_height(), static_cast<unsigned long long>(fresh));
+                quality_override_ = 1080;
+                context_.toasts.push(
+                    ui::StatusKind::info, "Switched to 1080p",
+                    "This video was too heavy to play smoothly at a higher quality", 4.0f);
+                reopen();
+                return;
+            }
+        }
+    }
+    else
+    {
+        smooth_check_s_ = 0.0f;
+        smooth_strikes_ = 0;
+        smooth_dropped_ = player_ != nullptr ? player_->dropped_frames() : 0;
+    }
+
     // The comments panel grows as pages arrive, and asks for the next page
     // when it is read near its end.
     if (chrome_.panel() == PlayerChrome::Panel::comments)

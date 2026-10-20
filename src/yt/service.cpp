@@ -395,6 +395,29 @@ struct Service::Impl
         }
         return items;
     }
+    // The account's own searches, newest first (search suggestions): next to
+    // the feed cache, or <token file>.searches without an account.
+    std::vector<std::string> searches;
+    std::string searches_path;
+    void load_searches(const std::string &path) // callers hold the mutex
+    {
+        searches.clear();
+        searches_path = path;
+        std::string data;
+        if (path.empty() || !hui::save::read_file(path, &data, 64u << 10))
+            return;
+        std::size_t at = 0;
+        while (at < data.size() && searches.size() < 200)
+        {
+            std::size_t end = data.find('\n', at);
+            if (end == std::string::npos)
+                end = data.size();
+            if (end > at)
+                searches.push_back(data.substr(at, end - at));
+            at = end + 1;
+        }
+    }
+
     // Shows the signed-in account's cached feeds where its feeds are empty.
     void load_feed_cache()
     {
@@ -402,9 +425,16 @@ struct Service::Impl
         {
             std::lock_guard<std::mutex> lock(mutex);
             token = auth.refresh_token();
-            if (token.empty() || token == cache_loaded_for)
+            if (token.empty())
+            {
+                if (searches_path.empty() && !auth.token_path().empty())
+                    load_searches(auth.token_path() + ".searches");
+                return;
+            }
+            if (token == cache_loaded_for)
                 return;
             cache_loaded_for = token;
+            load_searches(cache_path(token, "searches"));
         }
         const struct
         {
@@ -754,6 +784,8 @@ struct Service::Impl
         account_photo.clear();
         account_channel.clear();
         account_fetched = false;
+        searches.clear();
+        searches_path.clear();
     }
 
     // ---- jobs ----
@@ -2231,6 +2263,38 @@ std::string Service::account_channel() const
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->account_channel;
+}
+
+std::vector<std::string> Service::search_history() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->searches;
+}
+
+void Service::remember_search(const std::string &query)
+{
+    std::string trimmed = query;
+    while (!trimmed.empty() && trimmed.back() == ' ')
+        trimmed.pop_back();
+    while (!trimmed.empty() && trimmed.front() == ' ')
+        trimmed.erase(trimmed.begin());
+    if (trimmed.empty() || trimmed.find('\n') != std::string::npos)
+        return;
+    std::string path;
+    std::string data;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        auto &list = impl_->searches;
+        list.erase(std::remove(list.begin(), list.end(), trimmed), list.end());
+        list.insert(list.begin(), trimmed);
+        if (list.size() > 200)
+            list.resize(200);
+        path = impl_->searches_path;
+        for (const std::string &entry : list)
+            data += entry + '\n';
+    }
+    if (!path.empty())
+        (void)hui::save::write_atomic(path, data);
 }
 
 void Service::request_comments(std::string video_id, bool more)

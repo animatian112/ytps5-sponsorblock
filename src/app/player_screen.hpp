@@ -129,7 +129,12 @@ class PlayerScreen final : public Screen
     float waiting_s_ = 0.0f;     // how long the current video has been loading
     float back_armed_ = 0.0f;    // "double back": seconds the second Circle still exits
     float sleep_left_s_ = -1.0f; // the sleep timer (-1: off)
-    bool sleep_at_end_ = false;  // ... or stop at the end of this video
+    // Above 1080p, a decoder that keeps dropping frames steps the quality
+    // down to 1080p (what the console decodes smoothly).
+    float smooth_check_s_ = 0.0f;
+    std::uint64_t smooth_dropped_ = 0;
+    int smooth_strikes_ = 0;
+    bool sleep_at_end_ = false; // ... or stop at the end of this video
     std::uint64_t comments_seen_ = 0;
     bool comments_asked_more_ = false;
     std::vector<yt::Chapter> chapters_;

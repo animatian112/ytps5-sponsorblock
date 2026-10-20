@@ -95,6 +95,16 @@ class Player
     virtual double buffered_s() const = 0;
     virtual bool ended() const = 0;
     virtual const std::string &error() const = 0;
+    // How the decoder keeps up: frames dropped for arriving late so far, and
+    // the decoded picture's own height (before any scaling to the screen).
+    virtual std::uint64_t dropped_frames() const
+    {
+        return 0;
+    }
+    virtual int source_height() const
+    {
+        return 0;
+    }
 };
 
 // Defined per platform.

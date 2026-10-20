@@ -176,6 +176,9 @@ class Service
     // (0 open, 1 subscribe) and resolved_revision() moves.
     void resolve_channel(std::string video_id, std::string name, int purpose);
     std::uint64_t resolved_revision() const;
+    // The account's past searches, newest first, and adding one.
+    std::vector<std::string> search_history() const;
+    void remember_search(const std::string &query);
     // The video's comments: the first page, or (more) the next one.
     void request_comments(std::string video_id, bool more);
     CommentsView comments() const;

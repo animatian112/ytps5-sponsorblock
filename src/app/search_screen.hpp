@@ -12,6 +12,7 @@
 #include "app/screen.hpp"
 
 #include "ui/components.hpp"
+#include "yt/suggest.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -61,8 +62,9 @@ class SearchScreen final : public Screen
         field,
         keyboard,
         channels,
-        results, // the grid: the query answer or the open channel's videos
-        tabs,    // the tab bar of the open channel page
+        results,     // the grid: the query answer or the open channel's videos
+        tabs,        // the tab bar of the open channel page
+        suggestions, // the suggestion row above the keyboard
     };
 
     void run_search();
@@ -81,6 +83,12 @@ class SearchScreen final : public Screen
     // Triangle's filter panel (sort, upload date, length).
     void update_filters(const InputFrame &input, ui::Feedback &feedback);
     std::string filter_summary() const;
+    // The suggestion row: the account's past searches that fit what is typed,
+    // then YouTube's completions.
+    void update_suggestions(float dt);
+    void build_chips();
+    void update_chips(const InputFrame &input, ui::Feedback &feedback);
+    void draw_chips(ui::Canvas &canvas, const Context &context) const;
     // The channel page has not answered yet: no component owns the focus.
     bool channel_loading() const;
 
@@ -109,6 +117,14 @@ class SearchScreen final : public Screen
     std::uint64_t seen_channel_revision_ = 0;
     std::uint64_t seen_channel_feed_revision_ = 0;
     float clock_ = 0.0f;
+    yt::Suggest suggest_;
+    std::vector<std::string> chips_;
+    std::vector<bool> chip_recent_; // the chip is one of the account's searches
+    int chip_focus_ = 0;
+    std::string typed_;          // what was typed before the row filled the field
+    std::string asked_ = "\x01"; // the text the chips were built for (none yet)
+    float ask_wait_ = 0.0f;      // typing debounce before YouTube is asked
+    std::uint64_t suggest_seen_ = 0;
     ui::Form filters_;
     bool filters_open_ = false;
     int filters_before_ = 0;    // the filters when the panel opened, packed

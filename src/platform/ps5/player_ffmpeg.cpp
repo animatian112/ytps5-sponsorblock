@@ -70,6 +70,13 @@ namespace
 // Output format of the audio path: 48 kHz stereo float, the sink's contract.
 constexpr int kOutputRate = 48000;
 constexpr int kDecoderThreads = 4;
+// Above 1080p the decoder gets more of the CPU: 1440p and 4K VP9 are several
+// times the work of a 1080p picture.
+constexpr int kDecoderThreadsLarge = 6;
+// The largest picture handed to the screen (its own size); bigger ones are
+// scaled down while they are converted.
+constexpr int kMaxOutputWidth = 1920;
+constexpr int kMaxOutputHeight = 1080;
 constexpr int kVideoPacketsPerUpdate = 4;
 constexpr int kAudioPacketsPerUpdate = 8;
 // Stop feeding the sink once it holds half a second; keeps latency low.
@@ -297,6 +304,14 @@ class FfmpegPlayer final : public Player
         return speed_;
     }
     double buffered_s() const override;
+    std::uint64_t dropped_frames() const override
+    {
+        return video_frames_dropped_.load();
+    }
+    int source_height() const override
+    {
+        return source_height_.load();
+    }
     bool ended() const override
     {
         return ended_;
@@ -515,7 +530,8 @@ class FfmpegPlayer final : public Player
     std::chrono::steady_clock::time_point last_audio_log_{};
 
     double video_interval_s_ = 1.0 / 30.0;
-    std::uint64_t video_frames_dropped_ = 0;
+    std::atomic<std::uint64_t> video_frames_dropped_{0};
+    std::atomic<int> source_height_{0};
     int late_drop_run_ = 0;
     // The decode-slow and drop lines are throttled separately: they describe
     // different things and must be able to appear in the same second.
@@ -817,7 +833,8 @@ bool FfmpegPlayer::open_demuxer(Demuxer &demuxer, const std::string &url, bool v
         return false;
     }
     demuxer.codec->pkt_timebase = demuxer.stream->time_base;
-    demuxer.codec->thread_count = kDecoderThreads;
+    demuxer.codec->thread_count =
+        video && demuxer.stream->codecpar->height > 1080 ? kDecoderThreadsLarge : kDecoderThreads;
     result = avcodec_open2(demuxer.codec, codec, nullptr);
     if (result < 0)
     {
@@ -1106,7 +1123,7 @@ void FfmpegPlayer::note_video_drop()
     }
     last_drop_log_ = now;
     log::line("ffmpeg: video dropped %llu late frames (picture behind the audio clock)",
-              static_cast<unsigned long long>(video_frames_dropped_));
+              static_cast<unsigned long long>(video_frames_dropped_.load()));
 }
 
 void FfmpegPlayer::note_audio_silence(const char *reason)
@@ -1498,13 +1515,27 @@ double FfmpegPlayer::frame_pts(const AVFrame *frame) const
 
 void FfmpegPlayer::emit_video(AVFrame *frame)
 {
-    const int width = frame->width;
-    const int height = frame->height;
-    if (width <= 0 || height <= 0)
+    const int source_width = frame->width;
+    const int source_height = frame->height;
+    if (source_width <= 0 || source_height <= 0)
     {
         return;
     }
+    // The screen is 1920x1080: a bigger picture (1440p, 4K, 8K) is scaled
+    // down to it in the same pass that turns it into RGBA. The conversion,
+    // the queue's memory and the texture upload then cost what a 1080p
+    // stream costs, and the picture keeps the sharper source's detail.
+    int width = source_width;
+    int height = source_height;
+    if (width > kMaxOutputWidth || height > kMaxOutputHeight)
+    {
+        const double scale = std::min(static_cast<double>(kMaxOutputWidth) / width,
+                                      static_cast<double>(kMaxOutputHeight) / height);
+        width = std::max(2, static_cast<int>(width * scale) & ~1);
+        height = std::max(2, static_cast<int>(height * scale) & ~1);
+    }
 
+    source_height_.store(source_height);
     const std::size_t size =
         static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
 
@@ -1558,9 +1589,9 @@ void FfmpegPlayer::emit_video(AVFrame *frame)
         return;
     }
 
-    sws_ =
-        sws_getCachedContext(sws_, width, height, static_cast<AVPixelFormat>(frame->format), width,
-                             height, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+    sws_ = sws_getCachedContext(sws_, source_width, source_height,
+                                static_cast<AVPixelFormat>(frame->format), width, height,
+                                AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
     if (sws_ == nullptr)
     {
         release_video_buffer(target);
@@ -1570,7 +1601,8 @@ void FfmpegPlayer::emit_video(AVFrame *frame)
 
     std::uint8_t *destination[4] = {video_buffers_[target].bytes.get(), nullptr, nullptr, nullptr};
     const int destination_stride[4] = {width * 4, 0, 0, 0};
-    sws_scale(sws_, frame->data, frame->linesize, 0, height, destination, destination_stride);
+    sws_scale(sws_, frame->data, frame->linesize, 0, source_height, destination,
+              destination_stride);
 
     const double pts = frame_pts(frame);
     if (video_queue_.size() >= video_queue_depth_)
@@ -2312,6 +2344,7 @@ void FfmpegPlayer::release()
 
     video_interval_s_ = 1.0 / 30.0;
     video_frames_dropped_ = 0;
+    source_height_ = 0;
     late_drop_run_ = 0;
     last_decode_log_ = std::chrono::steady_clock::time_point{};
     last_drop_log_ = std::chrono::steady_clock::time_point{};

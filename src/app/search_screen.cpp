@@ -146,6 +146,8 @@ SearchScreen::SearchScreen(Context &context) : context_(context)
         keys_.set_layouts({letters, symbols});
     }
     keys_.set_bounds({300.0f, 640.0f, 1320.0f, 410.0f});
+    // Up from the top row leaves for the suggestion row above it.
+    keys_.style.exits.up = true;
     keys_.on_text = [this](std::string_view text) { field_.insert(text); };
     keys_.on_backspace = [this] { field_.backspace(); };
     keys_.on_done = [this] { run_search(); };
@@ -252,9 +254,185 @@ void SearchScreen::update_filters(const InputFrame &input, ui::Feedback &feedbac
     filters_.update(1.0f / 60.0f);
 }
 
+void SearchScreen::build_chips()
+{
+    chips_.clear();
+    chip_recent_.clear();
+    const std::string &text = asked_;
+    const auto lower = [](std::string value)
+    {
+        for (char &ch : value)
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        return value;
+    };
+    const std::string needle = lower(text);
+    const auto add = [&](const std::string &chip, bool recent)
+    {
+        if (chip.empty() || chips_.size() >= 8)
+            return;
+        const std::string key = lower(chip);
+        for (const std::string &have : chips_)
+            if (lower(have) == key)
+                return;
+        chips_.push_back(chip);
+        chip_recent_.push_back(recent);
+    };
+    // The account's own searches first: the ones that start with what is
+    // typed (all of the newest with nothing typed).
+    if (context_.settings.search_history)
+    {
+        int taken = 0;
+        for (const std::string &past : context_.service.search_history())
+        {
+            if (taken >= (needle.empty() ? 8 : 3))
+                break;
+            if (needle.empty() || lower(past).rfind(needle, 0) == 0)
+            {
+                add(past, true);
+                ++taken;
+            }
+        }
+    }
+    // Then YouTube's completions of it.
+    std::string answered;
+    const std::vector<std::string> found = suggest_.answer(&answered);
+    if (!text.empty() && lower(answered) == needle)
+        for (const std::string &completion : found)
+            add(completion, false);
+    chip_focus_ = std::clamp(chip_focus_, 0, std::max(0, static_cast<int>(chips_.size()) - 1));
+}
+
+void SearchScreen::update_suggestions(float dt)
+{
+    // The row follows the typing; while it has the focus it fills the field
+    // itself and stays as it is.
+    if (spot_ == Spot::suggestions)
+        return;
+    const std::string &text = field_.text();
+    if (text != asked_)
+    {
+        asked_ = text;
+        ask_wait_ = 0.18f;
+        build_chips(); // the account's searches show at once
+    }
+    if (ask_wait_ > 0.0f)
+    {
+        ask_wait_ -= dt;
+        if (ask_wait_ <= 0.0f)
+        {
+            const int region = std::clamp(context_.settings.region, 0, Settings::kRegionCount - 1);
+            suggest_.set_region(Settings::kRegions[region][1], Settings::kRegions[region][0]);
+            suggest_.ask(asked_);
+        }
+    }
+    if (suggest_.revision() != suggest_seen_)
+    {
+        suggest_seen_ = suggest_.revision();
+        build_chips();
+    }
+}
+
+void SearchScreen::update_chips(const InputFrame &input, ui::Feedback &feedback)
+{
+    const int count = static_cast<int>(chips_.size());
+    if (count == 0 || input.is_pressed(Action::back))
+    {
+        // Circle: back to typing, with what was typed.
+        field_.set_text(typed_);
+        asked_ = typed_;
+        spot_ = Spot::keyboard;
+        if (count > 0)
+            feedback.play(audio::Cue::back);
+        return;
+    }
+    if (input.nav == Direction::left || input.nav == Direction::right)
+    {
+        const int next = chip_focus_ + (input.nav == Direction::right ? 1 : -1);
+        if (next >= 0 && next < count)
+        {
+            chip_focus_ = next;
+            field_.set_text(chips_[static_cast<std::size_t>(next)]);
+            feedback.play(audio::Cue::focus);
+        }
+        else
+            feedback.play(audio::Cue::error);
+        return;
+    }
+    if (input.nav == Direction::down)
+    {
+        // Back to the keys with the suggestion in the field: typing goes on
+        // from it.
+        asked_ = field_.text();
+        spot_ = Spot::keyboard;
+        feedback.play(audio::Cue::focus);
+        return;
+    }
+    if (input.is_pressed(Action::confirm))
+    {
+        feedback.play(audio::Cue::select);
+        run_search();
+    }
+}
+
+void SearchScreen::draw_chips(ui::Canvas &canvas, const Context &context) const
+{
+    if (chips_.empty() || context.fonts.regular.font == nullptr)
+        return;
+    const bool active = spot_ == Spot::suggestions;
+    constexpr float kY = 548.0f;
+    constexpr float kHeight = 50.0f;
+    constexpr float kSize = 24.0f;
+    constexpr float kPad = 22.0f;
+    constexpr float kGap = 14.0f;
+    constexpr float kLeft = 300.0f;
+    constexpr float kRight = 1620.0f;
+    // The row scrolls so the focused chip is on screen.
+    std::vector<float> widths;
+    for (const std::string &chip : chips_)
+        widths.push_back(std::min(520.0f, context.fonts.regular.measure(chip, kSize)) +
+                         kPad * 2.0f);
+    float shift = 0.0f;
+    {
+        float x = kLeft;
+        for (int i = 0; i <= chip_focus_ && i < static_cast<int>(widths.size()); ++i)
+        {
+            const float end = x + widths[static_cast<std::size_t>(i)];
+            if (i == chip_focus_ && end - shift > kRight)
+                shift = end - kRight;
+            x = end + kGap;
+        }
+    }
+    float x = kLeft - shift;
+    for (std::size_t i = 0; i < chips_.size(); ++i)
+    {
+        const float w = widths[i];
+        if (x + w > kLeft - 1.0f && x < kRight + 1.0f)
+        {
+            const bool focused = active && static_cast<int>(i) == chip_focus_;
+            canvas.list.rounded_rect({x, kY, w, kHeight}, kHeight * 0.5f,
+                                     focused ? gfx::Color::rgb(0xffffff)
+                                             : gfx::Color::rgb(0x3d3d3d, 0.95f));
+            std::string label = chips_[i];
+            while (label.size() > 1 &&
+                   context.fonts.regular.measure(label, kSize) > w - kPad * 2.0f + 0.5f)
+                label.pop_back();
+            ui::text(canvas.list, context.fonts.regular, label, x + kPad, kY + 33.0f, kSize,
+                     focused           ? gfx::Color::rgb(0x111111)
+                     : chip_recent_[i] ? gfx::Color::rgb(0xb9c7ff)
+                                       : gfx::Color::rgb(0xf1f1f1));
+        }
+        x += w + kGap;
+    }
+    if (!active)
+        ui::text(canvas.list, context.fonts.regular, "Up: suggestions", kRight, kY - 12.0f, 18.0f,
+                 gfx::Color::rgb(0x9a9a9a), gfx::Align::right);
+}
+
 void SearchScreen::run_search()
 {
     has_searched_ = true;
+    if (context_.settings.search_history)
+        context_.service.remember_search(field_.text());
     in_channel_ = false;
     spot_ = Spot::field;
     searching_ = true;
@@ -419,6 +597,19 @@ void SearchScreen::update_search(const InputFrame &input, ui::Feedback &feedback
     case Spot::keyboard:
         if (keys_.handle(input, feedback) == ui::Event::cancelled)
             spot_ = Spot::field;
+        else if (keys_.exit() == Direction::up && !chips_.empty())
+        {
+            // Up out of the keys: the suggestion row, its first chip in the
+            // field.
+            typed_ = field_.text();
+            chip_focus_ = 0;
+            field_.set_text(chips_.front());
+            spot_ = Spot::suggestions;
+            feedback.play(audio::Cue::focus);
+        }
+        break;
+    case Spot::suggestions:
+        update_chips(input, feedback);
         break;
     case Spot::channels:
     {
@@ -601,6 +792,7 @@ void SearchScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             search_again_ = false;
             run_search();
         }
+        update_suggestions(dt);
         if (filters_open_)
         {
             update_filters(input, feedback);
@@ -730,14 +922,14 @@ void SearchScreen::draw(const Context &context, Frame &frame) const
         return;
     }
 
-    if (spot_ != Spot::keyboard)
+    if (spot_ != Spot::keyboard && spot_ != Spot::suggestions)
         return;
 
     frame.glass = true;
     ui::Canvas overlay{frame.overlay, context.fonts, frame.glass_texture, clock_};
     overlay.list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
                               gfx::Color::rgb(0x000000, 0.5f));
-    if (spot_ == Spot::keyboard)
+    if (spot_ == Spot::keyboard || spot_ == Spot::suggestions)
     {
         // The PlayStation keyboard's band behind the keys.
         overlay.list.rounded_rect({0.0f, 612.0f, gfx::kVirtualWidth, gfx::kVirtualHeight - 612.0f},
@@ -746,6 +938,10 @@ void SearchScreen::draw(const Context &context, Frame &frame) const
                                   gfx::Color::rgb(0x3d3d3d));
     }
     keys_.draw(overlay);
+    // The field above the dimmed page, so a filled-in suggestion reads, and
+    // the suggestion row just over the keys.
+    field_.draw(overlay);
+    draw_chips(overlay, context);
 }
 
 std::span<const TourStep> SearchScreen::tour() const
