@@ -698,3 +698,52 @@ TEST(Service, TheRestoreFlagIsVisibleBeforeTheSignInFlipAndSurvivesIt)
 }
 
 } // namespace
+
+// The account's feeds as last seen come back at once on the next start,
+// before (and without) the network answering.
+TEST(Service, CachedFeedsShowAtOnceOnTheNextStart)
+{
+    const std::string root = ::testing::TempDir() + "yt_service_cache";
+    ASSERT_TRUE(hui::save::ensure_directory(root));
+    const std::string sandbox = root + "/auth.json";
+    ASSERT_EQ(hui::save::write_atomic(sandbox, R"({"v":1,"refresh_token":"cache-refresh"})"), "");
+
+    std::size_t first_count = 0;
+    {
+        answer_working_account(fixture("feed_home.json"));
+        Service service(sandbox, root, nullptr);
+        service.start();
+        service.refresh_token();
+        service.request_home();
+        ASSERT_TRUE(settle(
+            [&]
+            {
+                return service.feed(FeedKind::home).state == Load::ready &&
+                       !service.feed(FeedKind::home).items.empty();
+            }));
+        // The cache is written after the extra pages: give the worker its turn.
+        service.request_subscriptions();
+        ASSERT_TRUE(
+            settle([&] { return service.feed(FeedKind::subscriptions).state == Load::ready; }));
+        first_count = service.feed(FeedKind::home).items.size();
+        service.stop();
+    }
+
+    // Offline now: every request fails, yet Home is there.
+    hui::testing::HttpStub::instance().set_handler(
+        [](const yt::http::Request &) -> yt::http::Response
+        {
+            yt::http::Response response;
+            response.error = "connect";
+            return response;
+        });
+    Service service(sandbox, root, nullptr);
+    service.start();
+    service.request_home();
+    ASSERT_TRUE(settle([&] { return !service.feed(FeedKind::home).items.empty(); }))
+        << "the cached Home never showed";
+    EXPECT_EQ(service.feed(FeedKind::home).items.size(), first_count);
+    service.stop();
+    hui::testing::HttpStub::instance().clear();
+    std::remove(sandbox.c_str());
+}

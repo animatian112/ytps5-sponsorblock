@@ -111,6 +111,13 @@ void HomeScreen::refresh_from_service()
         feed_.set_empty_text(kSignedInEmpty);
         feed_.set_state(view.state, view.error);
     }
+    else if (context_.service.has_token())
+    {
+        // The saved account is still signing in: Home is on its way, not
+        // missing.
+        feed_.set_empty_text(kSignedInEmpty);
+        feed_.set_state(view.items.empty() ? yt::Load::loading : yt::Load::ready, {});
+    }
     else
     {
         // Not signed in: there is no feed to load or to fail - the empty
@@ -204,7 +211,12 @@ void HomeScreen::draw(const Context &context, Frame &frame) const
 {
     ui::Canvas canvas{frame.scene, context.fonts, frame.glass_texture, clock_};
     const yt::FeedBrief view = context.service.feed_brief(yt::FeedKind::home);
-    if (view.state == yt::Load::loading && view.empty)
+    // Placeholder cards while Home is on its way: loading, or not asked yet
+    // for an account that is still signing in.
+    const bool waiting =
+        view.empty && (view.state == yt::Load::loading ||
+                       (view.state == yt::Load::idle && context.service.has_token()));
+    if (waiting)
     {
         ui::Skeleton bones;
         bones.style.theme = youtube_theme();
@@ -212,29 +224,12 @@ void HomeScreen::draw(const Context &context, Frame &frame) const
         bones.set_bounds({kContentX, 170.0f, kContentW, 700.0f});
         ui::Canvas skeleton{frame.scene, context.fonts, frame.glass_texture, clock_};
         bones.draw(skeleton);
+        return;
     }
     if (use_rows_)
         rows_.draw(canvas);
     else
         feed_.draw(canvas, context);
-
-    // Nothing to show: the last log lines name what the network did, so a
-    // failure is readable on the television without FTP.
-    if (view.empty && view.state != yt::Load::loading)
-    {
-        std::string lines[8];
-        const std::size_t count = yt::log::recent(lines, 8);
-        float y = 1000.0f - static_cast<float>(count) * 24.0f;
-        for (std::size_t i = 0; i < count; ++i)
-        {
-            std::string shown = lines[i];
-            if (shown.size() > 110)
-                shown.resize(110);
-            ui::text(canvas.list, context.fonts.mono, shown, kContentX, y, 18.0f,
-                     gfx::Color::rgb(0x8a8a8a));
-            y += 24.0f;
-        }
-    }
 }
 
 std::span<const TourStep> HomeScreen::tour() const

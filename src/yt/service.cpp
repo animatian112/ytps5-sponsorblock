@@ -294,6 +294,142 @@ struct Service::Impl
         (void)hui::save::write_atomic(hidden_path(), data);
     }
 
+    // ---- the feed cache: each account's Home, subscriptions and history as
+    // last seen, shown at once on start and on a switch while the fresh ones
+    // load. <token file>.feed-<account>-<kind>, one card a line.
+    std::string cache_loaded_for; // the refresh token whose cache is on screen
+    std::string cache_path(const std::string &token, const char *kind) const
+    {
+        if (auth.token_path().empty() || token.empty())
+            return {};
+        std::uint64_t hash = 1469598103934665603ull; // FNV-1a: no token in a file name
+        for (const char ch : token)
+        {
+            hash ^= static_cast<unsigned char>(ch);
+            hash *= 1099511628211ull;
+        }
+        char key[24];
+        std::snprintf(key, sizeof(key), "%016llx", static_cast<unsigned long long>(hash));
+        return auth.token_path() + ".feed-" + key + "-" + kind;
+    }
+    static std::string cache_field(const std::string &text)
+    {
+        std::string out;
+        for (const char ch : text)
+            out += ch == '\t' || ch == '\n' || ch == '\r' ? ' ' : ch;
+        return out;
+    }
+    void save_feed_cache(FeedKind kind, const char *name)
+    {
+        std::vector<FeedItem> items;
+        std::string token;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            const FeedView &view = *slot(kind);
+            if (view.state != Load::ready || view.items.empty())
+                return;
+            items = view.items;
+            token = auth.refresh_token();
+        }
+        const std::string path = cache_path(token, name);
+        if (path.empty())
+            return;
+        std::string data;
+        std::size_t count = 0;
+        for (const FeedItem &item : items)
+        {
+            if (++count > 150)
+                break;
+            char numbers[64];
+            std::snprintf(numbers, sizeof(numbers), "%.0f\t%d\t%.3f\t%d", item.length_s,
+                          item.live ? 1 : 0, static_cast<double>(item.watched),
+                          item.short_form ? 1 : 0);
+            data += cache_field(item.video_id) + '\t' + cache_field(item.title) + '\t' +
+                    cache_field(item.author) + '\t' + cache_field(item.thumbnail_url) + '\t' +
+                    cache_field(item.detail) + '\t' + cache_field(item.shelf) + '\t' +
+                    cache_field(item.channel_id) + '\t' + cache_field(item.badge) + '\t' + numbers +
+                    '\n';
+        }
+        (void)hui::save::write_atomic(path, data);
+    }
+    std::vector<FeedItem> read_feed_cache(const std::string &token, const char *name) const
+    {
+        std::vector<FeedItem> items;
+        std::string data;
+        const std::string path = cache_path(token, name);
+        if (path.empty() || !hui::save::read_file(path, &data, 1u << 20))
+            return items;
+        std::size_t at = 0;
+        while (at < data.size())
+        {
+            std::size_t end = data.find('\n', at);
+            if (end == std::string::npos)
+                end = data.size();
+            std::vector<std::string> f;
+            std::size_t from = at;
+            while (from <= end)
+            {
+                std::size_t tab = data.find('\t', from);
+                if (tab == std::string::npos || tab > end)
+                    tab = end;
+                f.push_back(data.substr(from, tab - from));
+                from = tab + 1;
+            }
+            at = end + 1;
+            if (f.size() < 12 || f[0].empty())
+                continue;
+            FeedItem item;
+            item.video_id = f[0];
+            item.title = f[1];
+            item.author = f[2];
+            item.thumbnail_url = f[3];
+            item.detail = f[4];
+            item.shelf = f[5];
+            item.channel_id = f[6];
+            item.badge = f[7];
+            item.length_s = std::atof(f[8].c_str());
+            item.live = f[9] == "1";
+            item.watched = static_cast<float>(std::atof(f[10].c_str()));
+            item.short_form = f[11] == "1";
+            items.push_back(std::move(item));
+        }
+        return items;
+    }
+    // Shows the signed-in account's cached feeds where its feeds are empty.
+    void load_feed_cache()
+    {
+        std::string token;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            token = auth.refresh_token();
+            if (token.empty() || token == cache_loaded_for)
+                return;
+            cache_loaded_for = token;
+        }
+        const struct
+        {
+            FeedKind kind;
+            const char *name;
+        } kinds[] = {{FeedKind::home, "home"},
+                     {FeedKind::subscriptions, "subscriptions"},
+                     {FeedKind::history, "history"}};
+        for (const auto &entry : kinds)
+        {
+            std::vector<FeedItem> items = read_feed_cache(token, entry.name);
+            if (items.empty())
+                continue;
+            std::lock_guard<std::mutex> lock(mutex);
+            FeedView &view = *slot(entry.kind);
+            if (!view.items.empty())
+                continue;
+            view.items = std::move(items);
+            if (view.state == Load::idle || view.state == Load::failed)
+                view.state = Load::ready;
+            view.revision++;
+        }
+        log::line("feeds: cached feeds shown for this account");
+    }
+
     std::string blocked_path() const
     {
         return auth.token_path().empty() ? std::string() : auth.token_path() + ".blocked";
@@ -482,7 +618,10 @@ struct Service::Impl
         {
             std::lock_guard<std::mutex> lock(mutex);
             reset_account_feeds();
+            cache_loaded_for.clear();
         }
+        // The account's feeds as last seen, before the network answers.
+        load_feed_cache();
         if (!refresh_token_locked())
             return false;
         std::lock_guard<std::mutex> lock(mutex);
@@ -937,6 +1076,22 @@ struct Service::Impl
             for (FeedItem &item : page.items)
                 if (item.shelf.empty())
                     item.shelf = "More recommendations";
+        }
+        if (!more && page.items.empty() &&
+            (kind == FeedKind::home || kind == FeedKind::subscriptions))
+        {
+            // An empty first answer for Home (a hiccup on YouTube's side, a
+            // second account's first request) keeps the cards already on
+            // screen instead of blanking them.
+            std::lock_guard<std::mutex> lock(mutex);
+            FeedView &view = *slot(kind);
+            if (!view.items.empty())
+            {
+                view.state = Load::ready;
+                view.continuation = page.continuation;
+                view.revision++;
+                return;
+            }
         }
         items.insert(items.end(), page.items.begin(), page.items.end());
         publish(kind, Load::ready, std::move(items), page.continuation, {});
@@ -1677,6 +1832,8 @@ struct Service::Impl
             // Settings > General > Language/Country, for every request below.
             tube.set_region(region_gl, region_hl);
             tube.set_search_params(search_params);
+            // On start: the account's feeds as last seen, at once.
+            load_feed_cache();
 
             if (taken.sign_out)
             {
@@ -1766,11 +1923,18 @@ struct Service::Impl
                     }
                     do_feed(FeedKind::home, {}, true);
                 }
+                save_feed_cache(FeedKind::home, "home");
             }
             if (taken.subscriptions)
+            {
                 do_feed(FeedKind::subscriptions, {}, false);
+                save_feed_cache(FeedKind::subscriptions, "subscriptions");
+            }
             if (taken.history)
+            {
                 do_feed(FeedKind::history, {}, false);
+                save_feed_cache(FeedKind::history, "history");
+            }
             if (taken.topic)
                 do_feed(FeedKind::topic, taken.topic_id, false);
             if (taken.library)
