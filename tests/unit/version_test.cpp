@@ -32,3 +32,10 @@ TEST(Version, TheRepositoryParamJsonHasOne)
     EXPECT_EQ(version.size(), 10u) << version;
     EXPECT_EQ(hui::read_content_version("/nonexistent/param.json"), "");
 }
+
+TEST(Version, TellsAGameInstallFromAMediaOne)
+{
+    EXPECT_TRUE(hui::is_game_category(R"({"applicationCategoryType": 0, "x": 1})"));
+    EXPECT_FALSE(hui::is_game_category(R"({"applicationCategoryType": 65536})"));
+    EXPECT_FALSE(hui::is_game_category(R"({"titleId": "PPSA98260"})"));
+}

@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // usage: bake_font <font.ttf> <out.huifont> [pixel_size=56] [sdf_range=8] [atlas=1024]
-//                  [glyphs=basic|european]
+//                  [glyphs=basic|european] [fallback.ttf|otf] [fallback_scale=1]
+// A letter the font lacks is taken from the fallback face when one is given
+// (scaled by fallback_scale so its letters stand as tall as the main face's):
+// how Google Sans, which has no Cyrillic or Greek, gets them from Inter.
 // Bakes printable ASCII plus a few UI symbols into a single-channel signed
 // distance field atlas with metrics and kerning (see src/gfx/font_format.hpp).
 
@@ -36,6 +39,7 @@ struct Baked
     unsigned char *bitmap = nullptr;
     int x = 0;
     int y = 0;
+    bool fallback = false; // drawn from the fallback face
 };
 
 // european adds the letters of western and central European languages,
@@ -59,9 +63,15 @@ std::vector<int> codepoints(bool european)
             if (c != 0x0387 && c != 0x038B && c != 0x038D && c != 0x03A2)
                 result.push_back(c);
         }
-        for (int c = 0x0410; c <= 0x044F; ++c)
+        // Cyrillic: Russian, Ukrainian, Belarusian, Serbian, Macedonian and
+        // Bulgarian (U+0400 to U+045F), Ukrainian Ghe with upturn and the
+        // letters of Kazakh, Tatar, Bashkir and the other Cyrillic alphabets
+        // of Central Asia (U+0490 to U+04FF).
+        for (int c = 0x0400; c <= 0x045F; ++c)
             result.push_back(c);
-        const int more[] = {0x0401, 0x0451, 0x2018, 0x2019, 0x201C, 0x201D, 0x201E, 0x20AC, 0x2122};
+        for (int c = 0x0490; c <= 0x04FF; ++c)
+            result.push_back(c);
+        const int more[] = {0x2018, 0x2019, 0x201C, 0x201D, 0x201E, 0x20AC, 0x2122};
         result.insert(result.end(), std::begin(more), std::end(more));
     }
     // Middle dot, multiplication sign, copyright, degree, en/em dash, bullet,
@@ -99,6 +109,8 @@ int main(int argc, char **argv)
     const int range = argc > 4 ? std::atoi(argv[4]) : 8;
     const int atlas_size = argc > 5 ? std::atoi(argv[5]) : 1024;
     const bool european = argc > 6 && std::strcmp(argv[6], "european") == 0;
+    const char *fallback_path = argc > 7 ? argv[7] : nullptr;
+    const float fallback_scale = argc > 8 ? std::strtof(argv[8], nullptr) : 1.0f;
 
     std::ifstream input(argv[1], std::ios::binary);
     std::vector<unsigned char> ttf((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
@@ -110,25 +122,58 @@ int main(int argc, char **argv)
     }
     const float scale = stbtt_ScaleForMappingEmToPixels(&font, pixel_size);
 
+    std::vector<unsigned char> fallback_ttf;
+    stbtt_fontinfo fallback;
+    bool has_fallback = false;
+    float fallback_px = 0.0f;
+    if (fallback_path != nullptr)
+    {
+        std::ifstream more(fallback_path, std::ios::binary);
+        fallback_ttf.assign(std::istreambuf_iterator<char>(more), std::istreambuf_iterator<char>());
+        has_fallback =
+            !fallback_ttf.empty() &&
+            stbtt_InitFont(&fallback, fallback_ttf.data(),
+                           stbtt_GetFontOffsetForIndex(fallback_ttf.data(), 0)) != 0;
+        if (!has_fallback)
+        {
+            std::fprintf(stderr, "cannot read fallback font %s\n", fallback_path);
+            return 1;
+        }
+        fallback_px = stbtt_ScaleForMappingEmToPixels(&fallback, pixel_size) * fallback_scale;
+    }
+    int from_fallback = 0;
+
     std::vector<Baked> glyphs;
     for (int codepoint : codepoints(european))
     {
+        const stbtt_fontinfo *face = &font;
+        float face_scale = scale;
         if (codepoint != ' ' && stbtt_FindGlyphIndex(&font, codepoint) == 0)
         {
-            std::fprintf(stderr, "skipping U+%04X (not in font)\n", codepoint);
-            continue;
+            if (!has_fallback || stbtt_FindGlyphIndex(&fallback, codepoint) == 0)
+            {
+                std::fprintf(stderr, "skipping U+%04X (not in font)\n", codepoint);
+                continue;
+            }
+            face = &fallback;
+            face_scale = fallback_px;
+            ++from_fallback;
         }
         Baked glyph;
         glyph.codepoint = codepoint;
+        glyph.fallback = face != &font;
         int advance = 0;
         int bearing = 0;
-        stbtt_GetCodepointHMetrics(&font, codepoint, &advance, &bearing);
-        glyph.advance = static_cast<float>(advance) * scale;
-        glyph.bitmap = stbtt_GetCodepointSDF(&font, scale, codepoint, range, 128,
+        stbtt_GetCodepointHMetrics(face, codepoint, &advance, &bearing);
+        glyph.advance = static_cast<float>(advance) * face_scale;
+        glyph.bitmap = stbtt_GetCodepointSDF(face, face_scale, codepoint, range, 128,
                                              128.0f / static_cast<float>(range), &glyph.w, &glyph.h,
                                              &glyph.xoff, &glyph.yoff);
         glyphs.push_back(glyph);
     }
+
+    if (has_fallback)
+        std::fprintf(stderr, "%d glyphs from the fallback face\n", from_fallback);
 
     // Shelf packing, tallest first, one pixel of spacing.
     std::vector<Baked *> order;
@@ -172,11 +217,17 @@ int main(int argc, char **argv)
     {
         for (const Baked &b : glyphs)
         {
-            const int kern = stbtt_GetCodepointKernAdvance(&font, a.codepoint, b.codepoint);
+            // Pairs within one face keep that face's kerning; a pair across
+            // the two faces has none.
+            if (a.fallback != b.fallback)
+                continue;
+            const int kern = stbtt_GetCodepointKernAdvance(a.fallback ? &fallback : &font,
+                                                           a.codepoint, b.codepoint);
             if (kern != 0)
                 kerns.push_back(ff::Kern{static_cast<std::uint32_t>(a.codepoint),
                                          static_cast<std::uint32_t>(b.codepoint),
-                                         static_cast<float>(kern) * scale});
+                                         static_cast<float>(kern) *
+                                             (a.fallback ? fallback_px : scale)});
         }
     }
 

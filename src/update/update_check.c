@@ -14,6 +14,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* The release asset this install updates from (see update_check_set_asset_name). */
+static char update_check_asset_name[64] = UPDATE_CHECK_ASSET_NAME;
+
+void update_check_set_asset_name(const char *name)
+{
+    if (name == NULL || name[0] == '\0' || strlen(name) >= sizeof(update_check_asset_name))
+        return;
+    memcpy(update_check_asset_name, name, strlen(name) + 1);
+}
+
 /* Content versions: NN.NNN.NNN, compared as three numbers. */
 
 int update_check_version_parse(const char *text, unsigned parts[3])
@@ -401,7 +411,7 @@ static int json_read_asset(json_cursor *c, update_check_release *out)
         }
         return 0;
     }
-    if (strcmp(name, UPDATE_CHECK_ASSET_NAME) == 0)
+    if (strcmp(name, update_check_asset_name) == 0)
     {
         size_t i;
         int hex = 1;

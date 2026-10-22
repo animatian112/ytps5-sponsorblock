@@ -1266,7 +1266,11 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
                           static_cast<int>(format->fps + 0.5),
                           static_cast<double>(format->bitrate) / 1e6,
                           yt::codec_label(format->codec), format->hdr ? ", HDR" : "");
-            options.emplace_back(line);
+            // What the console's processor can hardly decode in time.
+            const bool heavy = (format->codec == yt::Codec::av1 && format->height > 720) ||
+                               (format->height > 1080 && format->fps > 31.0) ||
+                               format->height > 1440;
+            options.emplace_back(std::string(line) + (heavy ? "  (may lag)" : ""));
             menu_heights_.push_back(format->height);
             menu_itags_.push_back(format->itag);
             if (format->itag == itag_override_)
@@ -1540,6 +1544,27 @@ std::vector<std::string> PlayerScreen::comment_lines() const
 
 void PlayerScreen::update_extras(float dt)
 {
+    // A quality above 1080p that never shows a picture (a black screen: the
+    // decoder cannot keep up at all) goes to 1080p instead of staying black.
+    const bool above = quality_override_ > 1080;
+    if (above && player_ != nullptr && texture_ == 0 && !player_->paused())
+    {
+        picture_wait_s_ += dt;
+        if (picture_wait_s_ >= 8.0f)
+        {
+            picture_wait_s_ = 0.0f;
+            yt::log::line("player: no picture at %dp after 8 s; 1080p", quality_override_);
+            quality_override_ = 1080;
+            itag_override_ = 0;
+            context_.toasts.push(ui::StatusKind::info, "Switched to 1080p",
+                                 "This quality showed no picture on this console", 4.0f);
+            reopen();
+            return;
+        }
+    }
+    else
+        picture_wait_s_ = 0.0f;
+
     // Smooth over sharp: a picture above 1080p the CPU cannot decode in time
     // (frames dropped every check, two checks running) goes to 1080p.
     if (player_ != nullptr && !player_->paused() && !ended_ && player_->source_height() > 1080)

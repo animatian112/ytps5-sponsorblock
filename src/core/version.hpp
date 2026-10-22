@@ -18,4 +18,8 @@ std::string content_version(std::string_view param_json);
 // Reads param.json from path; "" when it cannot be read.
 std::string read_content_version(const std::string &path);
 
+// True when param.json text installs the app as a game (applicationCategoryType
+// 0, the Games tab) rather than a media app (65536).
+bool is_game_category(std::string_view param_json);
+
 } // namespace hui

@@ -133,6 +133,7 @@ class PlayerScreen final : public Screen
     // Above 1080p, a decoder that keeps dropping frames steps the quality
     // down to 1080p (what the console decodes smoothly).
     float smooth_check_s_ = 0.0f;
+    float picture_wait_s_ = 0.0f; // an open player with no picture yet
     std::uint64_t smooth_dropped_ = 0;
     int smooth_strikes_ = 0;
     bool sleep_at_end_ = false; // ... or stop at the end of this video

@@ -35,6 +35,22 @@ static_assert(offsetof(RawPadSample, timestamp_us) == 0x50);
 static_assert(offsetof(RawPadSample, connected_count) == 0x68);
 
 constexpr int kAlreadyInitialized = static_cast<int>(0x80960003);
+// The pad port type of a media remote (the PS4 SDK's REMOTE_CONTROL).
+constexpr int kPortRemoteControl = 16;
+
+// The controller's last sample: what a frame with only a remote change
+// carries for the controller (one Pad per app).
+RawPadSample &last_sample()
+{
+    static RawPadSample sample = []
+    {
+        RawPadSample centred{};
+        centred.left_x = centred.left_y = centred.right_x = centred.right_y = 128;
+        centred.connected = 1;
+        return centred;
+    }();
+    return sample;
+}
 // The classic two-motor rumble (the other mode is the DualSense's haptics).
 constexpr int kVibrationModeCompatible = 2;
 
@@ -100,6 +116,7 @@ bool Pad::open()
             sys::log("[HUI] pad open user=0x%08x handle=%d attempts=%d vibration_mode=0x%x",
                      static_cast<unsigned>(user_), handle_, attempt + 1,
                      static_cast<unsigned>(mode));
+            open_remote();
             return true;
         }
         sys::sleep_us(50000);
@@ -107,6 +124,18 @@ bool Pad::open()
     sys::log("[HUI] pad scePadOpen failed=0x%08x", static_cast<unsigned>(handle_));
     handle_ = -1;
     return false;
+}
+
+void Pad::open_remote()
+{
+    if (remote_ >= 0 || user_ < 0)
+        return;
+    remote_ = scePadOpen(user_, kPortRemoteControl, 0, nullptr);
+    // Logged on the first try only: a console without a remote says so once.
+    if (remote_retry_ == 0)
+        sys::log("[HUI] pad media remote open=0x%08x", static_cast<unsigned>(remote_));
+    if (remote_ < 0)
+        remote_ = -1;
 }
 
 void Pad::set_light_bar(std::uint8_t r, std::uint8_t g, std::uint8_t b)
@@ -157,6 +186,9 @@ void Pad::close()
         scePadClose(handle_);
     }
     handle_ = -1;
+    if (remote_ >= 0)
+        scePadClose(remote_);
+    remote_ = -1;
     if (owns_user_service_)
         sceUserServiceTerminate();
     owns_user_service_ = false;
@@ -173,7 +205,47 @@ std::size_t Pad::read(std::span<PadSample> out)
     }
     RawPadSample raw[64];
     const int limit = static_cast<int>(out.size() < 64 ? out.size() : 64);
-    const int count = scePadRead(handle_, raw, limit);
+    int count = scePadRead(handle_, raw, limit);
+    if (count < 0)
+        count = 0;
+
+    // The media remote, when one opened: its buttons are held state merged
+    // into the controller's samples (one stream of samples, so a held button
+    // never reads as released by the other device's sample in between).
+    if (remote_ < 0 && ++remote_retry_ % 300 == 0)
+        open_remote(); // a remote paired after the app started
+    if (remote_ >= 0)
+    {
+        RawPadSample extra[16];
+        const int got = scePadRead(remote_, extra, 16);
+        for (int i = 0; i < got; ++i)
+        {
+            if (extra[i].connected == 0 && extra[i].buttons == 0)
+                continue;
+            remote_buttons_ = extra[i].buttons;
+            const std::uint32_t fresh = remote_buttons_ & ~remote_seen_;
+            if (fresh != 0)
+            {
+                remote_seen_ |= fresh;
+                sys::log("[HUI] pad media remote buttons 0x%08x (new 0x%08x)",
+                         static_cast<unsigned>(remote_buttons_), static_cast<unsigned>(fresh));
+            }
+        }
+        if (got > 0 && count == 0)
+        {
+            // The controller sent nothing this frame: the remote's change
+            // still arrives, on the controller's last state.
+            raw[0] = last_sample();
+            count = 1;
+        }
+        for (int i = 0; i < count; ++i)
+            raw[i].buttons |= remote_buttons_;
+    }
+    if (count > 0)
+    {
+        last_sample() = raw[count - 1];
+        last_sample().buttons &= ~remote_buttons_;
+    }
     if (count <= 0)
         return 0;
     for (int index = 0; index < count; ++index)

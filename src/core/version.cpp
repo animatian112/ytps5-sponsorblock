@@ -35,6 +35,22 @@ std::string content_version(std::string_view param_json)
     return std::string(value);
 }
 
+bool is_game_category(std::string_view param_json)
+{
+    const std::size_t key = param_json.find("\"applicationCategoryType\"");
+    if (key == std::string_view::npos)
+        return false;
+    std::size_t at = param_json.find(':', key);
+    if (at == std::string_view::npos)
+        return false;
+    ++at;
+    while (at < param_json.size() && (param_json[at] == ' ' || param_json[at] == '\t'))
+        ++at;
+    return at < param_json.size() && param_json[at] == '0' &&
+           (at + 1 >= param_json.size() ||
+            std::isdigit(static_cast<unsigned char>(param_json[at + 1])) == 0);
+}
+
 std::string read_content_version(const std::string &path)
 {
     std::string text;

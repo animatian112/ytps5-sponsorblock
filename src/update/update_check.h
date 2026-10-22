@@ -91,6 +91,9 @@ extern "C"
     /* Reads one release answer. 1: `out` is filled and `tag` is set. Never fails on an
      * oversized body: the notes are cut at UPDATE_CHECK_NOTES_MAX. */
     int update_check_read_release(const char *json, size_t length, update_check_release *out);
+    /* The asset the feed is read for (UPDATE_CHECK_ASSET_NAME unless set): the Games-tab
+       install updates from its own copy, PPSA98260-games.zip, so an update keeps it there. */
+    void update_check_set_asset_name(const char *name);
 
     /* A short English word for a reason, for the log. */
     const char *update_check_reason_text(update_check_reason reason);

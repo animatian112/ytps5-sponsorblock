@@ -9,7 +9,8 @@ ps5-homebrew-ui exists thanks to the maintainers and contributors of:
 - [PS5 Native App Boilerplate](https://github.com/blackbearreloaded/ps5-native-app-boilerplate)
   and the [PS5 Payload SDK](https://github.com/ps5-payload-dev/sdk) for the
   reproducible native foundation;
-- [Google Sans Flex](https://fonts.google.com/specimen/Google+Sans+Flex) and
+- [Google Sans Flex](https://fonts.google.com/specimen/Google+Sans+Flex),
+  [Inter](https://github.com/rsms/inter) (its Cyrillic and Greek letters) and
   [DejaVu](https://dejavu-fonts.github.io/) for the
   interface typefaces, and
   [stb](https://github.com/nothings/stb) for music decoding, font baking and
@@ -42,13 +43,15 @@ project adds.
 | Typeface | Files | Copyright | Licence |
 | --- | --- | --- | --- |
 | Google Sans Flex Regular, Medium, Bold | `third_party/fonts/GoogleSansFlex-*.ttf` | (c) 2015 Google LLC | SIL Open Font License 1.1 (`GoogleSansFlex-LICENSE.txt`) |
+| Inter Regular, Medium, SemiBold (Cyrillic and Greek letters baked into the Google Sans faces; outlines converted to TrueType quadratics with fontTools) | `third_party/fonts/Inter-*.ttf` | (c) 2016-2023 The Inter Project Authors | SIL Open Font License 1.1 (`Inter-LICENSE.txt`) |
 | DejaVu Sans Mono | `third_party/fonts/DejaVuSansMono.ttf` | (c) 2003 Bitstream, Inc.; DejaVu changes are public domain | Bitstream Vera licence (`DejaVu-LICENSE.txt`) |
 
 `assets/fonts/*.huifont` are distance-field renderings of these typefaces
 produced by `tools/bake-fonts.sh`; the licence texts ship beside them. The app
 ships exactly these four baked faces: Google Sans Flex Regular, Medium and Bold
-(`fonts.regular`, `fonts.semibold`, `fonts.display`) and DejaVu Sans Mono
-(`fonts.mono`).
+(`fonts.regular`, `fonts.semibold`, `fonts.display`), whose missing Cyrillic and
+Greek letters are taken from Inter Regular, Medium and SemiBold, and DejaVu
+Sans Mono (`fonts.mono`).
 
 The baker uses [stb_truetype](https://github.com/nothings/stb)
 (`third_party/stb/stb_truetype.h`, public domain or MIT) and the host snapshot

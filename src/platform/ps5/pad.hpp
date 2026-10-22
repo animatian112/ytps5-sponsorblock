@@ -42,6 +42,15 @@ class Pad
     void tick(float dt);
 
   private:
+    // The PS5 Media Remote: the PS4 SDK opens a media remote as its own pad
+    // port (SCE_PAD_PORT_TYPE_REMOTE_CONTROL, 16). Its samples are read next to
+    // the controller's; the button bits it sends are logged once each so the
+    // remote's own keys can be mapped.
+    void open_remote();
+    int remote_ = -1;
+    int remote_retry_ = 0;
+    std::uint32_t remote_seen_ = 0;
+    std::uint32_t remote_buttons_ = 0; // the remote's buttons held now
     int handle_ = -1;
     int user_ = -1;
     bool owns_user_service_ = false;

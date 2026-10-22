@@ -12,6 +12,7 @@
 #include "app/thumbs.hpp"
 #include "core/save_file.hpp"
 #include "core/version.hpp"
+#include "update/update_check.h"
 #include "gfx/gl_batch.hpp"
 #include "gfx/renderer.hpp"
 #include "ui/components.hpp"
@@ -289,6 +290,13 @@ void App::start()
     // The version this build carries is what a release tag is compared
     // against; the check runs on its own thread and never blocks the frame.
     yt::update::set_current_version(read_content_version(kParamJson));
+    {
+        // The Games-tab install updates from its own copy, so an update keeps
+        // it on the Games tab.
+        std::string param;
+        if (save::read_file(kParamJson, &param) && is_game_category(param))
+            update_check_set_asset_name("PPSA98260-games.zip");
+    }
     // The SponsorBlock build checks its own release feed
     // (animatian112/ytps5-sponsorblock), never upstream's.
     yt::update::check();
