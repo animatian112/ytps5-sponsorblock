@@ -113,6 +113,9 @@ enum : int
     kBackupSettings,
     kRestoreSettings,
     kRemoteNewCode,
+    kDevClearCache,
+    kDevClearSearches,
+    kDevReset,
     kRemoteCode,
     kRemoteStatus,
     kAccountBase = 100, // + the index of a remembered account
@@ -469,6 +472,41 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     remote.add_value(kRemoteStatus, "Status", "Off");
     remote.add_action(kRemoteNewCode, "New TV code").description =
         "Get another code (phones linked before stay linked)";
+    // ---- Developer options (SmartTube's "Developer options", for this console) ----
+    ui::Form &dev = add_tile("Developer", Icon::developer);
+    dev.add_header("Playback");
+    add_flag(dev, "Stats for nerds", &S::dev_stats,
+             "Formats, decoder, picture size, queue and dropped frames over the video");
+    add_flag(dev, "Codec selection: prefer AVC over VP9", &S::prefer_avc,
+             "AVC is the lightest to decode; it stops at 1080p");
+    add_flag(dev, "Step down when lagging", &S::dev_auto_quality,
+             "A quality above 1080p that drops frames or shows no picture goes to 1080p");
+    add_steps(dev, "Audio/video sync", &S::dev_av_offset_ms,
+              {-300, -200, -150, -100, -50, 0, 50, 100, 150, 200, 300},
+              {"-300 ms", "-200 ms", "-150 ms", "-100 ms", "-50 ms", "0 ms", "+50 ms", "+100 ms",
+               "+150 ms", "+200 ms", "+300 ms"},
+              "Plus: the picture later than the sound (a soundbar that lags); minus: earlier");
+    dev.add_header("Decoder (applies to the next video)");
+    add_steps(dev, "Decoder threads", &S::dev_threads, {0, 2, 3, 4, 5, 6, 7, 8},
+              {"Auto", "2", "3", "4", "5", "6", "7", "8"},
+              "Auto: 4, or 6 above 1080p. More decode faster but leave less for the screen");
+    add_steps(dev, "Conversion threads", &S::dev_convert_threads, {1, 2, 3, 4, 6, 8},
+              {"1", "2", "3", "4", "6", "8"},
+              "Threads that turn each picture into the screen's format");
+    add_steps(dev, "Skip the deblocking filter", &S::dev_deblock, {0, 1, 2},
+              {"Never", "Above 1080p", "Always"},
+              "Faster decoding for a little blockiness; above 1080p it is scaled away");
+    dev.add_header("Diagnostics");
+    add_flag(dev, "Show log on screen", &S::dev_log,
+             "The log's last lines on the player and on an empty Home");
+    dev.add_action(kDevClearCache, "Clear saved feeds").description =
+        "Home, Subscriptions and History load fresh at the next start";
+    dev.add_action(kDevClearSearches, "Clear search history").description =
+        "This account's past searches (the suggestions above the keyboard)";
+    ui::FormRow &reset = dev.add_action(kDevReset, "Reset all settings");
+    reset.description = "Every setting back to its default; accounts and history stay";
+    reset.danger = true;
+
     tiles_.push_back({"Network test", Icon::network, nullptr, kNetTest});
     tiles_.push_back({"Updates", Icon::updates, nullptr, kCheckUpdates});
     tiles_.push_back({"About", Icon::about, nullptr, kAbout});
@@ -785,6 +823,23 @@ void SettingsScreen::activate(int id)
         context_.nav.backup_settings = true;
         return;
     }
+    if (id == kDevClearCache)
+    {
+        context_.service.clear_feed_cache();
+        context_.toasts.push(ui::StatusKind::info, "Saved feeds cleared", {}, 2.0f);
+        return;
+    }
+    if (id == kDevClearSearches)
+    {
+        context_.service.clear_search_history();
+        context_.toasts.push(ui::StatusKind::info, "Search history cleared", {}, 2.0f);
+        return;
+    }
+    if (id == kDevReset)
+    {
+        context_.nav.reset_settings = true;
+        return;
+    }
     if (id == kRemoteNewCode)
     {
         context_.nav.new_tv_code = true;
@@ -991,6 +1046,8 @@ const char *icon_name(SettingsScreen::Icon icon)
         return "set_general";
     case SettingsScreen::Icon::remote:
         return "set_remote";
+    case SettingsScreen::Icon::developer:
+        return "stats";
     case SettingsScreen::Icon::network:
         return "set_network";
     case SettingsScreen::Icon::updates:
@@ -1044,6 +1101,17 @@ void SettingsScreen::draw_icon(gfx::DrawList &list, Icon icon, const gfx::Rect &
         }
         list.circle(cx, cy, s * 0.72f, ink);
         list.circle(cx, cy, s * 0.3f, hole);
+        break;
+    case Icon::developer: // a bug: an oval body with legs
+        list.circle(cx, cy + s * 0.15f, s * 0.6f, ink);
+        list.circle(cx, cy - s * 0.55f, s * 0.3f, ink);
+        for (int i = -1; i <= 1; ++i)
+        {
+            list.line(cx - s * 0.5f, cy + s * 0.15f + i * s * 0.35f, cx - s * 0.95f,
+                      cy + s * 0.05f + i * s * 0.45f, s * 0.1f, ink);
+            list.line(cx + s * 0.5f, cy + s * 0.15f + i * s * 0.35f, cx + s * 0.95f,
+                      cy + s * 0.05f + i * s * 0.45f, s * 0.1f, ink);
+        }
         break;
     case Icon::remote: // a screen with cast waves in its corner
         list.rounded_rect({cx - s, cy - s * 0.7f, s * 2.0f, s * 1.4f}, 6.0f, ink);

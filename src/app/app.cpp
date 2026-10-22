@@ -17,6 +17,7 @@
 #include "gfx/renderer.hpp"
 #include "ui/components.hpp"
 #include "yt/innertube.hpp"
+#include "yt/tuning.hpp"
 #include "yt/service.hpp"
 
 #include <GL/glcorearb.h>
@@ -1314,6 +1315,15 @@ void App::update(const InputFrame &input, float dt)
         rebuild_rail();
     card_menu_.set_scheme(settings_.color_scheme);
     service_.set_preferences(preferences());
+    {
+        // Settings > Developer: the player reads these as it opens a video.
+        yt::PlayerTuning tuning;
+        tuning.decoder_threads = settings_.dev_threads;
+        tuning.convert_threads = settings_.dev_convert_threads;
+        tuning.skip_deblock = settings_.dev_deblock;
+        tuning.av_offset_ms = settings_.dev_av_offset_ms;
+        yt::set_player_tuning(tuning);
+    }
     if (context_.sb_excluded_changed)
     {
         context_.sb_excluded_changed = false;
@@ -1704,6 +1714,15 @@ void App::update(const InputFrame &input, float dt)
 
     if (ask.new_tv_code && lounge_ != nullptr)
         lounge_->new_code();
+    if (ask.reset_settings)
+    {
+        // Every setting back to its default (accounts, pins and history stay).
+        settings_ = Settings{};
+        save_settings();
+        rebuild_rail();
+        toasts_.push(ui::StatusKind::success, "Settings reset",
+                     "Restart the app to see every page with the defaults", 4.0f);
+    }
     if (lounge_ != nullptr && lounge_->running())
     {
         const Remote &remote = context_.remote;

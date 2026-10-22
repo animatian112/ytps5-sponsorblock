@@ -93,6 +93,26 @@ std::string upload_line(const yt::VideoView &view)
     return view.date_text;
 }
 
+// Settings > Developer > Show log on screen: the log's last lines, bottom
+// left, newest last.
+void draw_log_lines(ui::Canvas &canvas, const Context &context, int count)
+{
+    if (!context.settings.dev_log || context.fonts.mono.font == nullptr)
+        return;
+    std::string lines[12];
+    const std::size_t got = yt::log::recent(lines, static_cast<std::size_t>(std::min(count, 12)));
+    float y = 1040.0f - static_cast<float>(got) * 22.0f;
+    for (std::size_t i = 0; i < got; ++i)
+    {
+        std::string shown = lines[i];
+        if (shown.size() > 120)
+            shown.resize(120);
+        ui::text(canvas.list, context.fonts.mono, shown, 40.0f, y, 17.0f,
+                 gfx::Color::rgb(0x9a9a9a));
+        y += 22.0f;
+    }
+}
+
 // "Fri Oct 16  10:34 AM", as SmartTube shows it in the player.
 // "0:00", "12:05", "1:02:03" for a chapter's start.
 std::string chapter_time(double seconds)
@@ -648,6 +668,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             choose_shuffle();
     }
     chrome_.set_mode(settings.playback_mode);
+    chrome_.set_stats_on(settings.dev_stats);
     chrome_.set_has_next(next_suggestion() != nullptr);
     {
         // SmartTube's line under the title: channel, then the view count.
@@ -794,6 +815,10 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         case PlayerChrome::Command::open_sleep:
         case PlayerChrome::Command::open_dim:
             open_menu(command);
+            break;
+        case PlayerChrome::Command::toggle_stats:
+            context_.settings.dev_stats = !context_.settings.dev_stats;
+            context_.settings_changed = true;
             break;
         case PlayerChrome::Command::cycle_mode:
         {
@@ -1546,7 +1571,7 @@ void PlayerScreen::update_extras(float dt)
 {
     // A quality above 1080p that never shows a picture (a black screen: the
     // decoder cannot keep up at all) goes to 1080p instead of staying black.
-    const bool above = quality_override_ > 1080;
+    const bool above = quality_override_ > 1080 && context_.settings.dev_auto_quality;
     if (above && player_ != nullptr && texture_ == 0 && !player_->paused())
     {
         picture_wait_s_ += dt;
@@ -1567,7 +1592,8 @@ void PlayerScreen::update_extras(float dt)
 
     // Smooth over sharp: a picture above 1080p the CPU cannot decode in time
     // (frames dropped every check, two checks running) goes to 1080p.
-    if (player_ != nullptr && !player_->paused() && !ended_ && player_->source_height() > 1080)
+    if (player_ != nullptr && !player_->paused() && !ended_ && player_->source_height() > 1080 &&
+        context_.settings.dev_auto_quality)
     {
         smooth_check_s_ += dt;
         if (smooth_check_s_ >= 4.0f)
@@ -1825,6 +1851,7 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
         if (!view.stage.empty())
             ui::text(canvas.list, context.fonts.regular, view.stage, gfx::kVirtualWidth * 0.5f,
                      556.0f, 22.0f, gfx::Color::rgb(0x777777), gfx::Align::center);
+        draw_log_lines(canvas, context, 10);
         const char *hint = needs_login ? "X: sign in      Circle: back" : "Circle: back";
         ui::text(canvas.list, context.fonts.regular, hint, gfx::kVirtualWidth * 0.5f, 600.0f, 24.0f,
                  gfx::Color::rgb(0x777777), gfx::Align::center);
@@ -1859,11 +1886,50 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
             if (!view.stage.empty())
                 ui::text(canvas.list, context.fonts.regular, view.stage, gfx::kVirtualWidth * 0.5f,
                          640.0f, 24.0f, gfx::Color::rgb(0x9e9e9e), gfx::Align::center);
+            draw_log_lines(canvas, context, 10);
         }
         return;
     }
 
     draw_captions(canvas, context);
+
+    // Settings > Developer > Stats for nerds.
+    if (context.settings.dev_stats && player_ != nullptr && context.fonts.mono.font != nullptr)
+    {
+        std::vector<std::string> lines;
+        lines.push_back("client  " +
+                        (view.source_client.empty() ? std::string("-") : view.source_client) +
+                        "   id " + playing_id_);
+        if (!view.format_line.empty())
+            lines.push_back("format  " + view.format_line);
+        std::string block = player_->stats();
+        std::size_t at = 0;
+        while (at < block.size())
+        {
+            std::size_t end = block.find('\n', at);
+            if (end == std::string::npos)
+                end = block.size();
+            lines.push_back(block.substr(at, end - at));
+            at = end + 1;
+        }
+        char clock[96];
+        std::snprintf(clock, sizeof(clock), "clock   %.2f / %.2f s   speed %.2fx   sync %+d ms",
+                      player_->clock_s(), player_->duration_s(), player_->speed(),
+                      context.settings.dev_av_offset_ms);
+        lines.emplace_back(clock);
+        float width = 0.0f;
+        for (const std::string &line : lines)
+            width = std::max(width, context.fonts.mono.measure(line, 19.0f));
+        canvas.list.rounded_rect({30.0f, 30.0f, width + 40.0f, lines.size() * 27.0f + 24.0f}, 10.0f,
+                                 gfx::Color::rgb(0x000000, 0.72f));
+        float y = 66.0f;
+        for (const std::string &line : lines)
+        {
+            ui::text(canvas.list, context.fonts.mono, line, 50.0f, y, 19.0f,
+                     gfx::Color::rgb(0xe8e8e8));
+            y += 27.0f;
+        }
+    }
 
     // The controls, and the suggestions row under them when it is open.
     const float lift = chrome_.lift();

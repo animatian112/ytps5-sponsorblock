@@ -18,6 +18,7 @@
 
 #include "yt/log.hpp"
 #include "yt/player.hpp"
+#include "yt/tuning.hpp"
 
 // Console-only: the Videodec2 hardware path and its reachability probe live
 // under src/platform/ps5/, which the host builds do not compile.
@@ -315,6 +316,20 @@ class FfmpegPlayer final : public Player
     {
         return source_height_.load();
     }
+    std::string stats() const override
+    {
+        char text[512];
+        std::snprintf(text, sizeof(text),
+                      "decode  %s software, %d threads, deblocking %s\n"
+                      "picture %dp -> %dx%d RGBA, convert %s (%d threads)\n"
+                      "queue   %zu of %zu pictures, %.1f s buffered, %llu dropped late",
+                      quality_.c_str(), decoder_threads_, deblock_skipped_ ? "off" : "on",
+                      source_height_.load(), video_width_, video_height_,
+                      sws_threaded_ ? "threaded" : "single", convert_threads_, video_queue_.size(),
+                      video_queue_depth_, buffered_s(),
+                      static_cast<unsigned long long>(video_frames_dropped_.load()));
+        return text;
+    }
     bool ended() const override
     {
         return ended_;
@@ -544,6 +559,10 @@ class FfmpegPlayer final : public Player
     double video_interval_s_ = 1.0 / 30.0;
     std::atomic<std::uint64_t> video_frames_dropped_{0};
     std::atomic<int> source_height_{0};
+    int decoder_threads_ = 0;
+    int convert_threads_ = kConvertThreads;
+    bool deblock_skipped_ = false;
+    double av_offset_s_ = 0.0;
     int late_drop_run_ = 0;
     // The decode-slow and drop lines are throttled separately: they describe
     // different things and must be able to appear in the same second.
@@ -846,8 +865,17 @@ bool FfmpegPlayer::open_demuxer(Demuxer &demuxer, const std::string &url, bool v
     }
     demuxer.codec->pkt_timebase = demuxer.stream->time_base;
     const bool large = video && demuxer.stream->codecpar->height > 1080;
-    demuxer.codec->thread_count = large ? kDecoderThreadsLarge : kDecoderThreads;
-    if (large)
+    const PlayerTuning tuning = player_tuning();
+    demuxer.codec->thread_count = tuning.decoder_threads > 0
+                                      ? tuning.decoder_threads
+                                      : (large ? kDecoderThreadsLarge : kDecoderThreads);
+    if (video)
+    {
+        decoder_threads_ = demuxer.codec->thread_count;
+        convert_threads_ = tuning.convert_threads > 0 ? tuning.convert_threads : kConvertThreads;
+        deblock_skipped_ = tuning.skip_deblock == 2 || (tuning.skip_deblock == 1 && large);
+    }
+    if (video && deblock_skipped_)
     {
         // Above 1080p the picture is scaled down to the screen anyway, which
         // hides what the in-loop deblocking filter would smooth; skipping it
@@ -968,6 +996,7 @@ void FfmpegPlayer::update()
     {
         return;
     }
+    av_offset_s_ = static_cast<double>(player_tuning().av_offset_ms) / 1000.0;
     // A per-call budget: a stalled read is cut off by the interrupt instead of
     // freezing the frame thread that drives the watchdog and the whole UI.
     const std::int64_t start_us = now_us();
@@ -1629,7 +1658,7 @@ void FfmpegPlayer::emit_video(AVFrame *frame)
             av_opt_set_int(sws_, "dsth", height, 0);
             av_opt_set_int(sws_, "dst_format", AV_PIX_FMT_RGBA, 0);
             av_opt_set_int(sws_, "sws_flags", SWS_BILINEAR, 0);
-            av_opt_set_int(sws_, "threads", kConvertThreads, 0);
+            av_opt_set_int(sws_, "threads", convert_threads_, 0);
             if (sws_init_context(sws_, nullptr, nullptr) < 0)
             {
                 sws_freeContext(sws_);
@@ -1774,9 +1803,12 @@ bool FfmpegPlayer::present_due_picture()
     // before its time and is still waiting when the time has gone is dropped,
     // not shown late. The run is capped so a decoder slower than real time
     // keeps advancing the picture instead of settling on a still frame.
+    // Settings > Developer > A/V sync: the picture follows the sound's clock
+    // shifted by the offset (positive: the picture later).
+    const double picture_clock = clock_ - av_offset_s_;
     while (!paused_ && !video_queue_.empty() && audio_active_ && clock_ > 0.0 &&
            late_drop_run_ < kMaxLateDropRun &&
-           video_queue_.front().pts + kLateFrameToleranceS < clock_)
+           video_queue_.front().pts + kLateFrameToleranceS < picture_clock)
     {
         ++video_frames_dropped_;
         ++late_drop_run_;
@@ -1795,7 +1827,7 @@ bool FfmpegPlayer::present_due_picture()
     // anchor taken below) decides when the next picture is due; while it is
     // ahead the picture is held, which is what keeps the video behind the
     // sound instead of racing ahead of it.
-    const bool due = !picture_presented_ || pts <= clock_;
+    const bool due = !picture_presented_ || pts <= picture_clock;
     if (!due)
     {
         return false;

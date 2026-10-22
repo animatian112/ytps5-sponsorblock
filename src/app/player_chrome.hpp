@@ -52,6 +52,7 @@ class PlayerChrome
         open_comments,
         open_sleep,
         open_dim,
+        toggle_stats,
     };
     enum class Panel
     {
@@ -180,6 +181,10 @@ class PlayerChrome
     {
         sleep_on_ = on;
     }
+    void set_stats_on(bool on)
+    {
+        stats_on_ = on;
+    }
     int picked() const
     {
         return picked_;
@@ -235,6 +240,7 @@ class PlayerChrome
         comments,
         sleep,
         dim,
+        stats,
     };
     enum class Zone
     {
@@ -301,6 +307,7 @@ class PlayerChrome
 
     Panel panel_ = Panel::none;
     bool sleep_on_ = false;
+    bool stats_on_ = false;
     std::string panel_title_;
     std::vector<std::string> panel_options_;
     int panel_selected_ = -1;

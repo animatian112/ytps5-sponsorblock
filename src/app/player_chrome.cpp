@@ -163,6 +163,7 @@ std::vector<PlayerChrome::Button> PlayerChrome::bottom_buttons() const
     out.push_back(Button::comments);
     out.push_back(Button::sleep);
     out.push_back(Button::dim);
+    out.push_back(Button::stats);
     return out;
 }
 
@@ -211,6 +212,8 @@ std::string PlayerChrome::tooltip(Button button) const
         return sleep_on_ ? "Sleep timer (on)" : "Sleep timer";
     case Button::dim:
         return "Screen dimming";
+    case Button::stats:
+        return stats_on_ ? "Hide stats for nerds" : "Stats for nerds";
     case Button::mode:
     {
         static const char *const kModes[] = {"Play next", "Repeat the video", "Pause at the end",
@@ -226,7 +229,8 @@ bool PlayerChrome::lit(Button button) const
     return (button == Button::mode && mode_ == 4) || (button == Button::like && liked_) ||
            (button == Button::dislike && disliked_) ||
            (button == Button::subscribe && subscribed_) ||
-           (button == Button::captions && captions_on_) || (button == Button::sleep && sleep_on_);
+           (button == Button::captions && captions_on_) || (button == Button::sleep && sleep_on_) ||
+           (button == Button::stats && stats_on_);
 }
 
 void PlayerChrome::show()
@@ -321,6 +325,8 @@ PlayerChrome::Command PlayerChrome::press(Button button)
         return Command::open_sleep;
     case Button::dim:
         return Command::open_dim;
+    case Button::stats:
+        return Command::toggle_stats;
     }
     return Command::none;
 }
@@ -607,6 +613,9 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
     case Button::chapters:
         name = "chapters";
         break;
+    case Button::stats:
+        name = "stats";
+        break;
     case Button::comments:
     case Button::sleep:
     case Button::dim:
@@ -733,6 +742,15 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
     case Button::sleep: // a moon
         list.circle(cx, cy, 18.0f, ink);
         list.circle(cx + 9.0f, cy - 7.0f, 15.0f, gfx::Color::rgb(0x202020));
+        break;
+    case Button::stats: // a bug
+        list.circle(cx, cy + 3.0f, 13.0f, ink);
+        list.circle(cx, cy - 13.0f, 7.0f, ink);
+        for (int i = -1; i <= 1; ++i)
+        {
+            list.line(cx - 11.0f, cy + 3.0f + i * 8.0f, cx - 21.0f, cy + i * 10.0f, 3.0f, ink);
+            list.line(cx + 11.0f, cy + 3.0f + i * 8.0f, cx + 21.0f, cy + i * 10.0f, 3.0f, ink);
+        }
         break;
     case Button::dim: // a sun, half dark
         list.ring(cx, cy, 12.0f, 3.5f, ink);

@@ -122,7 +122,15 @@ struct Settings
     int search_duration = 0; // 0 any, 1 under 4 min, 2 4-20 min, 3 over 20 min
     // The player's brightness, 100 (no dimming) .. 0 (a black screen).
     int video_brightness = 100;
-    int region = 0; // index into kRegions: the feeds' country and language
+    // Settings > Developer.
+    bool dev_stats = false;       // stats for nerds over the video
+    bool dev_log = false;         // the log's last lines on the player and Home
+    int dev_threads = 0;          // decoder threads, 0 automatic
+    int dev_convert_threads = 4;  // RGBA conversion threads
+    int dev_deblock = 1;          // skip the deblocking filter: 0 never, 1 above 1080p, 2 always
+    bool dev_auto_quality = true; // step down to 1080p when a higher quality cannot keep up
+    int dev_av_offset_ms = 0;     // picture later (+) or earlier (-) than the sound
+    int region = 0;               // index into kRegions: the feeds' country and language
     static constexpr int kRegionCount = 14;
     static constexpr const char *kRegions[kRegionCount][3] = {
         {"US", "en", "United States"}, {"GB", "en", "United Kingdom"}, {"CA", "en", "Canada"},

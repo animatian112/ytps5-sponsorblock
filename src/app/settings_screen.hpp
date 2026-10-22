@@ -62,6 +62,7 @@ class SettingsScreen final : public Screen
         search,
         sponsorblock,
         remote,
+        developer,
         network,
         updates,
         about,

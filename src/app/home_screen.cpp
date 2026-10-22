@@ -230,6 +230,24 @@ void HomeScreen::draw(const Context &context, Frame &frame) const
         rows_.draw(canvas);
     else
         feed_.draw(canvas, context);
+
+    // Settings > Developer > Show log on screen: what the network did, when
+    // Home has nothing to show.
+    if (context.settings.dev_log && view.empty && view.state != yt::Load::loading)
+    {
+        std::string lines[8];
+        const std::size_t count = yt::log::recent(lines, 8);
+        float y = 1000.0f - static_cast<float>(count) * 24.0f;
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            std::string shown = lines[i];
+            if (shown.size() > 110)
+                shown.resize(110);
+            ui::text(canvas.list, context.fonts.mono, shown, kContentX, y, 18.0f,
+                     gfx::Color::rgb(0x8a8a8a));
+            y += 24.0f;
+        }
+    }
 }
 
 std::span<const TourStep> HomeScreen::tour() const

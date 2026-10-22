@@ -83,6 +83,7 @@ struct VideoView
     float waiting_s = 0.0f;
     // The client whose stream is playing ("TVHTML5"); empty until ready.
     std::string source_client;
+    std::string format_line; // the picked video and audio formats (stats for nerds)
     // One line per stream the worker tried when nothing played ("TVHTML5
     // itag 248 1080p: 403 Forbidden"); cleared once one of them plays.
     std::vector<std::string> attempts;
@@ -176,6 +177,10 @@ class Service
     // (0 open, 1 subscribe) and resolved_revision() moves.
     void resolve_channel(std::string video_id, std::string name, int purpose);
     std::uint64_t resolved_revision() const;
+    // Settings > Developer: forget the saved feeds (the next start loads them
+    // fresh) and the account's searches.
+    void clear_feed_cache();
+    void clear_search_history();
     // The account's past searches, newest first, and adding one.
     std::vector<std::string> search_history() const;
     void remember_search(const std::string &query);

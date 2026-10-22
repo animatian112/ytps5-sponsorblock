@@ -82,6 +82,13 @@ constexpr Extra kExtras[] = {
     {50, &Settings::search_date, nullptr, 0, 5},
     {51, &Settings::search_duration, nullptr, 0, 3},
     {52, &Settings::video_brightness, nullptr, 0, 100},
+    {53, nullptr, &Settings::dev_stats, 0, 1},
+    {54, nullptr, &Settings::dev_log, 0, 1},
+    {55, &Settings::dev_threads, nullptr, 0, 8},
+    {56, &Settings::dev_convert_threads, nullptr, 1, 8},
+    {57, &Settings::dev_deblock, nullptr, 0, 2},
+    {58, nullptr, &Settings::dev_auto_quality, 0, 1},
+    {59, &Settings::dev_av_offset_ms, nullptr, -500, 500},
 };
 // 60 + i: Settings::sb_act[i].
 constexpr std::uint8_t kSbActionKey = 60;

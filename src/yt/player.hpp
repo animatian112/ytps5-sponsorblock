@@ -105,6 +105,12 @@ class Player
     {
         return 0;
     }
+    // Settings > Developer > Stats for nerds: a few lines on how the player
+    // runs (decoder, threads, sizes, queue).
+    virtual std::string stats() const
+    {
+        return {};
+    }
 };
 
 // Defined per platform.

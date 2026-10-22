@@ -58,6 +58,7 @@ struct Nav
     bool backup_settings = false;  // Settings > General > Back up settings
     bool restore_settings = false; // ... and Restore
     bool new_tv_code = false;      // Settings > Remote control > New TV code
+    bool reset_settings = false;   // Settings > Developer > Reset all settings
     bool quit = false;             // leave the app
 };
 

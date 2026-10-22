@@ -149,6 +149,7 @@ struct Service::Impl
         int switch_index = 0;
         // A card's channel looked up from its watch page (TV Home tiles
         // carry none): purpose 0 opens it, 1 subscribes to it.
+        bool clear_cache = false;
         bool comments = false;
         bool comments_more = false;
         std::string comments_video;
@@ -157,6 +158,7 @@ struct Service::Impl
         std::string resolve_name;
         int resolve_purpose = 0;
     } job;
+    std::string selection_line;       // the formats the last video open picked
     std::vector<ChannelItem> blocked; // <token file>.blocked: id TAB name
     Service::Preferences preferences;
     std::string region_gl = "US"; // the worker's copy, taken with each job
@@ -1488,6 +1490,19 @@ struct Service::Impl
                           video_format->height, codec_label(video_format->codec),
                           audio_format != nullptr ? audio_format->itag : 0,
                           video_format->ciphered ? 1 : 0, has_n ? 1 : 0, info.preroll_wait_s);
+                {
+                    // Settings > Developer > Stats for nerds names the formats.
+                    char line[192];
+                    std::snprintf(line, sizeof(line),
+                                  "video itag %d  %dx%d %s %.0ffps %.2fMbps%s   audio itag %d %s",
+                                  video_format->itag, video_format->width, video_format->height,
+                                  codec_label(video_format->codec), video_format->fps,
+                                  static_cast<double>(video_format->bitrate) / 1e6,
+                                  video_format->hdr ? " HDR" : "",
+                                  audio_format != nullptr ? audio_format->itag : 0,
+                                  audio_format != nullptr ? codec_label(audio_format->codec) : "-");
+                    selection_line = line;
+                }
 
                 // A ciphered format arrives with its unsigned base URL; the
                 // player JS has to descramble it before it plays. Without that
@@ -1591,6 +1606,7 @@ struct Service::Impl
                     video.state = Load::ready;
                     video.stage.clear();
                     video.source_client = info.client;
+                    video.format_line = selection_line;
                     video.attempts.clear();
                     video_running = false;
                     video.revision++;
@@ -2049,6 +2065,17 @@ struct Service::Impl
                     video.revision++;
                 }
             }
+            if (taken.clear_cache)
+            {
+                const std::string token = auth.refresh_token();
+                for (const char *kind : {"home", "subscriptions", "history"})
+                {
+                    const std::string path = cache_path(token, kind);
+                    if (!path.empty())
+                        std::remove(path.c_str());
+                }
+                log::line("feeds: cache cleared");
+            }
             if (taken.comments)
             {
                 std::string token;
@@ -2137,7 +2164,7 @@ struct Service::Impl
                job.close_video || job.sign_in || job.cancel_sign_in || job.sign_out ||
                job.refresh || job.import_token || job.rate || job.subscribe ||
                !job.actions.empty() || job.add_account || job.switch_account || restore_previous ||
-               job.resolve || job.comments;
+               job.resolve || job.comments || job.clear_cache;
     }
 };
 
@@ -2263,6 +2290,25 @@ std::string Service::account_channel() const
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->account_channel;
+}
+
+void Service::clear_feed_cache()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->job.clear_cache = true;
+    impl_->wake.notify_all();
+}
+
+void Service::clear_search_history()
+{
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->searches.clear();
+        path = impl_->searches_path;
+    }
+    if (!path.empty())
+        (void)hui::save::write_atomic(path, std::string());
 }
 
 std::vector<std::string> Service::search_history() const
