@@ -110,7 +110,10 @@ struct Settings
     int sb_act[kSbCategories] = {2, 2, 2, 2, 2, 2, 2, 0, 4, 4};
     int sb_min_seconds = 1;     // segments shorter than this are not skipped
     bool sb_alt_server = false; // api.sponsor.ajay.app
-    bool sb_stats = true;       // tell the database which segments were skipped
+    // DeArrow (SmartTube's): community titles and thumbnails on the cards.
+    bool dearrow_titles = false;
+    bool dearrow_thumbnails = false;
+    bool sb_stats = true; // tell the database which segments were skipped
     // More of SmartTube's options.
     int video_zoom = 0;              // 0 fit, 1 fill (crop the bars), 2 stretch
     int subtitle_color = 0;          // 0 white, 1 yellow, 2 cyan

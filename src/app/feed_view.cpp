@@ -4,6 +4,7 @@
 
 #include "app/feed_view.hpp"
 
+#include "app/branding.hpp"
 #include "app/theme.hpp"
 #include "app/thumbs.hpp"
 #include "ui/motion.hpp"
@@ -193,8 +194,23 @@ void FeedView::refresh_thumbnails(const Context &context)
     const int last = std::min(count, (focus / columns + 4) * columns);
     for (int index = first; index < last; ++index)
     {
-        const std::string url = thumbnail_for(items_[static_cast<std::size_t>(index)]);
+        const yt::FeedItem &item = items_[static_cast<std::size_t>(index)];
+        const std::string url = thumbnail_for(item);
         ui::CardItem &card = grid_.item(index);
+        // DeArrow (Settings > SponsorBlock): the community title, and its
+        // thumbnail once that picture is in (YouTube's until then).
+        const CardBrand brand = card_brand(item.video_id, context.settings);
+        if (!brand.title.empty() && card.title != brand.title)
+            card.title = brand.title;
+        if (!brand.thumbnail_url.empty() && !portrait_)
+        {
+            const std::uint32_t branded = context.thumbs.texture(brand.thumbnail_url);
+            if (branded != 0)
+            {
+                card.texture = branded;
+                continue;
+            }
+        }
         card.texture = context.thumbs.texture(url);
         if (portrait_ && card.texture != 0)
         {

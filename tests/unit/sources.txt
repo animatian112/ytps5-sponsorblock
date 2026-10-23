@@ -55,6 +55,7 @@ src/yt/comments.cpp
 src/yt/storyboard.cpp
 src/yt/suggest.cpp
 src/yt/hls.cpp
+src/yt/dearrow.cpp
 src/yt/tuning.cpp
 src/yt/lounge.cpp
 src/yt/lounge_chunks.cpp

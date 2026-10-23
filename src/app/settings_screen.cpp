@@ -462,6 +462,11 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
              "api.sponsor.ajay.app, when the main one refuses to work");
     sponsor.add_action(kSbClearExcluded, "Clear excluded channels").description =
         "Channels excluded from SponsorBlock (video menu) skip again";
+    sponsor.add_header("DeArrow");
+    add_flag(sponsor, "Replace titles", &S::dearrow_titles,
+             "Community titles from dearrow.ajay.app instead of clickbait ones");
+    add_flag(sponsor, "Replace thumbnails", &S::dearrow_thumbnails,
+             "Community-picked frames of the video instead of clickbait thumbnails");
 
     // One-shot tiles.
     // ---- Remote control (SmartTube's "Link with TV code") ----

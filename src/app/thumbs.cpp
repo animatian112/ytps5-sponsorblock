@@ -36,6 +36,39 @@ constexpr std::uint64_t kStaleFrames = 120;
 // A thumbnail is small; refuse anything that looks like a video.
 constexpr std::size_t kMaxBytes = 2u << 20;
 
+// Halves a picture (2x2 boxes) until it is at most kMaxWidth wide: DeArrow's
+// thumbnails are full video frames, and a card never shows more.
+constexpr int kMaxWidth = 720;
+
+void shrink(std::vector<std::uint8_t> &rgba, int &width, int &height)
+{
+    while (width > kMaxWidth && height >= 2)
+    {
+        const int w = width / 2;
+        const int h = height / 2;
+        std::vector<std::uint8_t> out(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) *
+                                      4u);
+        for (int y = 0; y < h; ++y)
+        {
+            const std::uint8_t *row0 = rgba.data() + static_cast<std::size_t>(2 * y) * width * 4u;
+            const std::uint8_t *row1 = row0 + static_cast<std::size_t>(width) * 4u;
+            std::uint8_t *dst = out.data() + static_cast<std::size_t>(y) * w * 4u;
+            for (int x = 0; x < w; ++x)
+            {
+                for (int c = 0; c < 4; ++c)
+                {
+                    const int sum = row0[8 * x + c] + row0[8 * x + 4 + c] + row1[8 * x + c] +
+                                    row1[8 * x + 4 + c];
+                    dst[4 * x + c] = static_cast<std::uint8_t>((sum + 2) / 4);
+                }
+            }
+        }
+        rgba = std::move(out);
+        width = w;
+        height = h;
+    }
+}
+
 bool spawn(pthread_t *thread, void *(*entry)(void *), void *argument)
 {
     pthread_attr_t attributes;
@@ -154,6 +187,8 @@ struct ThumbCache::Impl
                     result.rgba.clear();
                     result.failed = true;
                 }
+                else if (key.find("dearrow-thumb") != std::string::npos)
+                    shrink(result.rgba, result.width, result.height);
             }
             else
             {

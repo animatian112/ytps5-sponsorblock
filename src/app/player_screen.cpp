@@ -15,6 +15,7 @@
 
 #include "platform/ps5/system.hpp"
 
+#include "app/branding.hpp"
 #include "app/feed_view.hpp"
 #include "app/thumbs.hpp"
 #include "yt/log.hpp"
@@ -683,14 +684,28 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         context_.service.report_watch_progress(history_reported_s_);
     }
 
-    // Suggestion thumbnails that arrived after the row was filled.
+    // Suggestion thumbnails that arrived after the row was filled, and
+    // DeArrow's titles and thumbnails (Settings > SponsorBlock).
     for (int index = 0; index < static_cast<int>(related_.items().size()) &&
                         index < static_cast<int>(related_items_.size());
          ++index)
     {
-        if (related_.item(index).texture == 0)
-            related_.item(index).texture = context_.thumbs.texture(
-                card_thumbnail(related_items_[static_cast<std::size_t>(index)]));
+        const yt::FeedItem &item = related_items_[static_cast<std::size_t>(index)];
+        ui::CardItem &card = related_.item(index);
+        const CardBrand brand = card_brand(item.video_id, context_.settings);
+        if (!brand.title.empty() && card.title != brand.title)
+            card.title = brand.title;
+        if (!brand.thumbnail_url.empty())
+        {
+            const std::uint32_t branded = context_.thumbs.texture(brand.thumbnail_url);
+            if (branded != 0)
+            {
+                card.texture = branded;
+                continue;
+            }
+        }
+        if (card.texture == 0)
+            card.texture = context_.thumbs.texture(card_thumbnail(item));
     }
 
     // Transport.
@@ -732,7 +747,9 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
                 meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") +
                         chapters_[static_cast<std::size_t>(at)].title;
         }
-        chrome_.set_info(view.info.title.empty() ? playing_id_ : view.info.title, meta,
+        const CardBrand brand = card_brand(playing_id_, context_.settings);
+        const std::string &title = !brand.title.empty() ? brand.title : view.info.title;
+        chrome_.set_info(title.empty() ? playing_id_ : title, meta,
                          player_ != nullptr ? player_->quality_label() : std::string());
         chrome_.set_clock(clock_line(context_.settings.time_24h));
     }

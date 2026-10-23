@@ -33,8 +33,28 @@
 #include <climits>
 #include <cstddef>
 
+// The console links libwebp (an ffmpeg dependency); stb_image has no WebP,
+// and DeArrow's thumbnail service may answer with one.
+#if defined(__has_include)
+#if __has_include(<webp/decode.h>)
+#include <webp/decode.h>
+#define YT_HAVE_WEBP 1
+#endif
+#endif
+
 namespace yt
 {
+
+namespace
+{
+
+bool is_webp(const std::string &bytes)
+{
+    return bytes.size() >= 12 && bytes.compare(0, 4, "RIFF") == 0 &&
+           bytes.compare(8, 4, "WEBP") == 0;
+}
+
+} // namespace
 
 bool decode_image(const std::string &bytes, int *width, int *height,
                   std::vector<std::uint8_t> *rgba, std::string *error)
@@ -72,6 +92,29 @@ bool decode_image(const std::string &bytes, int *width, int *height,
 
     int decoded_width = 0;
     int decoded_height = 0;
+    if (is_webp(bytes))
+    {
+#ifdef YT_HAVE_WEBP
+        std::uint8_t *webp = WebPDecodeRGBA(reinterpret_cast<const std::uint8_t *>(bytes.data()),
+                                            bytes.size(), &decoded_width, &decoded_height);
+        if (webp == nullptr || decoded_width <= 0 || decoded_height <= 0)
+        {
+            if (webp != nullptr)
+                WebPFree(webp);
+            *error = "decode_image: bad webp";
+            return false;
+        }
+        rgba->assign(webp, webp + static_cast<std::size_t>(decoded_width) *
+                                      static_cast<std::size_t>(decoded_height) * 4u);
+        WebPFree(webp);
+        *width = decoded_width;
+        *height = decoded_height;
+        return true;
+#else
+        *error = "decode_image: webp is not supported in this build";
+        return false;
+#endif
+    }
     stbi_uc *pixels = stbi_load_from_memory(reinterpret_cast<const stbi_uc *>(bytes.data()),
                                             static_cast<int>(bytes.size()), &decoded_width,
                                             &decoded_height, nullptr, 4);

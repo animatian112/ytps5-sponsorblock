@@ -27,7 +27,8 @@ override APP_IMPORT_STUBS := $(strip $(OPENGL_SDK)/lib/libSceAgc.so \
 # these; an ignored .env can override the list for a different app.
 PACBREW_PACKAGES ?= libcurl openssl libavformat libavfilter libavcodec libavutil libswscale libswresample
 PACBREW_INCLUDE_PATHS ?=
-PACBREW_STATIC_ARCHIVES ?=
+# libwebp (already in the ports, from ffmpeg) decodes WebP thumbnails.
+PACBREW_STATIC_ARCHIVES ?= lib/libwebp.a lib/libsharpyuv.a
 PS5_HOST ?=
 FTP_PORT ?= 2121
 PS5_FTP_USER ?= anonymous
