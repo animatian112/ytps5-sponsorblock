@@ -272,15 +272,22 @@ bool is_live_url(const std::string &url)
            url.find(".m3u8") != std::string::npos;
 }
 
-// Bytes a live demuxer must have waiting before it is read: enough for a
-// whole keyframe, so a read never waits for the next segment on the frame
-// thread (the stream simply pauses until it arrives).
-constexpr std::int64_t kLiveReadAhead = 1 << 20;
+// A live demuxer is only read while a whole segment's worth of bytes waits
+// ahead of it: an MPEG-TS packet ends where the next one starts, so the
+// demuxer finishing a segment's last packet needs the first bytes of the
+// next segment, and must not wait for them on the frame thread. Each stream
+// is measured by its own segments: a separate sound stream's are tiny
+// (16 KB a second), a 1080p picture's can be megabytes. The cap keeps a
+// high-bitrate stream from holding back more than a keyframe needs.
+constexpr std::int64_t kLiveReadAheadCap = 1 << 20;
 
 bool live_starved(const Demuxer &demuxer)
 {
-    return demuxer.live != nullptr && !demuxer.live->finished() &&
-           demuxer.live->available(demuxer.live_reader) < kLiveReadAhead;
+    if (demuxer.live == nullptr || demuxer.live->finished())
+        return false;
+    const std::int64_t wanted =
+        std::min(kLiveReadAheadCap, std::max<std::int64_t>(demuxer.live->largest_segment(), 4096));
+    return demuxer.live->available(demuxer.live_reader) < wanted;
 }
 
 class FfmpegPlayer final : public Player
@@ -1134,6 +1141,14 @@ void FfmpegPlayer::update()
                       duration_s(), audio_recoveries_);
             audio_.drained = false;
             seek(clock_);
+        }
+        if (live_ && audio_active_ && !audio_.drained && !priming_ && audio_frames_written_ == 0 &&
+            std::chrono::steady_clock::now() - priming_since_ > std::chrono::seconds(8))
+        {
+            // A live stream whose sound never started must not hold the
+            // picture on its first frame: the wall clock takes over below.
+            log::line("ffmpeg: live sound never started, playing the picture alone");
+            audio_.drained = true;
         }
         if (audio_active_ && audio_.drained)
         {

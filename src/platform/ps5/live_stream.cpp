@@ -63,6 +63,7 @@ struct LiveStream::State
     std::int64_t base = 0;
     std::vector<std::int64_t> positions; // per reader; kClosed once closed
     std::int64_t segments = 0;
+    std::int64_t largest_segment = 0; // bytes
 
     std::int64_t end() const
     {
@@ -143,6 +144,8 @@ void *worker(void *argument)
         }
         state.data.insert(state.data.end(), bytes.begin(), bytes.end());
         ++state.segments;
+        state.largest_segment =
+            std::max(state.largest_segment, static_cast<std::int64_t>(bytes.size()));
         return true;
     };
 
@@ -285,6 +288,12 @@ std::int64_t LiveStream::available(int index) const
     std::lock_guard<std::mutex> lock(state_->mutex);
     const std::int64_t position = state_->positions[static_cast<std::size_t>(index)];
     return position == kClosed ? 0 : state_->end() - position;
+}
+
+std::int64_t LiveStream::largest_segment() const
+{
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    return state_->largest_segment;
 }
 
 bool LiveStream::finished() const

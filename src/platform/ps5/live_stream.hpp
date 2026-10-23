@@ -40,6 +40,9 @@ class LiveStream
     // over (ended or failed): a read then never waits either.
     std::int64_t available(int index) const;
     bool finished() const;
+    // The biggest segment so far, in bytes: a demuxer that waits for this much
+    // never runs dry in the middle of a packet (see live_starved()).
+    std::int64_t largest_segment() const;
 
     static int read_cb(void *opaque, std::uint8_t *buffer, int size);
 
