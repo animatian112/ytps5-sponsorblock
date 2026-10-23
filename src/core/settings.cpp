@@ -89,6 +89,8 @@ constexpr Extra kExtras[] = {
     {57, &Settings::dev_deblock, nullptr, 0, 2},
     {58, nullptr, &Settings::dev_auto_quality, 0, 1},
     {59, &Settings::dev_av_offset_ms, nullptr, -500, 500},
+    // 60..69: sb_act (below).
+    {80, &Settings::dev_upload, nullptr, 0, 4},
 };
 // 60 + i: Settings::sb_act[i].
 constexpr std::uint8_t kSbActionKey = 60;

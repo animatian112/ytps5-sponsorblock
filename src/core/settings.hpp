@@ -130,6 +130,7 @@ struct Settings
     int dev_deblock = 1;          // skip the deblocking filter: 0 never, 1 above 1080p, 2 always
     bool dev_auto_quality = true; // step down to 1080p when a higher quality cannot keep up
     int dev_av_offset_ms = 0;     // picture later (+) or earlier (-) than the sound
+    int dev_upload = 0;           // gfx::UploadMethod for video pictures; 0 measures once
     int region = 0;               // index into kRegions: the feeds' country and language
     static constexpr int kRegionCount = 14;
     static constexpr const char *kRegions[kRegionCount][3] = {

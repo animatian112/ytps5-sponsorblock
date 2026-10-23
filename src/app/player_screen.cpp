@@ -20,6 +20,7 @@
 #include "yt/log.hpp"
 #include "app/theme.hpp"
 #include "gfx/gl_batch.hpp"
+#include "gfx/video_upload.hpp"
 
 #include <GL/glcorearb.h>
 
@@ -239,12 +240,9 @@ PlayerScreen::~PlayerScreen()
 
 void PlayerScreen::drop_texture()
 {
-    if (texture_ != 0)
-    {
-        const GLuint name = texture_;
-        glDeleteTextures(1, &name);
-        texture_ = 0;
-    }
+    // The uploader owns the textures; this frees them all.
+    uploader_.release();
+    texture_ = 0;
     texture_width_ = 0;
     texture_height_ = 0;
     last_pts_ = -1.0;
@@ -596,8 +594,22 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         if (frame.fresh && frame.rgba != nullptr && frame.width > 0 && frame.height > 0)
         {
             const auto upload_start = std::chrono::steady_clock::now();
-            drop_texture();
-            texture_ = context_.batch.create_texture(frame.width, frame.height, frame.rgba);
+            uploader_.set_method(static_cast<gfx::UploadMethod>(context_.settings.dev_upload));
+            texture_ = uploader_.upload(frame.width, frame.height, frame.rgba);
+            if (!upload_report_logged_ && !uploader_.benchmark_report().empty())
+            {
+                upload_report_logged_ = true;
+                const std::string &report = uploader_.benchmark_report();
+                std::size_t start = 0;
+                while (start < report.size())
+                {
+                    std::size_t end = report.find('\n', start);
+                    if (end == std::string::npos)
+                        end = report.size();
+                    yt::log::line("upload: %s", report.substr(start, end - start).c_str());
+                    start = end + 1;
+                }
+            }
             upload_us_ += std::chrono::duration_cast<std::chrono::microseconds>(
                               std::chrono::steady_clock::now() - upload_start)
                               .count();
@@ -616,9 +628,10 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
                 // Where the frame thread's time goes: the player's own work
                 // (read, decode, convert) and the texture upload.
                 yt::log::line(
-                    "ffmpeg: texture upload %dx%dx4 (%d in the last second, %.1f ms avg); "
+                    "ffmpeg: texture upload (%s) %dx%dx4 (%d in the last second, %.1f ms avg); "
                     "player update %.1f ms avg, %.1f ms max over %d frames",
-                    frame.width, frame.height, upload_count_,
+                    gfx::upload_method_name(uploader_.active_method()), frame.width, frame.height,
+                    upload_count_,
                     upload_count_ > 0 ? static_cast<double>(upload_us_) / 1000.0 / upload_count_
                                       : 0.0,
                     update_count_ > 0 ? static_cast<double>(update_us_) / 1000.0 / update_count_

@@ -145,3 +145,14 @@ each step: `hardware decode ON/not used/OFF`, the first picture's geometry
 (`pitch`, `format`, `size`, `luma rows`), and every 5 s the pictures decoded
 and the average read-back + convert time. If the picture comes out scrambled
 the surface is tiled, and the zero-copy path is the way forward.
+
+## Console results (1.0.161)
+
+- Videodec2 loads and decodes 4K VP9 (itag 313 at 30 fps, 315 at 60 fps):
+  read back plus the downscale to 1080p takes about 2 ms a picture.
+- The frame drops come from the texture upload, not the decoder: one
+  1920x1080 RGBA `glTexImage2D` into a new texture costs a steady 32 ms on
+  ps5-opengl, for software and hardware pictures alike.
+- 1.0.162 measures four upload methods on the first video
+  (`gfx::VideoUploader`, logged as `upload:` lines) and keeps the fastest;
+  Developer > Picture upload forces one.

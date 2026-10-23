@@ -7,6 +7,7 @@
 #include "app/context.hpp"
 #include "app/player_chrome.hpp"
 #include "app/screen.hpp"
+#include "gfx/video_upload.hpp"
 #include "yt/captions.hpp"
 #include "yt/player.hpp"
 #include "yt/service.hpp"
@@ -94,6 +95,8 @@ class PlayerScreen final : public Screen
     std::vector<yt::FeedItem> related_items_;
     std::uint64_t related_revision_ = 0;
     std::uint64_t video_revision_ = 0;
+    gfx::VideoUploader uploader_;
+    bool upload_report_logged_ = false;
     std::uint32_t texture_ = 0;
     int texture_width_ = 0;
     int texture_height_ = 0;
