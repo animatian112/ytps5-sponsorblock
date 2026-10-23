@@ -22,6 +22,7 @@
 
 // Console-only: the Videodec2 hardware path and its reachability probe live
 // under src/platform/ps5/, which the host builds do not compile.
+#include "platform/ps5/live_stream.hpp"
 #include "platform/ps5/range_stream.hpp"
 #include "platform/ps5/videodec.hpp"
 
@@ -208,6 +209,10 @@ struct Demuxer
     // An http(s) URL is read through `range` (bounded range requests) behind
     // the custom `io`; both outlive `format`, which reads from them.
     std::unique_ptr<hui::ps5::RangeStream> range;
+    // A live broadcast is read from a LiveStream instead (owned by the
+    // player: the video and audio demuxer of a muxed variant share one).
+    hui::ps5::LiveStream *live = nullptr;
+    int live_reader = -1;
     AVIOContext *io = nullptr;
     AVFormatContext *format = nullptr;
     AVCodecContext *codec = nullptr;
@@ -258,6 +263,24 @@ bool note_stream_error(Demuxer &demuxer, const char *stream, const char *what, i
 bool note_stalled_read(Demuxer &demuxer)
 {
     return ++demuxer.stalled_reads < kMaxStallReads;
+}
+
+// A live (HLS) URL: YouTube's media playlists, or any .m3u8.
+bool is_live_url(const std::string &url)
+{
+    return url.find("/hls_playlist/") != std::string::npos ||
+           url.find(".m3u8") != std::string::npos;
+}
+
+// Bytes a live demuxer must have waiting before it is read: enough for a
+// whole keyframe, so a read never waits for the next segment on the frame
+// thread (the stream simply pauses until it arrives).
+constexpr std::int64_t kLiveReadAhead = 1 << 20;
+
+bool live_starved(const Demuxer &demuxer)
+{
+    return demuxer.live != nullptr && !demuxer.live->finished() &&
+           demuxer.live->available(demuxer.live_reader) < kLiveReadAhead;
 }
 
 class FfmpegPlayer final : public Player
@@ -555,6 +578,12 @@ class FfmpegPlayer final : public Player
     std::uint64_t audio_frames_written_ = 0;
     std::uint64_t audio_frames_decoded_ = 0;
     double audio_base_s_ = 0.0;
+    // Live (HLS) playback: the broadcast's own timestamps start anywhere, so
+    // the first video timestamp is the player's zero.
+    bool live_ = false;
+    double pts_origin_ = 0.0;
+    std::unique_ptr<hui::ps5::LiveStream> live_video_;
+    std::unique_ptr<hui::ps5::LiveStream> live_audio_;
     // After seek(): the demuxers restart at the keyframe before the target, so
     // audio and video decoded before it are discarded until each reaches it
     // (negative: no seek pending for that stream).
@@ -671,8 +700,39 @@ bool FfmpegPlayer::open(const std::string &video_url, const std::string &audio_u
         log::line("heap: %zu MiB used, peak %zu, of %zu MiB, %zu failed", live >> 20, peak >> 20,
                   hui_heap_capacity() >> 20, failures);
     }
+    std::string audio_source = audio_url;
+    live_ = is_live_url(video_url);
+    if (live_)
+    {
+        // One download serves both demuxers when the variant carries its own
+        // sound; a separate sound playlist gets a stream of its own.
+        const bool shared = sink != nullptr && audio_source == video_url;
+        live_video_ = std::make_unique<hui::ps5::LiveStream>(video_url, "video", shared ? 2 : 1,
+                                                             &FfmpegPlayer::interrupt_cb, this);
+        std::string live_error;
+        if (live_video_->start(&live_error) < 0)
+            return fail("live: " + live_error);
+        if (!shared && !audio_source.empty() && sink != nullptr)
+        {
+            live_audio_ = std::make_unique<hui::ps5::LiveStream>(audio_source, "audio", 1,
+                                                                 &FfmpegPlayer::interrupt_cb, this);
+            if (live_audio_->start(&live_error) < 0)
+            {
+                log::line("ffmpeg: live audio failed (%s): picture only", live_error.c_str());
+                live_audio_.reset();
+                audio_source.clear();
+            }
+        }
+        else if (!shared)
+            audio_source.clear();
+    }
     if (!open_demuxer(video_, video_url, true))
         return fail(error_);
+    if (live_ && video_.format->start_time != AV_NOPTS_VALUE)
+    {
+        pts_origin_ = static_cast<double>(video_.format->start_time) / AV_TIME_BASE;
+        log::line("ffmpeg: live stream, timeline starts at %.3f s", pts_origin_);
+    }
     quality_ = make_quality_label();
 
     // Decode mode. Hardware is attempted only when the app asked for it and the
@@ -726,7 +786,7 @@ bool FfmpegPlayer::open(const std::string &video_url, const std::string &audio_u
         }
     }
 
-    if (audio_url.empty())
+    if (audio_source.empty())
     {
         // Nothing about this is an error, but the reason for silence belongs in
         // the log rather than being inferred from the picture.
@@ -740,8 +800,15 @@ bool FfmpegPlayer::open(const std::string &video_url, const std::string &audio_u
     }
     else
     {
-        if (!open_demuxer(audio_, audio_url, false))
+        if (!open_demuxer(audio_, audio_source, false))
             return fail(error_);
+        if (live_ && audio_.format->start_time != AV_NOPTS_VALUE)
+        {
+            // The sound's first sample sits where it sits on the shared
+            // timeline: the audio clock starts there, not at zero.
+            audio_base_s_ =
+                static_cast<double>(audio_.format->start_time) / AV_TIME_BASE - pts_origin_;
+        }
         if (!init_audio_resampler())
             return fail(error_);
         audio_active_ = true;
@@ -772,9 +839,34 @@ bool FfmpegPlayer::open_demuxer(Demuxer &demuxer, const std::string &url, bool v
     format->interrupt_callback.opaque = this;
 
     log::line("ffmpeg: open %s url=%s", video ? "video" : "audio", url.substr(0, 64).c_str());
+    if (live_)
+    {
+        // A live broadcast: the LiveStream joins the segments into one stream.
+        const bool own_audio = !video && live_audio_ != nullptr;
+        hui::ps5::LiveStream *stream = own_audio ? live_audio_.get() : live_video_.get();
+        demuxer.live = stream;
+        demuxer.live_reader = video || own_audio ? 0 : 1;
+        constexpr int kIoBuffer = 64 << 10;
+        auto *buffer = static_cast<unsigned char *>(av_malloc(kIoBuffer));
+        demuxer.io =
+            buffer != nullptr
+                ? avio_alloc_context(buffer, kIoBuffer, 0, stream->reader(demuxer.live_reader),
+                                     &hui::ps5::LiveStream::read_cb, nullptr, nullptr)
+                : nullptr;
+        if (demuxer.io == nullptr)
+        {
+            av_free(buffer);
+            error_ = "avio_alloc_context failed";
+            avformat_free_context(format);
+            release_io(demuxer);
+            return false;
+        }
+        format->pb = demuxer.io;
+        format->flags |= AVFMT_FLAG_CUSTOM_IO;
+    }
     // googlevideo cuts ffmpeg's single open-ended request after a few MiB and
     // refuses the reconnect (403): read https streams in bounded ranges.
-    if (url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0)
+    else if (url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0)
     {
         demuxer.range = std::make_unique<hui::ps5::RangeStream>(url, video ? "video" : "audio",
                                                                 &FfmpegPlayer::interrupt_cb, this);
@@ -814,7 +906,9 @@ bool FfmpegPlayer::open_demuxer(Demuxer &demuxer, const std::string &url, bool v
         av_dict_set(&options, "rw_timeout", kNetworkTimeout, 0);
         av_dict_set(&options, "reconnect", "1", 0);
     }
-    int result = avformat_open_input(&format, url.c_str(), nullptr, &options);
+    // A live stream's bytes are MPEG-TS whatever its playlist URL says: no
+    // name, so the probe goes by the content alone.
+    int result = avformat_open_input(&format, live_ ? "" : url.c_str(), nullptr, &options);
     av_dict_free(&options);
     if (result < 0)
     {
@@ -1008,6 +1102,13 @@ void FfmpegPlayer::update()
     if (!running_)
     {
         return;
+    }
+    if (audio_.live != nullptr && audio_.drained)
+    {
+        // The sound path ended: its reader must stop holding the bytes the
+        // picture's reader shares with it.
+        audio_.live->close_reader(audio_.live_reader);
+        audio_.live = nullptr;
     }
     av_offset_s_ = static_cast<double>(player_tuning().av_offset_ms) / 1000.0;
     // A per-call budget: a stalled read is cut off by the interrupt instead of
@@ -1437,6 +1538,8 @@ void FfmpegPlayer::pump_video_hardware(int budget)
             av_bsf_send_packet(hardware_bsf_, nullptr); // drains, then reports EOF
             continue;
         }
+        if (live_starved(video_))
+            return;
         const int read = av_read_frame(video_.format, video_.packet);
         if (read >= 0)
         {
@@ -1566,6 +1669,8 @@ void FfmpegPlayer::pump_video(int budget)
             video_.drained = true;
             break;
         }
+        if (live_starved(video_))
+            break;
         const int read = av_read_frame(video_.format, video_.packet);
         if (read >= 0)
         {
@@ -1701,6 +1806,8 @@ void FfmpegPlayer::pump_audio(int budget)
             audio_.drained = true;
             break;
         }
+        if (live_starved(audio_))
+            break;
         const int read = av_read_frame(audio_.format, audio_.packet);
         if (read >= 0)
         {
@@ -1790,7 +1897,7 @@ double FfmpegPlayer::frame_pts(const AVFrame *frame) const
     {
         return frame_seen_ ? last_video_pts_ + 1.0 / 30.0 : 0.0;
     }
-    return static_cast<double>(timestamp) * av_q2d(video_.stream->time_base);
+    return static_cast<double>(timestamp) * av_q2d(video_.stream->time_base) - pts_origin_;
 }
 
 void FfmpegPlayer::emit_video(AVFrame *frame)
@@ -2171,7 +2278,8 @@ void FfmpegPlayer::emit_audio(AVFrame *frame)
         }
         else
         {
-            const double start = static_cast<double>(stamp) * av_q2d(audio_.stream->time_base);
+            const double start =
+                static_cast<double>(stamp) * av_q2d(audio_.stream->time_base) - pts_origin_;
             const double skip_s = audio_seek_target_ - start;
             if (skip_s > 0.0)
             {
@@ -2463,6 +2571,13 @@ void FfmpegPlayer::seek(double seconds)
     {
         return;
     }
+    if (live_)
+    {
+        // A live broadcast plays at its edge; the playlist keeps only the
+        // last few segments, so there is nowhere to seek to.
+        log::line("ffmpeg: seek ignored on a live stream");
+        return;
+    }
     if (seconds < 0.0)
     {
         seconds = 0.0;
@@ -2586,6 +2701,8 @@ void FfmpegPlayer::set_paused(bool paused)
 
 double FfmpegPlayer::duration_s() const
 {
+    if (live_)
+        return 0.0; // a broadcast on the air has no end yet
     if (video_.stream != nullptr && video_.stream->duration != AV_NOPTS_VALUE)
     {
         return static_cast<double>(video_.stream->duration) * av_q2d(video_.stream->time_base);
@@ -2611,6 +2728,12 @@ void FfmpegPlayer::release_io(Demuxer &demuxer)
         avio_context_free(&demuxer.io);
     }
     demuxer.range.reset();
+    if (demuxer.live != nullptr)
+    {
+        demuxer.live->close_reader(demuxer.live_reader);
+        demuxer.live = nullptr;
+        demuxer.live_reader = -1;
+    }
 }
 
 void FfmpegPlayer::release_demuxer(Demuxer &demuxer)
@@ -2667,6 +2790,11 @@ void FfmpegPlayer::release()
     av_frame_free(&hardware_frame_);
     release_demuxer(video_);
     release_demuxer(audio_);
+    // After the demuxers: their readers point into these.
+    live_video_.reset();
+    live_audio_.reset();
+    live_ = false;
+    pts_origin_ = 0.0;
 
     video_queue_.clear();
     clear_video_pool();

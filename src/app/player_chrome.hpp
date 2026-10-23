@@ -95,6 +95,11 @@ class PlayerChrome
     }
 
     void set_times(double position, double duration, double buffered);
+    // A broadcast on the air: the time reads "LIVE" and how long it has played.
+    void set_live(bool live)
+    {
+        live_ = live;
+    }
     void set_playing(bool playing);
     void set_ranges(std::vector<ui::MediaRange> ranges);
     void set_info(std::string title, std::string subtitle, std::string quality);
@@ -265,6 +270,7 @@ class PlayerChrome
 
     double position_ = 0.0;
     double duration_ = 0.0;
+    bool live_ = false;
     double buffered_ = 0.0;
     Options options_;
     std::vector<yt::Chapter> chapters_;

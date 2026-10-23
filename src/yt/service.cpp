@@ -14,6 +14,7 @@
 #include "yt/log.hpp"
 #include "yt/codec.hpp"
 #include "yt/decipher.hpp"
+#include "yt/hls.hpp"
 #include "yt/innertube.hpp"
 #include "yt/watch.hpp"
 #include "yt/http.hpp"
@@ -27,6 +28,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -1268,6 +1270,45 @@ struct Service::Impl
 
     // Prepares the descrambler for this answer's player JS, cached across the
     // client chain by JS URL. False leaves *error as the reason.
+    // A live answer's adaptive formats only play through YouTube's segment
+    // protocol; its HLS master playlist plays as it is. Replaces
+    // info.formats with one format per variant, so the ordinary selection
+    // (codec switches, ceiling, Video formats) picks among them; left alone
+    // when the master cannot be read.
+    void use_live_variants(VideoInfo &info, std::map<int, std::string> *audio)
+    {
+        const http::Response master = http::get(info.hls_url, {}, 10);
+        if (!master.http_ok())
+        {
+            log::line("live: %s master playlist failed: HTTP %ld %s", info.client.c_str(),
+                      master.status, master.error.c_str());
+            return;
+        }
+        const std::vector<hls::Variant> variants = hls::parse_master(master.body, info.hls_url);
+        std::vector<Format> formats = hls::variant_formats(variants);
+        if (formats.empty())
+        {
+            log::line("live: %s master playlist has no video variant (%zu entries)",
+                      info.client.c_str(), variants.size());
+            return;
+        }
+        std::size_t next = 0;
+        for (const hls::Variant &variant : variants)
+        {
+            if (!variant.has_video() || next >= formats.size())
+                continue;
+            (*audio)[formats[next].itag] = variant.audio_url;
+            ++next;
+        }
+        int tallest = 0;
+        for (const Format &format : formats)
+            tallest = std::max(tallest, format.height);
+        log::line("live: %s plays from HLS, %zu variants up to %dp", info.client.c_str(),
+                  formats.size(), tallest);
+        info.formats = std::move(formats);
+        info.sabr_only = false;
+    }
+
     bool ensure_descrambler(const VideoInfo &info, std::string *error)
     {
         if (info.player_js_url.empty())
@@ -1426,9 +1467,14 @@ struct Service::Impl
         // client failed it becomes the published error.
         std::string first_error;
         bool any_format = false;
+        // Live broadcasts: each variant's media playlist by itag, and the
+        // separate sound playlist where the master names one.
+        std::map<int, std::string> live_audio;
 
-        for (const VideoInfo &info : variants)
+        for (VideoInfo &info : variants)
         {
+            if (info.live_now && !info.hls_url.empty())
+                use_live_variants(info, &live_audio);
             // The watchdog or a newer request drops the whole loop: checked
             // before each client's stream is opened.
             {
@@ -1511,6 +1557,16 @@ struct Service::Impl
                 // the same answer cannot help and the client is left alone.
                 std::string video_url = video_format->url;
                 std::string audio_url = audio_format != nullptr ? audio_format->url : std::string();
+                if (info.live_now && !info.hls_url.empty())
+                {
+                    // A live variant carries its own sound (muxed), unless the
+                    // master named a separate playlist for it: the player
+                    // then reads one download for both.
+                    const auto separate = live_audio.find(video_format->itag);
+                    audio_url = separate != live_audio.end() && !separate->second.empty()
+                                    ? separate->second
+                                    : video_url;
+                }
                 if (video_format->ciphered || (audio_format != nullptr && audio_format->ciphered))
                 {
                     std::string cipher_error;

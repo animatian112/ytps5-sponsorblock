@@ -91,7 +91,10 @@ struct VideoInfo
     std::string title;
     std::string author;
     double length_s = 0.0;
-    bool live = false;
+    bool live = false;     // isLiveContent: a broadcast, running or finished
+    bool live_now = false; // isLive: on the air right now
+    // streamingData.hlsManifestUrl: the HLS master playlist of a live answer.
+    std::string hls_url;
     std::vector<Format> formats;
     // The InnerTube client that answered, filled by player_variants(): the
     // player screen names it once this client's stream is the one playing.

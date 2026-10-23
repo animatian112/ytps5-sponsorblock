@@ -932,7 +932,9 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
     if (options_.remaining)
         ui::text(list, fonts.regular, "Remaining: " + clock_text(left), kRight,
                  kBottomRowY - 8.0f - rise, 30.0f, kInk, gfx::Align::right);
-    ui::text(list, fonts.regular, clock_text(shown_position) + " / " + clock_text(duration_),
+    ui::text(list, fonts.regular,
+             live_ ? "LIVE  " + clock_text(shown_position)
+                   : clock_text(shown_position) + " / " + clock_text(duration_),
              kRight, kBottomRowY + 34.0f - rise, 30.0f, kInk, gfx::Align::right);
 
     if (!tip.empty() && fonts.regular.font != nullptr)

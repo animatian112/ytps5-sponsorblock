@@ -698,6 +698,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     {
         chrome_.set_times(player_->clock_s(), player_->duration_s(),
                           player_->clock_s() + player_->buffered_s());
+        chrome_.set_live(video_view().info.live_now);
         chrome_.set_playing(!player_->paused() && !ended_);
     }
     // Shuffle picks once per video (and again when the section arrives).

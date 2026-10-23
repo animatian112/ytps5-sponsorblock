@@ -2368,8 +2368,11 @@ bool parse_video_info(std::string_view json, VideoInfo *info)
     info->length_s = number_field(details, "lengthSeconds", 0.0);
     yyjson_val *live = yyjson_obj_get(details, "isLiveContent");
     info->live = yyjson_is_bool(live) && yyjson_get_bool(live);
+    yyjson_val *live_now = yyjson_obj_get(details, "isLive");
+    info->live_now = yyjson_is_bool(live_now) && yyjson_get_bool(live_now);
 
     yyjson_val *streaming = yyjson_obj_get(root, "streamingData");
+    info->hls_url = string_field(streaming, "hlsManifestUrl");
     yyjson_val *adaptive = yyjson_obj_get(streaming, "adaptiveFormats");
     yyjson_val *formats = yyjson_obj_get(streaming, "formats");
     yyjson_val *raw = yyjson_is_arr(adaptive) ? adaptive : formats;
@@ -3616,6 +3619,9 @@ bool InnerTube::player_variants(const std::string &video_id, std::vector<VideoIn
                 impl_->ensure_sts(candidate.player_js_url);
                 log::line("player: %s %s [%s]", client.name,
                           format_summary(candidate.formats).c_str(), candidate.census.c_str());
+                if (candidate.live_now)
+                    log::line("player: %s live now, hls %s", client.name,
+                              candidate.hls_url.empty() ? "absent" : "present");
                 if (!candidate.formats.empty())
                     itag = candidate.formats.front().itag;
                 answered = true;
