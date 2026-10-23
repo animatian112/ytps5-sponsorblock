@@ -162,11 +162,14 @@ std::uint32_t VideoUploader::upload_with(UploadMethod method, int width, int hei
         const int slot = buffer_next_;
         buffer_next_ = (buffer_next_ + 1) % kRing;
         // A fresh store each picture (the GPU may still read the one three
-        // pictures back), filled in the same call: a linear copy.
+        // pictures back), then a linear copy. Four pixels a GL_RGBA32UI
+        // texel, so the store is rounded up to whole texels.
+        const std::size_t store = (bytes + 15u) & ~static_cast<std::size_t>(15u);
         glBindBuffer(GL_TEXTURE_BUFFER, buffer_objects_[slot]);
-        glBufferData(GL_TEXTURE_BUFFER, static_cast<GLsizeiptr>(bytes), rgba, GL_STREAM_DRAW);
+        glBufferData(GL_TEXTURE_BUFFER, static_cast<GLsizeiptr>(store), nullptr, GL_STREAM_DRAW);
+        glBufferSubData(GL_TEXTURE_BUFFER, 0, static_cast<GLsizeiptr>(bytes), rgba);
         glBindTexture(GL_TEXTURE_BUFFER, buffer_textures_[slot]);
-        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA8, buffer_objects_[slot]);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32UI, buffer_objects_[slot]);
         glBindTexture(GL_TEXTURE_BUFFER, 0);
         glBindBuffer(GL_TEXTURE_BUFFER, 0);
         current_buffer_ = buffer_textures_[slot];

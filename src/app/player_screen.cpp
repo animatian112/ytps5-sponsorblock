@@ -413,6 +413,18 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
         chrome_.set_ranges(std::move(ranges));
         yt::log::line("sponsorblock: %zu segments on the bar (%s)", sponsor_.segments().size(),
                       sponsor_.status().c_str());
+        // Every segment with what Settings make of it, so a missed skip in
+        // yt.log can be matched to its category and setting.
+        sponsor_missed_.clear();
+        for (const sb::Segment &segment : sponsor_.segments())
+        {
+            const int act = segment.index >= 0 && segment.index < Settings::kSbCategories
+                                ? settings.sb_act[segment.index]
+                                : -1;
+            yt::log::line("sponsorblock:   %s (%s) %.1f-%.1f s, setting %d",
+                          segment.category.c_str(), segment.action.c_str(), segment.start_s,
+                          segment.end_s, act);
+        }
         const std::string label = sponsor_.whole_video_label();
         if (!label.empty() && settings.sb_act[9] != 0 && sponsor_notice_for_ != playing_id_)
         {
@@ -438,6 +450,29 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
             sb::report_viewed(decision.uuid, settings.sb_alt_server);
         yt::log::line("sponsorblock: skipped %s to %.1f s", decision.label.c_str(),
                       decision.target_s);
+    }
+
+    // A segment set to skip that the playhead is well inside, with no skip:
+    // logged once each, with what the skip rules saw (diagnosis of reports
+    // that sponsors and endcards play through).
+    for (std::size_t i = 0; i < sponsor_.segments().size(); ++i)
+    {
+        const sb::Segment &segment = sponsor_.segments()[i];
+        if (segment.action != "skip" || segment.index < 0 ||
+            segment.index >= Settings::kSbCategories)
+            continue;
+        const int act = settings.sb_act[segment.index];
+        if ((act != 1 && act != 2) || position < segment.start_s + 2.5 ||
+            position > segment.end_s - 1.0)
+            continue;
+        if (std::find(sponsor_missed_.begin(), sponsor_missed_.end(), i) != sponsor_missed_.end())
+            continue;
+        sponsor_missed_.push_back(i);
+        yt::log::line("sponsorblock: inside %s %.1f-%.1f at %.1f s without a skip (playing=%d "
+                      "paused=%d ended=%d buffered=%.1f duration=%.1f)",
+                      segment.category.c_str(), segment.start_s, segment.end_s, position,
+                      playing ? 1 : 0, player_->paused() ? 1 : 0, ended_ ? 1 : 0,
+                      player_->buffered_s(), duration);
     }
 
     // The segment under the playhead, for the Triangle hint; without one, a

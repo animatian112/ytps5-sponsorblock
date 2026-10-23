@@ -1439,17 +1439,18 @@ void FfmpegPlayer::fall_back_to_software(const std::string &why)
 void FfmpegPlayer::hardware_picture(const hui::ps5::DecodedPicture &picture, std::int64_t pts)
 {
     // The decoder's picture: NV12 (a full-size luma plane, then the half-height
-    // interleaved chroma plane) at `pitch` bytes a row. Where the chroma
-    // starts follows from the slot's size when that is consistent, else from
-    // the height rounded to a block.
+    // interleaved chroma plane) at `pitch` bytes a row. The luma plane is the
+    // height rounded up to 64 rows, and the slot is rounded up to 32 KiB: on
+    // the console a 3840x2160 slot is 12550144 bytes = 3840 x (2176 + 1088)
+    // rounded up, so the chroma starts at row 2176. (1.0.161-1.0.166 took
+    // 2178 from the size alone: colours two rows high, a green bottom edge.)
     const int pitch = picture.pitch > 0 ? picture.pitch : picture.width;
-    int rows = (picture.height + 15) & ~15;
-    if (picture.size > 0 && pitch > 0)
+    int rows = (picture.height + 63) & ~63;
+    if (picture.size > 0 && pitch > 0 &&
+        static_cast<std::size_t>(pitch) * static_cast<std::size_t>(rows) * 3 / 2 > picture.size)
     {
-        const std::size_t from_size = picture.size * 2 / (static_cast<std::size_t>(pitch) * 3);
-        if (from_size >= static_cast<std::size_t>(picture.height) &&
-            from_size <= static_cast<std::size_t>(picture.height) + 256)
-            rows = static_cast<int>(from_size);
+        // A slot too small for that layout: the plane is only 16-row aligned.
+        rows = (picture.height + 15) & ~15;
     }
     if (hardware_pictures_ == 0)
         log::line("ffmpeg: hardware picture %dx%d pitch=%d format=0x%x size=%zu luma rows=%d",

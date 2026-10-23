@@ -247,12 +247,14 @@ void main()
 }
 )";
 
-// The video picture from a buffer texture: four texel fetches and a
+// The video picture from a buffer texture: four pixel fetches and a
 // bilinear blend stand in for the 2D texture's filtering. Same vertex shader
-// and instance layout as the batch program, image shape only.
+// and instance layout as the batch program, image shape only. The buffer is
+// GL_RGBA32UI, four RGBA8 pixels a texel: ps5-opengl allows 1M texels a
+// buffer texture, a quarter of a 1080p picture's pixels.
 constexpr const char *kVideoFragment = R"(
 layout(location = 0) uniform vec4 u_viewport;
-layout(location = 9) uniform samplerBuffer u_video;
+layout(location = 9) uniform usamplerBuffer u_video;
 layout(location = 10) uniform ivec2 u_video_size;
 in vec2 v_local;
 in vec2 v_uv;
@@ -266,7 +268,9 @@ out vec4 frag_color;
 vec4 fetch(ivec2 p)
 {
     p = clamp(p, ivec2(0), u_video_size - ivec2(1));
-    return texelFetch(u_video, p.y * u_video_size.x + p.x);
+    int index = p.y * u_video_size.x + p.x;
+    uvec4 four = texelFetch(u_video, index >> 2);
+    return unpackUnorm4x8(four[index & 3]);
 }
 
 float round_box(vec2 p, vec2 b, float r)
@@ -304,12 +308,13 @@ void main()
 )";
 
 constexpr const char *kProbeFragment = R"(
-layout(location = 0) uniform samplerBuffer u_video;
+layout(location = 0) uniform usamplerBuffer u_video;
 layout(location = 1) uniform int u_index;
 out vec4 frag_color;
 void main()
 {
-    frag_color = texelFetch(u_video, u_index);
+    uvec4 four = texelFetch(u_video, u_index >> 2);
+    frag_color = unpackUnorm4x8(four[u_index & 3]);
 }
 )";
 
@@ -433,7 +438,7 @@ bool GlBatch::video_buffers_supported()
     if (video_state_ == 0)
     {
         video_state_ = -1;
-        if (max_buffer_texels() >= 1920LL * 1080LL)
+        if (max_buffer_texels() * 4 >= 1920LL * 1080LL)
         {
             video_program_ = build_program("video_buffer", kVertex, kVideoFragment);
             if (video_program_ != 0)

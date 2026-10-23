@@ -41,13 +41,14 @@ class GlBatch
     // Uploads RGBA8 pixels as a single-level texture; returns its name.
     std::uint32_t create_texture(int width, int height, const std::uint8_t *rgba);
 
-    // Video pictures read from a buffer texture (GL_RGBA8 texels, one per
-    // pixel, rows top first). A buffer upload is a plain copy, where a 2D
+    // Video pictures read from a buffer texture (GL_RGBA32UI texels, four
+    // RGBA8 pixels each, rows top first). A buffer upload is a plain copy, where a 2D
     // texture upload on ps5-opengl costs ~15 ns a texel to tile. The video
     // program is built on first use; false when this GL cannot run it, and
     // then the caller keeps 2D textures.
     bool video_buffers_supported();
-    // Texels one buffer texture may hold (GL_MAX_TEXTURE_BUFFER_SIZE).
+    // Texels one buffer texture may hold (GL_MAX_TEXTURE_BUFFER_SIZE); each
+    // carries four pixels.
     long long max_buffer_texels();
     void set_video_source(GLuint buffer_texture, int width, int height);
     // Draws texel `index` of a filled buffer texture into a 1x1 target and

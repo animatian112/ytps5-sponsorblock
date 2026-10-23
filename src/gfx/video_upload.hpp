@@ -22,7 +22,7 @@ enum class UploadMethod : int
     ring = 2,      // three textures in turn, glTexSubImage2D into the oldest
     pbo = 3,       // three textures in turn, filled from a pixel buffer
     deferred = 4,  // a new texture each picture, deleted three pictures later
-    buffer = 5,    // three buffer textures in turn: a plain copy, no tiling
+    buffer = 5,    // three buffer textures in turn (4 pixels a texel): a plain copy
 };
 
 constexpr int kUploadMethodCount = 6;
@@ -104,8 +104,10 @@ class VideoUploader
 
     bool buffer_fits(int width, int height) const
     {
+        // Four pixels a texel (GL_RGBA32UI).
         return buffer_supported_ &&
-               static_cast<long long>(width) * static_cast<long long>(height) <= buffer_max_texels_;
+               (static_cast<long long>(width) * static_cast<long long>(height) + 3) / 4 <=
+                   buffer_max_texels_;
     }
 };
 

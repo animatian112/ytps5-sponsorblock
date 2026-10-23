@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace hui::app
 {
@@ -99,6 +100,7 @@ class PlayerScreen final : public Screen
     bool upload_report_logged_ = false;
     bool buffer_support_checked_ = false;
     bool buffer_verified_ = false;
+    std::vector<std::size_t> sponsor_missed_; // segments logged as played through
     std::uint32_t texture_ = 0;
     int texture_width_ = 0;
     int texture_height_ = 0;
