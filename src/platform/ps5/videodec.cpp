@@ -63,6 +63,14 @@ extern "C"
                                         int flags, const char *name);
     int sceKernelReleaseFlexibleMemory(void *address, std::size_t length);
     int munmap(void *address, std::size_t length);
+    // Loading the decoder module ourselves: the loader leaves the 26 static
+    // imports unbound for this title (yt.log: "imports not bound (0/26)"), so
+    // the module is loaded the way the verified sequence starts
+    // (sceSysmoduleLoadModule(207)) and each entry point is looked up by name.
+    int sceSysmoduleLoadModule(std::uint16_t id);
+    int sceKernelLoadStartModule(const char *path, std::size_t args, const void *argp,
+                                 std::uint32_t flags, const void *option, int *result);
+    int sceKernelDlsym(int handle, const char *symbol, void **address);
 }
 
 namespace hui::ps5
@@ -182,6 +190,111 @@ enum ImportIndex : std::size_t
 
 static_assert(kImportCount == static_cast<std::size_t>(kVideodecImportCount),
               "the table and the header's import count must agree");
+
+// The same 26 entry points by name, in the table's order, for sceKernelDlsym.
+constexpr const char *kImportNames[] = {
+    "sceVideodec2InitLibrary",
+    "sceVideodec2TermLibrary",
+    "sceVideodec2QueryLibraryInfo",
+    "sceVideodec2QueryDecoderInfo",
+    "sceVideodec2CreateDecoder",
+    "sceVideodec2CreateDecoderBid",
+    "sceVideodec2CreateHevcDecoder",
+    "sceVideodec2DeleteDecoder",
+    "sceVideodec2PresetDecoderConfigInfo",
+    "sceVideodec2PresetDecoderConfigInfoAvc",
+    "sceVideodec2PresetDecoderConfigInfoHevc",
+    "sceVideodec2PresetDecoderConfigInfoVp9",
+    "sceVideodec2QueryDecoderMemoryInfo",
+    "sceVideodec2QueryHevcDecoderMemoryInfo",
+    "sceVideodec2QueryComputeMemoryInfo",
+    "sceVideodec2AllocateComputeQueue",
+    "sceVideodec2ReleaseComputeQueue",
+    "sceVideodec2MapDirectMemory",
+    "sceVideodec2MapMemory",
+    "sceVideodec2Decode",
+    "sceVideodec2Flush",
+    "sceVideodec2Reset",
+    "sceVideodec2GetPictureInfo",
+    "sceVideodec2GetAvcPictureInfo",
+    "sceVideodec2GetHevcPictureInfo",
+    "sceVideodec2GetVp9PictureInfo",
+};
+static_assert(sizeof(kImportNames) / sizeof(kImportNames[0]) == kImportCount,
+              "one name per import");
+
+// What sceKernelDlsym found, for the imports the loader left unbound.
+Symbol g_resolved[kImportCount] = {};
+bool g_load_tried = false;
+
+// The module ID the verified bring-up loads (docs/evo-pro/videodec2-abi.md §2).
+constexpr std::uint16_t kSysmoduleVideodec2 = 207;
+
+// Loads libSceVideodec2 (once) and looks up every entry point by name.
+void load_library()
+{
+    if (g_load_tried)
+        return;
+    g_load_tried = true;
+    // Imports the loader could not bind read as null (as the table above
+    // relies on): none of these is called through a null address.
+    using SysmoduleLoadFn = int (*)(std::uint16_t);
+    using LoadStartFn =
+        int (*)(const char *, std::size_t, const void *, std::uint32_t, const void *, int *);
+    using DlsymFn = int (*)(int, const char *, void **);
+    volatile SysmoduleLoadFn const load_module = &sceSysmoduleLoadModule;
+    volatile LoadStartFn const load_start = &sceKernelLoadStartModule;
+    volatile DlsymFn const dlsym_fn = &sceKernelDlsym;
+    if (load_module != nullptr)
+    {
+        const int sysmodule = load_module(kSysmoduleVideodec2);
+        sys::log("[YTV] videodec2 sceSysmoduleLoadModule(%u): 0x%08x",
+                 static_cast<unsigned>(kSysmoduleVideodec2), static_cast<unsigned>(sysmodule));
+    }
+    else
+        sys::log("[YTV] videodec2 sceSysmoduleLoadModule: not bound");
+    if (load_start == nullptr || dlsym_fn == nullptr)
+    {
+        sys::log("[YTV] videodec2 module loading: libkernel entry points not bound");
+        return;
+    }
+    // The module's handle: a module already loaded answers its own handle.
+    static const char *const kPaths[] = {
+        "/system/common/lib/libSceVideodec2.sprx",
+        "/system/priv/lib/libSceVideodec2.sprx",
+        "libSceVideodec2.sprx",
+    };
+    int handle = -1;
+    for (const char *path : kPaths)
+    {
+        int started = 0;
+        handle = load_start(path, 0, nullptr, 0, nullptr, &started);
+        sys::log("[YTV] videodec2 sceKernelLoadStartModule(%s): 0x%08x", path,
+                 static_cast<unsigned>(handle));
+        if (handle >= 0)
+            break;
+    }
+    if (handle < 0)
+        return;
+    int found = 0;
+    for (std::size_t index = 0; index < kImportCount; ++index)
+    {
+        void *address = nullptr;
+        if (dlsym_fn(handle, kImportNames[index], &address) == 0 && address != nullptr)
+        {
+            g_resolved[index] = reinterpret_cast<Symbol>(address);
+            ++found;
+        }
+    }
+    sys::log("[YTV] videodec2 dlsym: %d/%d entry points", found, kVideodecImportCount);
+}
+
+// An entry point: the loader's binding, else what dlsym found.
+Symbol import_at(std::size_t index)
+{
+    const Symbol bound = kDecoderImports[index];
+    return bound != nullptr ? bound : g_resolved[index];
+}
 
 // ---------------------------------------------------------------------------
 // Memory typing. docs/evo-pro/videodec2-abi.md §2 ("alloc_direct") and the
@@ -410,8 +523,7 @@ std::string unbound_error(int reachable)
 template <typename Fn, typename... Args>
 bool call_step(const char *name, ImportIndex index, int reachable, std::string *error, Args... args)
 {
-    const Symbol slot = kDecoderImports[index];
-    const auto fn = reinterpret_cast<Fn>(slot);
+    const auto fn = reinterpret_cast<Fn>(import_at(index));
     if (fn == nullptr)
     {
         sys::log("[YTV] videodec2 %s: not bound (imports %d/%d)", name, reachable,
@@ -436,7 +548,7 @@ template <typename Fn, typename... Args>
 bool call_quiet(const char *name, ImportIndex index, int reachable, std::string *error,
                 Args... args)
 {
-    const auto fn = reinterpret_cast<Fn>(kDecoderImports[index]);
+    const auto fn = reinterpret_cast<Fn>(import_at(index));
     if (fn == nullptr)
     {
         set_error(error, unbound_error(reachable));
@@ -513,7 +625,7 @@ int videodec_imports_reachable()
     int bound = 0;
     for (std::size_t index = 0; index < kImportCount; ++index)
     {
-        if (kDecoderImports[index] != nullptr)
+        if (import_at(index) != nullptr)
             ++bound;
     }
     return bound;
@@ -585,6 +697,11 @@ bool HardwareDecoder::open(yt::Codec codec, int width, int height, std::string *
         set_error(error, "open: invalid picture size");
         return false;
     }
+
+    // The loader leaves the static imports unbound for this title: load the
+    // module and look the entry points up (once).
+    if (kDecoderImports[kDecode] == nullptr)
+        load_library();
 
     m_session = std::make_unique<Session>();
     Session &session = *m_session;

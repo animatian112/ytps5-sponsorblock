@@ -584,12 +584,24 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
 
     if (player_ != nullptr)
     {
+        const auto update_start = std::chrono::steady_clock::now();
         player_->update();
+        const long long update_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                        std::chrono::steady_clock::now() - update_start)
+                                        .count();
+        update_us_ += update_us;
+        update_max_us_ = std::max(update_max_us_, update_us);
+        ++update_count_;
         const yt::VideoFrameView frame = player_->poll_frame();
         if (frame.fresh && frame.rgba != nullptr && frame.width > 0 && frame.height > 0)
         {
+            const auto upload_start = std::chrono::steady_clock::now();
             drop_texture();
             texture_ = context_.batch.create_texture(frame.width, frame.height, frame.rgba);
+            upload_us_ += std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::steady_clock::now() - upload_start)
+                              .count();
+            ++upload_count_;
             texture_width_ = frame.width;
             texture_height_ = frame.height;
             last_pts_ = frame.pts;
@@ -601,7 +613,22 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             if (now - last_upload_log_ >= std::chrono::seconds(1))
             {
                 last_upload_log_ = now;
-                yt::log::line("ffmpeg: texture upload %dx%dx4", frame.width, frame.height);
+                // Where the frame thread's time goes: the player's own work
+                // (read, decode, convert) and the texture upload.
+                yt::log::line(
+                    "ffmpeg: texture upload %dx%dx4 (%d in the last second, %.1f ms avg); "
+                    "player update %.1f ms avg, %.1f ms max over %d frames",
+                    frame.width, frame.height, upload_count_,
+                    upload_count_ > 0 ? static_cast<double>(upload_us_) / 1000.0 / upload_count_
+                                      : 0.0,
+                    update_count_ > 0 ? static_cast<double>(update_us_) / 1000.0 / update_count_
+                                      : 0.0,
+                    static_cast<double>(update_max_us_) / 1000.0, update_count_);
+                upload_us_ = 0;
+                upload_count_ = 0;
+                update_us_ = 0;
+                update_max_us_ = 0;
+                update_count_ = 0;
             }
         }
         ended_ = player_->ended();
