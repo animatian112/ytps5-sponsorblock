@@ -430,6 +430,28 @@ bool call_step(const char *name, ImportIndex index, int reachable, std::string *
 }
 
 // One platform (sceKernel*) step: same logging, no import table.
+// call_step without the success line: for the calls made once per frame,
+// where a log line each would cost more than the call.
+template <typename Fn, typename... Args>
+bool call_quiet(const char *name, ImportIndex index, int reachable, std::string *error,
+                Args... args)
+{
+    const auto fn = reinterpret_cast<Fn>(kDecoderImports[index]);
+    if (fn == nullptr)
+    {
+        set_error(error, unbound_error(reachable));
+        return false;
+    }
+    const int result = fn(args...);
+    if (result < 0)
+    {
+        log_step(name, result, reachable);
+        set_error(error, step_error(name, result));
+        return false;
+    }
+    return true;
+}
+
 bool platform_step(const char *name, int result, int reachable, std::string *error)
 {
     log_step(name, result, reachable);
@@ -534,6 +556,7 @@ struct HardwareDecoder::Session
     std::size_t frame_slot_bytes = 0;
 
     int reachable = 0;
+    bool vp9 = false;
 };
 
 HardwareDecoder::HardwareDecoder() = default;
@@ -629,6 +652,7 @@ bool HardwareDecoder::open(yt::Codec codec, int width, int height, std::string *
     // 2. The decoder configuration is built explicitly, not left to a preset:
     //    resource_type = Compute plus the queue handle, an explicit per-codec
     //    profile/level, and the geometry/depth this session fixes.
+    session.vp9 = codec == yt::Codec::vp9;
     const CodecParams params = codec_params(codec);
     const bool high_res = width > 1920 || height > 1088;
 
@@ -719,7 +743,9 @@ bool HardwareDecoder::open(yt::Codec codec, int width, int height, std::string *
         close();
         return false;
     }
-    if (!alloc_direct("frame", frame_slot, kProtectionGpu, limit, &session.frame_physical,
+    // CPU-readable (0x33, as evo_vdec_native.c maps every region): the player
+    // reads each decoded picture back to convert it for the screen.
+    if (!alloc_direct("frame", frame_slot, kProtectionCpuGpu, limit, &session.frame_physical,
                       &session.frame_pool, reachable, error))
     {
         close();
@@ -784,14 +810,20 @@ bool HardwareDecoder::decode(const std::uint8_t *data, std::size_t size, Decoded
     OutputInfo output{};
     output.this_size = sizeof(OutputInfo);
 
-    if (!call_step<DecodeFn>("sceVideodec2Decode", kDecode, reachable, error, session.decoder,
-                             &input, &frame, &output))
+    if (!call_quiet<DecodeFn>("sceVideodec2Decode", kDecode, reachable, error, session.decoder,
+                              &input, &frame, &output))
         return false;
 
     // At depth one a stream may hold its first picture back. docs/HARDWARE_DECODE.md
     // records exactly this for the tested H.264 streams (no picture from decode,
     // an immediate flush produced it); VP9 returned the picture straight away, so
     // this only runs when decode produced nothing.
+    if (!output.valid && session.vp9 && !output.error)
+    {
+        // VP9 shows nothing for a hidden reference frame (the alt-ref of a
+        // superframe): not a failure, and no flush (it would end the stream).
+        return true;
+    }
     if (!output.valid)
     {
         if (!call_step<FlushFn>("sceVideodec2Flush", kFlush, reachable, error, session.decoder,
@@ -832,7 +864,19 @@ bool HardwareDecoder::decode(const std::uint8_t *data, std::size_t size, Decoded
     out->pitch = static_cast<int>(output.frame_pitch_in_bytes != 0 ? output.frame_pitch_in_bytes
                                                                    : output.frame_pitch);
     out->format = output.frame_format;
+    out->size = static_cast<std::size_t>(output.frame_buffer_size);
     return true;
+}
+
+bool HardwareDecoder::reset(std::string *error)
+{
+    if (m_session == nullptr || m_session->decoder == nullptr)
+    {
+        set_error(error, "reset: decoder is not open");
+        return false;
+    }
+    return call_step<ResetFn>("sceVideodec2Reset", kReset, m_session->reachable, error,
+                              m_session->decoder);
 }
 
 void HardwareDecoder::close()

@@ -127,3 +127,21 @@ along). Reasons:
 | VP9 | 4K60 | borderline | 59.95 fps stable, 16.7 ms AU→flip |
 | HEVC | 4K60 | borderline | 60.36 fps, 5.46 ms decode |
 | AV1 | any | software | no proof |
+
+## Experimental read-back path (Decoding: Hardware)
+
+Since 01.000.160 the player can show what the decoder produces without a GL
+import: with **Player > Decoding > Hardware** and an 8-bit VP9 stream
+(profile 0), packets go through ffmpeg's `vp9_superframe_split` filter to the
+Videodec2 session, the frame pool is mapped CPU-readable (`0x33`, as
+`evo_vdec_native.c` maps every region), and each picture is read straight from
+the slot as NV12 (luma rows derived from the slot size) and converted and
+scaled by the same threaded swscale step as a software picture. AVC (picture
+reordering at depth one is unproven), AV1 and 10-bit/HDR VP9 stay on software.
+
+Any decode failure before the first picture, or three in a row after it,
+switches the stream back to software at the current position. `yt.log` names
+each step: `hardware decode ON/not used/OFF`, the first picture's geometry
+(`pitch`, `format`, `size`, `luma rows`), and every 5 s the pictures decoded
+and the average read-back + convert time. If the picture comes out scrambled
+the surface is tiled, and the zero-copy path is the way forward.

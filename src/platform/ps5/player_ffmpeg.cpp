@@ -28,6 +28,7 @@
 extern "C"
 {
 #include <libavcodec/avcodec.h>
+#include <libavcodec/bsf.h>
 #include <libavfilter/avfilter.h>
 #include <libavfilter/buffersink.h>
 #include <libavfilter/buffersrc.h>
@@ -320,13 +321,14 @@ class FfmpegPlayer final : public Player
     {
         char text[512];
         std::snprintf(text, sizeof(text),
-                      "decode  %s software, %d threads, deblocking %s\n"
+                      "decode  %s %s, %d threads, deblocking %s\n"
                       "picture %dp -> %dx%d RGBA, convert %s (%d threads)\n"
                       "queue   %zu of %zu pictures, %.1f s buffered, %llu dropped late",
-                      quality_.c_str(), decoder_threads_, deblock_skipped_ ? "off" : "on",
-                      source_height_.load(), video_width_, video_height_,
-                      sws_threaded_ ? "threaded" : "single", convert_threads_, video_queue_.size(),
-                      video_queue_depth_, buffered_s(),
+                      quality_.c_str(),
+                      hardware_active_ ? "HARDWARE (Videodec2, experimental)" : "software",
+                      decoder_threads_, deblock_skipped_ ? "off" : "on", source_height_.load(),
+                      video_width_, video_height_, sws_threaded_ ? "threaded" : "single",
+                      convert_threads_, video_queue_.size(), video_queue_depth_, buffered_s(),
                       static_cast<unsigned long long>(video_frames_dropped_.load()));
         return text;
     }
@@ -348,6 +350,13 @@ class FfmpegPlayer final : public Player
     std::string make_quality_label() const;
 
     void pump_video(int budget);
+    // The experimental hardware path (Decoding: Hardware, VP9): packets go
+    // through vp9_superframe_split to Videodec2, each decoded picture is read
+    // back from the CPU-readable frame slot and converted like a software one.
+    void pump_video_hardware(int budget);
+    bool start_hardware();
+    void hardware_picture(const hui::ps5::DecodedPicture &picture, std::int64_t pts);
+    void fall_back_to_software(const std::string &why);
     void pump_audio(int budget);
     void emit_video(AVFrame *frame);
     void emit_audio(AVFrame *frame);
@@ -578,6 +587,15 @@ class FfmpegPlayer final : public Player
     // software playback never constructs or touches the hardware decoder.
     DecodeMode decode_mode_ = DecodeMode::auto_detect;
     std::unique_ptr<hui::ps5::HardwareDecoder> hardware_;
+    bool hardware_active_ = false; // pictures come from Videodec2
+    AVBSFContext *hardware_bsf_ = nullptr;
+    AVPacket *hardware_packet_ = nullptr;
+    AVFrame *hardware_frame_ = nullptr; // wraps the decoder's picture for the converter
+    int hardware_failures_ = 0;
+    std::uint64_t hardware_pictures_ = 0;
+    std::int64_t hardware_convert_us_ = 0; // for the once-a-second line
+    int hardware_convert_count_ = 0;
+    std::chrono::steady_clock::time_point hardware_log_{};
 
     double clock_ = 0.0;
     bool wall_anchor_ = false;
@@ -681,15 +699,10 @@ bool FfmpegPlayer::open(const std::string &video_url, const std::string &audio_u
                           hardware_error.c_str());
                 hardware_.reset();
             }
-            else
+            else if (!start_hardware())
             {
-                // The session is up, but this build has no import path that
-                // turns a decoder surface into a GL texture (the unproven
-                // mesa_glinterop route in docs/HARDWARE_DECODE.md), so a
-                // decoded picture cannot reach the screen. Fail the hardware
-                // attempt the same way any other step failure is reported.
-                log::line("ffmpeg: hardware decode unavailable: %s, using software",
-                          "hardware picture import unavailable");
+                // The session is up but this stream cannot take the
+                // experimental read-back path (see start_hardware's line).
                 hardware_->close();
                 hardware_.reset();
             }
@@ -1244,8 +1257,225 @@ void FfmpegPlayer::clear_video_pool()
     video_free_count_ = 0;
 }
 
+bool FfmpegPlayer::start_hardware()
+{
+    // Experimental, and only on request: Decoding set to Hardware, a VP9
+    // stream of 8-bit 4:2:0 (profile 0). AVC reorders pictures (B-frames),
+    // which a depth-one session cannot be trusted with; HDR VP9 is profile 2.
+    const AVCodecParameters *par = video_.stream->codecpar;
+    const char *refusal = nullptr;
+    if (decode_mode_ != DecodeMode::hardware)
+        refusal = "Decoding is not set to Hardware";
+    else if (par->codec_id != AV_CODEC_ID_VP9)
+        refusal = "only VP9 takes the hardware path";
+    else if (par->profile > 0 || par->bits_per_raw_sample > 8 ||
+             par->color_trc == AVCOL_TRC_SMPTE2084 || par->color_trc == AVCOL_TRC_ARIB_STD_B67)
+        refusal = "a 10-bit / HDR VP9 stream (profile 2)";
+    const AVBitStreamFilter *split =
+        refusal == nullptr ? av_bsf_get_by_name("vp9_superframe_split") : nullptr;
+    if (refusal == nullptr && split == nullptr)
+        refusal = "no vp9_superframe_split filter in this build";
+    if (refusal == nullptr &&
+        (av_bsf_alloc(split, &hardware_bsf_) < 0 ||
+         avcodec_parameters_copy(hardware_bsf_->par_in, par) < 0 || av_bsf_init(hardware_bsf_) < 0))
+        refusal = "the superframe filter did not start";
+    if (refusal == nullptr)
+    {
+        hardware_packet_ = av_packet_alloc();
+        hardware_frame_ = av_frame_alloc();
+        if (hardware_packet_ == nullptr || hardware_frame_ == nullptr)
+            refusal = "out of memory";
+    }
+    if (refusal != nullptr)
+    {
+        log::line("ffmpeg: hardware decode not used: %s", refusal);
+        if (hardware_bsf_ != nullptr)
+            av_bsf_free(&hardware_bsf_);
+        av_packet_free(&hardware_packet_);
+        av_frame_free(&hardware_frame_);
+        return false;
+    }
+    hardware_active_ = true;
+    hardware_failures_ = 0;
+    hardware_pictures_ = 0;
+    log::line("ffmpeg: hardware decode ON (experimental): vp9 %dx%d via Videodec2, read back",
+              par->width, par->height);
+    return true;
+}
+
+void FfmpegPlayer::fall_back_to_software(const std::string &why)
+{
+    log::line("ffmpeg: hardware decode OFF after %llu pictures: %s; software from here",
+              static_cast<unsigned long long>(hardware_pictures_), why.c_str());
+    hardware_active_ = false;
+    if (hardware_ != nullptr)
+        hardware_->close();
+    hardware_.reset();
+    if (hardware_bsf_ != nullptr)
+        av_bsf_free(&hardware_bsf_);
+    av_packet_free(&hardware_packet_);
+    av_frame_free(&hardware_frame_);
+    // The software decoder starts from a keyframe: back to where the picture is.
+    const double at = frame_seen_ ? last_video_pts_ : clock_;
+    seek(at > 0.0 ? at : 0.0);
+}
+
+void FfmpegPlayer::hardware_picture(const hui::ps5::DecodedPicture &picture, std::int64_t pts)
+{
+    // The decoder's picture: NV12 (a full-size luma plane, then the half-height
+    // interleaved chroma plane) at `pitch` bytes a row. Where the chroma
+    // starts follows from the slot's size when that is consistent, else from
+    // the height rounded to a block.
+    const int pitch = picture.pitch > 0 ? picture.pitch : picture.width;
+    int rows = (picture.height + 15) & ~15;
+    if (picture.size > 0 && pitch > 0)
+    {
+        const std::size_t from_size = picture.size * 2 / (static_cast<std::size_t>(pitch) * 3);
+        if (from_size >= static_cast<std::size_t>(picture.height) &&
+            from_size <= static_cast<std::size_t>(picture.height) + 256)
+            rows = static_cast<int>(from_size);
+    }
+    if (hardware_pictures_ == 0)
+        log::line("ffmpeg: hardware picture %dx%d pitch=%d format=0x%x size=%zu luma rows=%d",
+                  picture.width, picture.height, pitch, picture.format, picture.size, rows);
+    ++hardware_pictures_;
+
+    auto *base = static_cast<std::uint8_t *>(const_cast<void *>(picture.address));
+    AVFrame *frame = hardware_frame_;
+    av_frame_unref(frame);
+    // Lent, not owned: the converter takes a reference, the slot stays the
+    // decoder's (freed by nobody here).
+    frame->buf[0] = av_buffer_create(
+        base, picture.size > 0 ? picture.size : static_cast<std::size_t>(pitch) * rows * 3 / 2,
+        [](void *, std::uint8_t *) {}, nullptr, 0);
+    if (frame->buf[0] == nullptr)
+        return;
+    frame->format = AV_PIX_FMT_NV12;
+    frame->width = picture.width;
+    frame->height = picture.height;
+    frame->data[0] = base;
+    frame->linesize[0] = pitch;
+    frame->data[1] = base + static_cast<std::size_t>(pitch) * static_cast<std::size_t>(rows);
+    frame->linesize[1] = pitch;
+    frame->pts = pts;
+    frame->best_effort_timestamp = pts;
+
+    const double at = frame_pts(frame);
+    if (video_seek_target_ >= 0.0)
+    {
+        // Decoded only to reach the seek target (capped as in software).
+        if (at + kLateFrameToleranceS < video_seek_target_ && ++video_seek_skipped_ < 600)
+            return;
+        video_seek_target_ = -1.0;
+    }
+    const std::int64_t start = now_us();
+    emit_video(frame);
+    av_frame_unref(frame);
+    hardware_convert_us_ += now_us() - start;
+    ++hardware_convert_count_;
+    const auto wall = std::chrono::steady_clock::now();
+    if (wall - hardware_log_ >= std::chrono::seconds(5))
+    {
+        hardware_log_ = wall;
+        log::line("ffmpeg: hardware %llu pictures, read back + convert %.1f ms avg",
+                  static_cast<unsigned long long>(hardware_pictures_),
+                  hardware_convert_count_ > 0
+                      ? static_cast<double>(hardware_convert_us_) / 1000.0 / hardware_convert_count_
+                      : 0.0);
+        hardware_convert_us_ = 0;
+        hardware_convert_count_ = 0;
+    }
+}
+
+void FfmpegPlayer::pump_video_hardware(int budget)
+{
+    int work = 0;
+    while (work < budget && hardware_active_ && !video_.drained)
+    {
+        if (out_of_time() || video_queue_.size() >= video_queue_depth_)
+            return;
+        // The split frames of the last packet first.
+        const int filtered = av_bsf_receive_packet(hardware_bsf_, hardware_packet_);
+        if (filtered == 0)
+        {
+            hui::ps5::DecodedPicture picture;
+            std::string error;
+            const std::int64_t pts = hardware_packet_->pts;
+            const bool ok = hardware_->decode(hardware_packet_->data,
+                                              static_cast<std::size_t>(hardware_packet_->size),
+                                              &picture, &error);
+            av_packet_unref(hardware_packet_);
+            ++work;
+            if (!ok)
+            {
+                log::line("ffmpeg: hardware decode failed: %s", error.c_str());
+                if (++hardware_failures_ >= 3 || hardware_pictures_ == 0)
+                {
+                    fall_back_to_software(error);
+                    return;
+                }
+                continue;
+            }
+            hardware_failures_ = 0;
+            if (picture.address != nullptr && picture.width > 0 && picture.height > 0)
+                hardware_picture(picture, pts);
+            continue;
+        }
+        if (filtered != AVERROR(EAGAIN))
+        {
+            if (filtered == AVERROR_EOF)
+            {
+                video_.drained = true;
+                log::line("ffmpeg: video stream ended (eof, hardware)");
+                return;
+            }
+            fall_back_to_software("superframe filter: " + av_error(filtered));
+            return;
+        }
+        if (video_.eof)
+        {
+            av_bsf_send_packet(hardware_bsf_, nullptr); // drains, then reports EOF
+            continue;
+        }
+        const int read = av_read_frame(video_.format, video_.packet);
+        if (read >= 0)
+        {
+            video_.consecutive_errors = 0;
+            video_.stalled_reads = 0;
+            if (video_.packet->stream_index == video_.stream_index)
+                av_bsf_send_packet(hardware_bsf_, video_.packet); // takes the packet
+            av_packet_unref(video_.packet);
+            ++work;
+            continue;
+        }
+        av_packet_unref(video_.packet);
+        if (read == AVERROR(EAGAIN) || abort_.load())
+            return;
+        if (is_interrupt_error(read) || out_of_time())
+        {
+            if (note_stalled_read(video_))
+                return;
+            error_ = "read stalled: no data for " + std::to_string(video_.stalled_reads) + " s";
+            log::line("ffmpeg: video %s", error_.c_str());
+            video_.drained = true;
+            return;
+        }
+        if (read == AVERROR_EOF || !note_stream_error(video_, "video", "read", read))
+        {
+            video_.eof = true;
+            continue;
+        }
+        return;
+    }
+}
+
 void FfmpegPlayer::pump_video(int budget)
 {
+    if (hardware_active_)
+    {
+        pump_video_hardware(budget);
+        return;
+    }
     if (video_.format == nullptr || video_.drained)
     {
         return;
@@ -2245,6 +2475,14 @@ void FfmpegPlayer::seek(double seconds)
         avformat_seek_file(video_.format, -1, INT64_MIN, timestamp, INT64_MAX,
                            AVSEEK_FLAG_BACKWARD);
         avcodec_flush_buffers(video_.codec);
+        if (hardware_active_)
+        {
+            // The hardware decoder starts over from the keyframe the seek lands on.
+            std::string ignored;
+            if (hardware_ != nullptr)
+                (void)hardware_->reset(&ignored);
+            av_bsf_flush(hardware_bsf_);
+        }
         video_.eof = false;
         video_.drained = false;
         video_.stalled_reads = 0; // a fresh start: old stalls must not end it at once
@@ -2422,6 +2660,11 @@ void FfmpegPlayer::release()
     sws_src_format_ = -1;
     // Null in software mode, where the session was never created.
     hardware_.reset();
+    hardware_active_ = false;
+    if (hardware_bsf_ != nullptr)
+        av_bsf_free(&hardware_bsf_);
+    av_packet_free(&hardware_packet_);
+    av_frame_free(&hardware_frame_);
     release_demuxer(video_);
     release_demuxer(audio_);
 

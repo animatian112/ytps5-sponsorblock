@@ -49,7 +49,8 @@ struct DecodedPicture
     int width = 0;
     int height = 0;
     int pitch = 0;
-    unsigned format = 0; // the decoder's reported frame format
+    unsigned format = 0;  // the decoder's reported frame format
+    std::size_t size = 0; // bytes of the picture in the frame slot
 };
 
 // Depth-1 Videodec2 session for one codec/resolution. Not copyable: the session
@@ -75,8 +76,12 @@ class HardwareDecoder
     // One compressed access unit; on success *out describes the decoded picture
     // that now sits in the caller-owned frame slot. Depth one: the caller must
     // be done with the previous picture before submitting the next unit.
+    // A VP9 unit that shows nothing (a hidden reference frame) succeeds with
+    // out->address null.
     bool decode(const std::uint8_t *data, std::size_t size, DecodedPicture *out,
                 std::string *error);
+    // Drops what the decoder holds (a seek): the next unit must be a keyframe.
+    bool reset(std::string *error);
     void close();
 
   private:

@@ -114,6 +114,7 @@ enum : int
     kRestoreSettings,
     kRemoteNewCode,
     kDevClearCache,
+    kDevHardwareNote,
     kDevClearSearches,
     kDevReset,
     kRemoteCode,
@@ -183,10 +184,11 @@ const char *decode_mode_description(yt::DecodeMode mode)
     case yt::DecodeMode::software:
         return "Software: ffmpeg on the CPU (every codec)";
     case yt::DecodeMode::hardware:
-        return "Hardware: the console decoder where available (AV1 stays software)";
+        return "Hardware (experimental): VP9 on the console's decoder chip, for 1440p and 4K. "
+               "Falls back to software if it fails; AVC, AV1 and HDR stay software";
     case yt::DecodeMode::auto_detect:
     default:
-        return "Auto: the console decoder for AVC/VP9, software for AV1";
+        return "Auto: software for now (Hardware turns on the experimental chip decoding)";
     }
 }
 
@@ -475,6 +477,8 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     // ---- Developer options (SmartTube's "Developer options", for this console) ----
     ui::Form &dev = add_tile("Developer", Icon::developer);
     dev.add_header("Playback");
+    dev.add_value(kDevHardwareNote, "Hardware decoding", "Player > Decoding > Hardware")
+        .description = "Experimental: VP9 (1440p/4K) on the decoder chip; stats show which is used";
     add_flag(dev, "Stats for nerds", &S::dev_stats,
              "Formats, decoder, picture size, queue and dropped frames over the video");
     add_flag(dev, "Codec selection: prefer AVC over VP9", &S::prefer_avc,

@@ -499,7 +499,10 @@ TEST(Codec, SoftwareModeKeepsTheOldSelection)
     EXPECT_EQ(picked->codec, Codec::av1);
 }
 
-TEST(Codec, TheConsoleDecoderLiftsTheAvcAndVp9Ceilings)
+// Decoding: Hardware sends VP9 to the console's decoder chip, so VP9 plays at
+// any height the user allows; Auto still decodes on the CPU and keeps the
+// software ceilings.
+TEST(Codec, TheConsoleDecoderLiftsTheVp9Ceiling)
 {
     const std::vector<Format> formats = {video(Codec::vp9, 2160, 9'000'000),
                                          video(Codec::vp9, 720, 2'000'000),
@@ -511,8 +514,14 @@ TEST(Codec, TheConsoleDecoderLiftsTheAvcAndVp9Ceilings)
     ASSERT_NE(picked, nullptr);
     EXPECT_EQ(picked->height, 1080); // VP9 capped at 720p, AVC at 1080p
 
+    CodecChoice automatic = software;
+    automatic.decode = DecodeMode::auto_detect;
+    picked = yt::select_video_format(formats, automatic);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->height, 1080) << "Auto decodes on the CPU";
+
     CodecChoice console = software;
-    console.decode = DecodeMode::auto_detect;
+    console.decode = DecodeMode::hardware;
     picked = yt::select_video_format(formats, console);
     ASSERT_NE(picked, nullptr);
     EXPECT_EQ(picked->height, 2160);

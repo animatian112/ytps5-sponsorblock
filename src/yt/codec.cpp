@@ -30,12 +30,15 @@ int codec_height_ceiling(Codec codec, const CodecChoice &choice)
     switch (codec)
     {
     case Codec::avc:
-        // The console decoder (Auto/Hardware) takes AVC and VP9 at any height
-        // the user allows; the CPU ceilings only bind software decoding.
-        ceiling = choice.decode == DecodeMode::software ? kSoftwareCeilingAvc : 4320;
+        // AVC always decodes on the CPU (the hardware path is VP9's), and
+        // stops at 1080p on YouTube anyway.
+        ceiling = kSoftwareCeilingAvc;
         break;
     case Codec::vp9:
-        ceiling = choice.decode == DecodeMode::software ? kSoftwareCeilingVp9 : 4320;
+        // Decoding: Hardware sends VP9 to the console's decoder chip, which
+        // takes any height the user allows; Auto and Software decode on the
+        // CPU and keep its ceiling.
+        ceiling = choice.decode == DecodeMode::hardware ? 4320 : kSoftwareCeilingVp9;
         break;
     case Codec::av1:
         ceiling = kSoftwareCeilingAv1;
