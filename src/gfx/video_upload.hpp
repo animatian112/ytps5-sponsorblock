@@ -22,9 +22,10 @@ enum class UploadMethod : int
     ring = 2,      // three textures in turn, glTexSubImage2D into the oldest
     pbo = 3,       // three textures in turn, filled from a pixel buffer
     deferred = 4,  // a new texture each picture, deleted three pictures later
+    buffer = 5,    // three buffer textures in turn: a plain copy, no tiling
 };
 
-constexpr int kUploadMethodCount = 5;
+constexpr int kUploadMethodCount = 6;
 const char *upload_method_name(UploadMethod method);
 
 class VideoUploader
@@ -43,8 +44,25 @@ class VideoUploader
         return active_;
     }
 
-    // Puts the picture into a texture and returns its name; the name stays
-    // valid until the next upload() or release().
+    // Whether buffer textures may be used, and how many texels one holds
+    // (GlBatch::video_buffers_supported / max_buffer_texels). Without them
+    // the buffer method falls back to three textures.
+    void set_buffer_support(bool supported, long long max_texels)
+    {
+        buffer_supported_ = supported;
+        buffer_max_texels_ = max_texels;
+        if (!supported && active_ == UploadMethod::buffer)
+            active_ = UploadMethod::ring;
+    }
+    // The buffer texture behind kVideoBufferHandle, after a buffer upload.
+    GLuint buffer_texture() const
+    {
+        return current_buffer_;
+    }
+
+    // Puts the picture into a texture and returns its name (or
+    // kVideoBufferHandle for the buffer method); valid until the next
+    // upload() or release().
     std::uint32_t upload(int width, int height, const std::uint8_t *rgba);
     // Deletes every texture and buffer.
     void release();
@@ -76,6 +94,19 @@ class VideoUploader
     GLuint pending_[kRing] = {}; // deferred: textures still waiting to be deleted
     int pending_next_ = 0;
     GLuint current_ = 0;
+    // buffer: three buffer objects, each behind its own buffer texture.
+    bool buffer_supported_ = false;
+    long long buffer_max_texels_ = 0;
+    GLuint buffer_objects_[kRing] = {};
+    GLuint buffer_textures_[kRing] = {};
+    int buffer_next_ = 0;
+    GLuint current_buffer_ = 0;
+
+    bool buffer_fits(int width, int height) const
+    {
+        return buffer_supported_ &&
+               static_cast<long long>(width) * static_cast<long long>(height) <= buffer_max_texels_;
+    }
 };
 
 } // namespace hui::gfx

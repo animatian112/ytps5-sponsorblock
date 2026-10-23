@@ -243,6 +243,7 @@ void PlayerScreen::drop_texture()
 {
     // The uploader owns the textures; this frees them all.
     uploader_.release();
+    context_.batch.set_video_source(0, 0, 0); // its buffer textures are gone
     texture_ = 0;
     texture_width_ = 0;
     texture_height_ = 0;
@@ -596,7 +597,35 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         {
             const auto upload_start = std::chrono::steady_clock::now();
             uploader_.set_method(static_cast<gfx::UploadMethod>(context_.settings.dev_upload));
+            if (!buffer_support_checked_)
+            {
+                // Once per run: builds the buffer-texture video program.
+                buffer_support_checked_ = true;
+                const bool supported = context_.batch.video_buffers_supported();
+                const long long texels = context_.batch.max_buffer_texels();
+                uploader_.set_buffer_support(supported, texels);
+                yt::log::line("upload: buffer textures %s (up to %lld texels)",
+                              supported ? "available" : "unavailable", texels);
+            }
             texture_ = uploader_.upload(frame.width, frame.height, frame.rgba);
+            if (texture_ == gfx::kVideoBufferHandle && !buffer_verified_)
+            {
+                // Once: the middle pixel read back through the video
+                // program. A GL that gets it wrong keeps 2D textures.
+                buffer_verified_ = true;
+                const int index = (frame.height / 2) * frame.width + frame.width / 2;
+                if (!context_.batch.verify_video_buffer(uploader_.buffer_texture(), index,
+                                                        frame.rgba +
+                                                            static_cast<std::size_t>(index) * 4u))
+                {
+                    yt::log::line("upload: buffer texture check failed, using 2D textures");
+                    uploader_.set_buffer_support(false, 0);
+                    texture_ = uploader_.upload(frame.width, frame.height, frame.rgba);
+                }
+            }
+            if (texture_ == gfx::kVideoBufferHandle)
+                context_.batch.set_video_source(uploader_.buffer_texture(), frame.width,
+                                                frame.height);
             if (!upload_report_logged_ && !uploader_.benchmark_report().empty())
             {
                 upload_report_logged_ = true;

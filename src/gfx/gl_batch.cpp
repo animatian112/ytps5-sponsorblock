@@ -5,6 +5,7 @@
 #include "gfx/gl_batch.hpp"
 
 #include "gfx/gl_program.hpp"
+#include "platform/ps5/system.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -246,6 +247,72 @@ void main()
 }
 )";
 
+// The video picture from a buffer texture: four texel fetches and a
+// bilinear blend stand in for the 2D texture's filtering. Same vertex shader
+// and instance layout as the batch program, image shape only.
+constexpr const char *kVideoFragment = R"(
+layout(location = 0) uniform vec4 u_viewport;
+layout(location = 9) uniform samplerBuffer u_video;
+layout(location = 10) uniform ivec2 u_video_size;
+in vec2 v_local;
+in vec2 v_uv;
+in float v_t;
+flat in vec2 v_half;
+flat in vec4 v_top;
+flat in vec4 v_bottom;
+flat in vec4 v_params;
+out vec4 frag_color;
+
+vec4 fetch(ivec2 p)
+{
+    p = clamp(p, ivec2(0), u_video_size - ivec2(1));
+    return texelFetch(u_video, p.y * u_video_size.x + p.x);
+}
+
+float round_box(vec2 p, vec2 b, float r)
+{
+    vec2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+void main()
+{
+    vec2 pos = v_uv * vec2(u_video_size) - 0.5;
+    vec2 base = floor(pos);
+    vec2 f = pos - base;
+    ivec2 i = ivec2(base);
+    vec4 top = mix(fetch(i), fetch(i + ivec2(1, 0)), f.x);
+    vec4 bottom = mix(fetch(i + ivec2(0, 1)), fetch(i + ivec2(1, 1)), f.x);
+    vec4 color = mix(top, bottom, f.y) * mix(v_top, v_bottom, v_t);
+    if (v_params.x > 0.0)
+    {
+        float px = 1.0 / u_viewport.x;
+        float radius = min(v_params.x, min(v_half.x, v_half.y));
+        color.a *= clamp(0.5 - round_box(v_local, v_half, radius) / px, 0.0, 1.0);
+    }
+    frag_color = color;
+}
+)";
+
+// The buffer-texture self-check: one texel onto a 1x1 target.
+constexpr const char *kProbeVertex = R"(
+void main()
+{
+    const vec2 corners[3] = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    gl_Position = vec4(corners[gl_VertexID], 0.0, 1.0);
+}
+)";
+
+constexpr const char *kProbeFragment = R"(
+layout(location = 0) uniform samplerBuffer u_video;
+layout(location = 1) uniform int u_index;
+out vec4 frag_color;
+void main()
+{
+    frag_color = texelFetch(u_video, u_index);
+}
+)";
+
 constexpr const char *kMeshVertex = R"(
 layout(location = 0) in vec2 a_position;
 layout(location = 1) in vec4 a_color;
@@ -291,6 +358,11 @@ void GlBatch::release()
         glDeleteVertexArrays(1, &mesh_vao_);
     if (mesh_program_ != 0)
         glDeleteProgram(mesh_program_);
+    if (video_program_ != 0)
+        glDeleteProgram(video_program_);
+    video_program_ = 0;
+    video_state_ = 0;
+    video_texture_ = 0;
     if (font_count_ != 0)
         glDeleteTextures(static_cast<GLsizei>(font_count_), font_textures_);
     for (GLuint &texture : font_textures_)
@@ -356,6 +428,102 @@ std::uint32_t GlBatch::create_font_texture(const Font &font)
     return texture;
 }
 
+bool GlBatch::video_buffers_supported()
+{
+    if (video_state_ == 0)
+    {
+        video_state_ = -1;
+        if (max_buffer_texels() >= 1920LL * 1080LL)
+        {
+            video_program_ = build_program("video_buffer", kVertex, kVideoFragment);
+            if (video_program_ != 0)
+                video_state_ = 1;
+        }
+    }
+    return video_state_ == 1;
+}
+
+long long GlBatch::max_buffer_texels()
+{
+    GLint texels = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &texels);
+    while (glGetError() != GL_NO_ERROR)
+    {
+    }
+    return texels;
+}
+
+void GlBatch::set_video_source(GLuint buffer_texture, int width, int height)
+{
+    video_texture_ = buffer_texture;
+    video_width_ = width;
+    video_height_ = height;
+}
+
+bool GlBatch::verify_video_buffer(GLuint buffer_texture, int index, const std::uint8_t *expected)
+{
+    const GLuint program = build_program("video_buffer_probe", kProbeVertex, kProbeFragment);
+    if (program == 0)
+        return false;
+    // Whatever the frame has bound is put back afterwards.
+    GLint previous_draw = 0;
+    GLint previous_read = 0;
+    GLint previous_viewport[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previous_draw);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous_read);
+    glGetIntegerv(GL_VIEWPORT, previous_viewport);
+    GLuint target = 0;
+    GLuint framebuffer = 0;
+    GLuint vao = 0;
+    glGenTextures(1, &target);
+    glBindTexture(GL_TEXTURE_2D, target);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glGenFramebuffers(1, &framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target, 0);
+    bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    std::uint8_t got[4] = {0, 0, 0, 0};
+    if (ok)
+    {
+        glGenVertexArrays(1, &vao);
+        glBindVertexArray(vao);
+        glViewport(0, 0, 1, 1);
+        glDisable(GL_BLEND);
+        glDisable(GL_SCISSOR_TEST);
+        glUseProgram(program);
+        glUniform1i(0, 7);
+        glUniform1i(1, index);
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_BUFFER, buffer_texture);
+        glActiveTexture(GL_TEXTURE0);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, got);
+        glBindVertexArray(0);
+        for (int c = 0; c < 4; ++c)
+        {
+            const int difference = static_cast<int>(got[c]) - static_cast<int>(expected[c]);
+            if (difference > 2 || difference < -2)
+                ok = false;
+        }
+    }
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previous_draw));
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previous_read));
+    glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2],
+               previous_viewport[3]);
+    glDeleteFramebuffers(1, &framebuffer);
+    glDeleteTextures(1, &target);
+    if (vao != 0)
+        glDeleteVertexArrays(1, &vao);
+    glDeleteProgram(program);
+    while (glGetError() != GL_NO_ERROR)
+    {
+    }
+    sys::log("[HUI] video buffer check: texel %d read %u,%u,%u,%u, expected %u,%u,%u,%u -> %s",
+             index, got[0], got[1], got[2], got[3], expected[0], expected[1], expected[2],
+             expected[3], ok ? "ok" : "mismatch");
+    return ok;
+}
+
 std::uint32_t GlBatch::create_texture(int width, int height, const std::uint8_t *rgba)
 {
     GLuint texture = 0;
@@ -406,11 +574,22 @@ void GlBatch::draw(const DrawList &list, const Viewport &viewport, int surface_w
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
-    for (GLuint program : {program_, mesh_program_})
+    const bool video = video_state_ == 1 && video_texture_ != 0;
+    for (GLuint program : {program_, mesh_program_, video ? video_program_ : 0u})
     {
+        if (program == 0)
+            continue;
         glUseProgram(program);
         glUniform4f(0, viewport.scale, viewport.offset_x, viewport.offset_y, 0.0f);
         glUniform2f(1, static_cast<float>(surface_width), static_cast<float>(surface_height));
+    }
+    if (video)
+    {
+        // The video program keeps its buffer on unit 7 for the whole frame.
+        glUniform1i(9, 7);
+        glUniform2i(10, video_width_, video_height_);
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_BUFFER, video_texture_);
     }
     glUseProgram(program_);
     glUniform1i(2, 0);
@@ -427,18 +606,28 @@ void GlBatch::draw(const DrawList &list, const Viewport &viewport, int surface_w
     GLuint bound_texture = 0;
     bool scissor = false;
     bool mesh_bound = false;
+    GLuint current_program = program_;
     glBindVertexArray(vao_);
     for (const Run &run : list.runs())
     {
         if (run.count == 0)
             continue;
+        const bool video_run = !run.mesh && run.texture == kVideoBufferHandle;
+        if (video_run && !video)
+            continue; // no picture in a buffer yet
         if (run.mesh != mesh_bound)
         {
             mesh_bound = run.mesh;
-            glUseProgram(mesh_bound ? mesh_program_ : program_);
             glBindVertexArray(mesh_bound ? mesh_vao_ : vao_);
         }
-        if (run.texture != 0 && run.texture != bound_texture)
+        const GLuint wanted = run.mesh ? mesh_program_ : video_run ? video_program_ : program_;
+        if (wanted != current_program)
+        {
+            glUseProgram(wanted);
+            current_program = wanted;
+        }
+        // The video run samples unit 7; unit 0 keeps what it had.
+        if (!video_run && run.texture != 0 && run.texture != bound_texture)
         {
             glBindTexture(GL_TEXTURE_2D, run.texture);
             bound_texture = run.texture;

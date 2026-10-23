@@ -90,7 +90,7 @@ constexpr Extra kExtras[] = {
     {58, nullptr, &Settings::dev_auto_quality, 0, 1},
     {59, &Settings::dev_av_offset_ms, nullptr, -500, 500},
     // 60..69: sb_act (below).
-    {80, &Settings::dev_upload, nullptr, 0, 4},
+    {80, &Settings::dev_upload, nullptr, 0, 5},
     {81, nullptr, &Settings::dearrow_titles, 0, 1},
     {82, nullptr, &Settings::dearrow_thumbnails, 0, 1},
 };

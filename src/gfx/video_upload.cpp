@@ -4,6 +4,8 @@
 
 #include "gfx/video_upload.hpp"
 
+#include "gfx/gl_batch.hpp"
+
 #include <chrono>
 #include <cstdio>
 
@@ -61,6 +63,8 @@ const char *upload_method_name(UploadMethod method)
         return "pixel buffer";
     case UploadMethod::deferred:
         return "late delete";
+    case UploadMethod::buffer:
+        return "buffer texture";
     }
     return "?";
 }
@@ -146,6 +150,28 @@ std::uint32_t VideoUploader::upload_with(UploadMethod method, int width, int hei
         pending_next_ = (pending_next_ + 1) % kRing;
         return texture;
     }
+    case UploadMethod::buffer:
+    {
+        if (!buffer_fits(width, height))
+            return upload_with(UploadMethod::ring, width, height, rgba);
+        if (buffer_objects_[0] == 0)
+        {
+            glGenBuffers(kRing, buffer_objects_);
+            glGenTextures(kRing, buffer_textures_);
+        }
+        const int slot = buffer_next_;
+        buffer_next_ = (buffer_next_ + 1) % kRing;
+        // A fresh store each picture (the GPU may still read the one three
+        // pictures back), filled in the same call: a linear copy.
+        glBindBuffer(GL_TEXTURE_BUFFER, buffer_objects_[slot]);
+        glBufferData(GL_TEXTURE_BUFFER, static_cast<GLsizeiptr>(bytes), rgba, GL_STREAM_DRAW);
+        glBindTexture(GL_TEXTURE_BUFFER, buffer_textures_[slot]);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA8, buffer_objects_[slot]);
+        glBindTexture(GL_TEXTURE_BUFFER, 0);
+        glBindBuffer(GL_TEXTURE_BUFFER, 0);
+        current_buffer_ = buffer_textures_[slot];
+        return kVideoBufferHandle;
+    }
     }
     return 0;
 }
@@ -161,9 +187,14 @@ void VideoUploader::measure(int width, int height, const std::uint8_t *rgba)
     double best = 1e9;
     UploadMethod best_method = UploadMethod::recreate;
     const UploadMethod methods[] = {UploadMethod::recreate, UploadMethod::ring, UploadMethod::pbo,
-                                    UploadMethod::deferred};
+                                    UploadMethod::deferred, UploadMethod::buffer};
     for (const UploadMethod method : methods)
     {
+        if (method == UploadMethod::buffer && !buffer_fits(width, height))
+        {
+            report_ += "buffer texture: not available on this GL\n";
+            continue;
+        }
         glFinish();
         double worst = 0.0;
         const auto start = std::chrono::steady_clock::now();
@@ -251,11 +282,23 @@ void VideoUploader::release()
         for (GLuint &buffer : buffers_)
             buffer = 0;
     }
+    if (buffer_objects_[0] != 0)
+    {
+        glDeleteTextures(kRing, buffer_textures_);
+        glDeleteBuffers(kRing, buffer_objects_);
+        for (int i = 0; i < kRing; ++i)
+        {
+            buffer_textures_[i] = 0;
+            buffer_objects_[i] = 0;
+        }
+    }
     ring_width_ = 0;
     ring_height_ = 0;
     next_ = 0;
     pending_next_ = 0;
+    buffer_next_ = 0;
     current_ = 0;
+    current_buffer_ = 0;
 }
 
 } // namespace hui::gfx

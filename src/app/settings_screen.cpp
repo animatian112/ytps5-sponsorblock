@@ -502,9 +502,10 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     add_steps(dev, "Conversion threads", &S::dev_convert_threads, {1, 2, 3, 4, 6, 8},
               {"1", "2", "3", "4", "6", "8"},
               "Threads that turn each picture into the screen's format");
-    add_steps(dev, "Picture upload", &S::dev_upload, {0, 1, 2, 3, 4},
-              {"Auto", "New texture", "3 textures", "Pixel buffer", "Late delete"},
-              "How each picture reaches the screen. Auto measures them on the first video");
+    add_steps(
+        dev, "Picture upload", &S::dev_upload, {0, 5, 1, 2, 3, 4},
+        {"Auto", "Buffer texture", "New texture", "3 textures", "Pixel buffer", "Late delete"},
+        "How each picture reaches the screen. Auto measures them on the first video");
     add_steps(dev, "Skip the deblocking filter", &S::dev_deblock, {0, 1, 2},
               {"Never", "Above 1080p", "Always"},
               "Faster decoding for a little blockiness; above 1080p it is scaled away");

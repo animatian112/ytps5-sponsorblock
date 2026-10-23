@@ -97,6 +97,8 @@ class PlayerScreen final : public Screen
     std::uint64_t video_revision_ = 0;
     gfx::VideoUploader uploader_;
     bool upload_report_logged_ = false;
+    bool buffer_support_checked_ = false;
+    bool buffer_verified_ = false;
     std::uint32_t texture_ = 0;
     int texture_width_ = 0;
     int texture_height_ = 0;
