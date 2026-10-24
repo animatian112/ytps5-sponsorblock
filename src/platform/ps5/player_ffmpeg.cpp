@@ -45,6 +45,8 @@ extern "C"
 #include <libswscale/swscale.h>
 }
 
+#include <pthread.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -55,9 +57,12 @@ extern "C"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <string>
+#include <vector>
 
 extern "C"
 {
@@ -290,6 +295,314 @@ bool live_starved(const Demuxer &demuxer)
     return demuxer.live->available(demuxer.live_reader) < wanted;
 }
 
+// The hardware path's decode and convert, off the frame thread. A depth-one
+// Videodec2 session blocks in Decode until its picture is done (~12 ms at 4K);
+// on the frame thread that, plus the conversion, held a 4K60 stream at ~45 fps.
+// The worker takes the split packets the frame thread feeds it, decodes each,
+// and converts every picture (NV12 in the decoder's slot, valid until the next
+// Decode) into an RGBA buffer of its own, at most 1920x1080. Up to kReady
+// pictures wait for the frame thread, which swaps each buffer into its pool:
+// no copy on either side.
+class HardwareWorker
+{
+  public:
+    static constexpr std::size_t kPackets = 8; // fed ahead of the decoder
+    static constexpr std::size_t kReady = 3;   // converted ahead of the queue
+
+    struct Picture
+    {
+        bool ok = true;     // false: a failed Decode, `error` says why
+        bool shown = false; // false: a hidden VP9 frame, nothing to show
+        std::string error;
+        std::unique_ptr<std::uint8_t[]> bytes; // RGBA, width x height
+        std::size_t size = 0;
+        int width = 0;
+        int height = 0;
+        int source_height = 0;
+        std::int64_t pts = AV_NOPTS_VALUE;
+        // The first picture's geometry, for the log.
+        int pitch = 0;
+        std::size_t slot_size = 0;
+    };
+
+    HardwareWorker(hui::ps5::HardwareDecoder *decoder, int shown_height, int convert_threads)
+        : decoder_(decoder), shown_height_(shown_height), convert_threads_(convert_threads)
+    {
+    }
+    ~HardwareWorker()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            quit_ = true;
+        }
+        changed_.notify_all();
+        if (started_)
+            pthread_join(thread_, nullptr);
+        for (AVPacket *&packet : packets_)
+            av_packet_free(&packet);
+        if (sws_ != nullptr)
+            sws_freeContext(sws_);
+        av_frame_free(&source_);
+        av_frame_free(&target_);
+    }
+    HardwareWorker(const HardwareWorker &) = delete;
+    HardwareWorker &operator=(const HardwareWorker &) = delete;
+
+    bool start()
+    {
+        source_ = av_frame_alloc();
+        target_ = av_frame_alloc();
+        if (source_ == nullptr || target_ == nullptr)
+            return false;
+        pthread_attr_t attributes;
+        if (pthread_attr_init(&attributes) != 0)
+            return false;
+        pthread_attr_setstacksize(&attributes, 1u << 20); // console threads need a stack
+        started_ = pthread_create(&thread_, &attributes, &HardwareWorker::main, this) == 0;
+        pthread_attr_destroy(&attributes);
+        return started_;
+    }
+
+    // Room for another packet.
+    bool wants_packet() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return packets_.size() < kPackets;
+    }
+    // Takes the packet's data (the packet is left empty).
+    void submit(AVPacket *packet)
+    {
+        AVPacket *copy = av_packet_alloc();
+        if (copy == nullptr)
+            return;
+        av_packet_move_ref(copy, packet);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            packets_.push_back(copy);
+        }
+        changed_.notify_all();
+    }
+    bool take(Picture *out)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (ready_.empty())
+                return false;
+            *out = std::move(ready_.front());
+            ready_.erase(ready_.begin());
+        }
+        changed_.notify_all(); // room for the next conversion
+        return true;
+    }
+    // A buffer the pool gave back in a swap, for the next conversion.
+    void recycle(std::unique_ptr<std::uint8_t[]> bytes, std::size_t size)
+    {
+        if (bytes == nullptr || size == 0)
+            return;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (spare_.size() < kReady + 1)
+            spare_.push_back(Spare{std::move(bytes), size});
+    }
+    // Nothing fed, decoding or waiting: the stream's end can be declared.
+    bool empty() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return packets_.empty() && !busy_ && ready_.empty();
+    }
+    // Drops what is queued and waits for the picture in flight (dropped too):
+    // before a reset, a seek or the end of the session.
+    void settle()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        for (AVPacket *&packet : packets_)
+            av_packet_free(&packet);
+        packets_.clear();
+        changed_.wait(lock, [this] { return !busy_; });
+        for (Picture &picture : ready_)
+            if (picture.bytes != nullptr && spare_.size() < kReady + 1)
+                spare_.push_back(Spare{std::move(picture.bytes), picture.size});
+        ready_.clear();
+    }
+
+  private:
+    struct Spare
+    {
+        std::unique_ptr<std::uint8_t[]> bytes;
+        std::size_t size = 0;
+    };
+
+    static void *main(void *argument)
+    {
+        static_cast<HardwareWorker *>(argument)->run();
+        return nullptr;
+    }
+
+    void run()
+    {
+        for (;;)
+        {
+            AVPacket *packet = nullptr;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                // A packet, and room for the picture it may give.
+                changed_.wait(lock, [this]
+                              { return quit_ || (!packets_.empty() && ready_.size() < kReady); });
+                if (quit_)
+                    return;
+                packet = packets_.front();
+                packets_.erase(packets_.begin());
+                busy_ = true;
+            }
+            Picture picture;
+            picture.pts = packet->pts;
+            hui::ps5::DecodedPicture decoded;
+            picture.ok = decoder_->decode(packet->data, static_cast<std::size_t>(packet->size),
+                                          &decoded, &picture.error);
+            av_packet_free(&packet);
+            if (picture.ok && decoded.address != nullptr && decoded.width > 0 && decoded.height > 0)
+                convert(decoded, &picture);
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                busy_ = false;
+                // A hidden frame (no picture) needs no slot in the ready list,
+                // but a failure does: the frame thread counts them.
+                if (!picture.ok || picture.shown)
+                    ready_.push_back(std::move(picture));
+            }
+            changed_.notify_all();
+        }
+    }
+
+    // NV12 in the decoder's slot -> RGBA in a buffer of our own, scaled down to
+    // fit 1920x1080. The chroma plane starts right after the reported height,
+    // as the Nuvio and Stremio PS5 ports read it (planes[1] = data + pitch x
+    // height); rows past the stream's own height (1088 for 1080p) are padding.
+    void convert(const hui::ps5::DecodedPicture &decoded, Picture *picture)
+    {
+        const int pitch = decoded.pitch > 0 ? decoded.pitch : decoded.width;
+        const int source_width = decoded.width;
+        const int source_height =
+            shown_height_ > 0 ? std::min(decoded.height, shown_height_) : decoded.height;
+        int width = source_width;
+        int height = source_height;
+        if (width > kMaxOutputWidth || height > kMaxOutputHeight)
+        {
+            const double scale = std::min(static_cast<double>(kMaxOutputWidth) / width,
+                                          static_cast<double>(kMaxOutputHeight) / height);
+            width = std::max(2, static_cast<int>(width * scale) & ~1);
+            height = std::max(2, static_cast<int>(height * scale) & ~1);
+        }
+        const std::size_t size =
+            static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
+
+        std::unique_ptr<std::uint8_t[]> bytes;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto it = spare_.begin(); it != spare_.end(); ++it)
+            {
+                if (it->size == size)
+                {
+                    bytes = std::move(it->bytes);
+                    spare_.erase(it);
+                    break;
+                }
+            }
+        }
+        if (bytes == nullptr)
+            bytes.reset(new (std::nothrow) std::uint8_t[size]);
+        if (bytes == nullptr)
+            return; // out of memory: this picture is dropped (shown stays false)
+
+        if (sws_ == nullptr || sws_src_w_ != source_width || sws_src_h_ != source_height ||
+            sws_dst_w_ != width || sws_dst_h_ != height)
+        {
+            if (sws_ != nullptr)
+                sws_freeContext(sws_);
+            sws_ = sws_alloc_context();
+            if (sws_ != nullptr)
+            {
+                av_opt_set_int(sws_, "srcw", source_width, 0);
+                av_opt_set_int(sws_, "srch", source_height, 0);
+                av_opt_set_int(sws_, "src_format", AV_PIX_FMT_NV12, 0);
+                av_opt_set_int(sws_, "dstw", width, 0);
+                av_opt_set_int(sws_, "dsth", height, 0);
+                av_opt_set_int(sws_, "dst_format", AV_PIX_FMT_RGBA, 0);
+                av_opt_set_int(sws_, "sws_flags", SWS_BILINEAR, 0);
+                av_opt_set_int(sws_, "threads", convert_threads_, 0);
+                if (sws_init_context(sws_, nullptr, nullptr) < 0)
+                {
+                    sws_freeContext(sws_);
+                    sws_ = nullptr;
+                }
+            }
+            if (sws_ == nullptr)
+                return;
+            sws_src_w_ = source_width;
+            sws_src_h_ = source_height;
+            sws_dst_w_ = width;
+            sws_dst_h_ = height;
+        }
+
+        auto *base = static_cast<std::uint8_t *>(const_cast<void *>(decoded.address));
+        const std::size_t slot = decoded.size > 0
+                                     ? decoded.size
+                                     : static_cast<std::size_t>(pitch) * decoded.height * 3 / 2;
+        av_frame_unref(source_);
+        source_->buf[0] = av_buffer_create(base, slot, [](void *, std::uint8_t *) {}, nullptr, 0);
+        av_frame_unref(target_);
+        target_->buf[0] =
+            av_buffer_create(bytes.get(), size, [](void *, std::uint8_t *) {}, nullptr, 0);
+        if (source_->buf[0] == nullptr || target_->buf[0] == nullptr)
+            return;
+        source_->format = AV_PIX_FMT_NV12;
+        source_->width = source_width;
+        source_->height = source_height;
+        source_->data[0] = base;
+        source_->linesize[0] = pitch;
+        source_->data[1] = base + static_cast<std::size_t>(pitch) * decoded.height;
+        source_->linesize[1] = pitch;
+        target_->format = AV_PIX_FMT_RGBA;
+        target_->width = width;
+        target_->height = height;
+        target_->data[0] = bytes.get();
+        target_->linesize[0] = width * 4;
+        const bool converted = sws_scale_frame(sws_, target_, source_) >= 0;
+        av_frame_unref(source_);
+        av_frame_unref(target_);
+        if (!converted)
+            return;
+        picture->bytes = std::move(bytes);
+        picture->size = size;
+        picture->width = width;
+        picture->height = height;
+        picture->source_height = source_height;
+        picture->pitch = pitch;
+        picture->slot_size = decoded.size;
+        picture->shown = true;
+    }
+
+    hui::ps5::HardwareDecoder *decoder_;
+    const int shown_height_;
+    const int convert_threads_;
+    mutable std::mutex mutex_;
+    std::condition_variable changed_;
+    pthread_t thread_{};
+    bool started_ = false;
+    bool quit_ = false;
+    bool busy_ = false;
+    std::vector<AVPacket *> packets_;
+    std::vector<Picture> ready_;
+    std::vector<Spare> spare_;
+    // Used by the worker only.
+    SwsContext *sws_ = nullptr;
+    int sws_src_w_ = 0;
+    int sws_src_h_ = 0;
+    int sws_dst_w_ = 0;
+    int sws_dst_h_ = 0;
+    AVFrame *source_ = nullptr;
+    AVFrame *target_ = nullptr;
+};
+
 class FfmpegPlayer final : public Player
 {
   public:
@@ -385,7 +698,7 @@ class FfmpegPlayer final : public Player
     // back from the CPU-readable frame slot and converted like a software one.
     void pump_video_hardware(int budget);
     bool start_hardware();
-    void hardware_picture(const hui::ps5::DecodedPicture &picture, std::int64_t pts);
+    void queue_hardware_picture(HardwareWorker::Picture &picture);
     void fall_back_to_software(const std::string &why);
     void pump_audio(int budget);
     void emit_video(AVFrame *frame);
@@ -623,14 +936,14 @@ class FfmpegPlayer final : public Player
     // software playback never constructs or touches the hardware decoder.
     DecodeMode decode_mode_ = DecodeMode::auto_detect;
     std::unique_ptr<hui::ps5::HardwareDecoder> hardware_;
+    // Runs the decoder's Decode calls; destroyed before hardware_.
+    std::unique_ptr<HardwareWorker> hardware_worker_;
     bool hardware_active_ = false; // pictures come from Videodec2
     AVBSFContext *hardware_bsf_ = nullptr;
     AVPacket *hardware_packet_ = nullptr;
     AVFrame *hardware_frame_ = nullptr; // wraps the decoder's picture for the converter
     int hardware_failures_ = 0;
     std::uint64_t hardware_pictures_ = 0;
-    std::int64_t hardware_convert_us_ = 0; // for the once-a-second line
-    int hardware_convert_count_ = 0;
     std::chrono::steady_clock::time_point hardware_log_{};
 
     double clock_ = 0.0;
@@ -1411,10 +1724,22 @@ bool FfmpegPlayer::start_hardware()
         av_frame_free(&hardware_frame_);
         return false;
     }
+    hardware_worker_ =
+        std::make_unique<HardwareWorker>(hardware_.get(), par->height, convert_threads_);
+    if (!hardware_worker_->start())
+    {
+        log::line("ffmpeg: hardware decode not used: no decode thread");
+        hardware_worker_.reset();
+        av_bsf_free(&hardware_bsf_);
+        av_packet_free(&hardware_packet_);
+        av_frame_free(&hardware_frame_);
+        return false;
+    }
     hardware_active_ = true;
     hardware_failures_ = 0;
     hardware_pictures_ = 0;
-    log::line("ffmpeg: hardware decode ON (experimental): vp9 %dx%d via Videodec2, read back",
+    log::line("ffmpeg: hardware decode ON (experimental): vp9 %dx%d via Videodec2 on its own "
+              "thread, read back",
               par->width, par->height);
     return true;
 }
@@ -1424,6 +1749,7 @@ void FfmpegPlayer::fall_back_to_software(const std::string &why)
     log::line("ffmpeg: hardware decode OFF after %llu pictures: %s; software from here",
               static_cast<unsigned long long>(hardware_pictures_), why.c_str());
     hardware_active_ = false;
+    hardware_worker_.reset(); // waits for the decode in flight
     if (hardware_ != nullptr)
         hardware_->close();
     hardware_.reset();
@@ -1436,111 +1762,52 @@ void FfmpegPlayer::fall_back_to_software(const std::string &why)
     seek(at > 0.0 ? at : 0.0);
 }
 
-void FfmpegPlayer::hardware_picture(const hui::ps5::DecodedPicture &picture, std::int64_t pts)
-{
-    // The decoder's picture: NV12 (a full-size luma plane, then the half-height
-    // interleaved chroma plane) at `pitch` bytes a row. The chroma starts right
-    // after the picture's own height, as the Nuvio and Stremio PS5 ports read
-    // it (planes[1] = data + pitch x height). 1.0.161-1.0.168 put it at the
-    // height rounded up (2178, then 2176 rows at 4K, 1472 at 1440p): colours
-    // shifted up and a green bottom edge. The slot's size is padding only.
-    const int pitch = picture.pitch > 0 ? picture.pitch : picture.width;
-    const int rows = picture.height;
-    if (hardware_pictures_ == 0)
-        log::line("ffmpeg: hardware picture %dx%d pitch=%d format=0x%x size=%zu luma rows=%d",
-                  picture.width, picture.height, pitch, picture.format, picture.size, rows);
-    ++hardware_pictures_;
-
-    auto *base = static_cast<std::uint8_t *>(const_cast<void *>(picture.address));
-    AVFrame *frame = hardware_frame_;
-    av_frame_unref(frame);
-    // Lent, not owned: the converter takes a reference, the slot stays the
-    // decoder's (freed by nobody here).
-    frame->buf[0] = av_buffer_create(
-        base, picture.size > 0 ? picture.size : static_cast<std::size_t>(pitch) * rows * 3 / 2,
-        [](void *, std::uint8_t *) {}, nullptr, 0);
-    if (frame->buf[0] == nullptr)
-        return;
-    frame->format = AV_PIX_FMT_NV12;
-    frame->width = picture.width;
-    // The decoder may report the coded height (1088 for 1080p); the rows past
-    // the stream's own height are padding, not picture.
-    const int shown_height = video_.stream != nullptr && video_.stream->codecpar->height > 0
-                                 ? std::min(picture.height, video_.stream->codecpar->height)
-                                 : picture.height;
-    frame->height = shown_height;
-    frame->data[0] = base;
-    frame->linesize[0] = pitch;
-    frame->data[1] = base + static_cast<std::size_t>(pitch) * static_cast<std::size_t>(rows);
-    frame->linesize[1] = pitch;
-    frame->pts = pts;
-    frame->best_effort_timestamp = pts;
-
-    const double at = frame_pts(frame);
-    if (video_seek_target_ >= 0.0)
-    {
-        // Decoded only to reach the seek target (capped as in software).
-        if (at + kLateFrameToleranceS < video_seek_target_ && ++video_seek_skipped_ < 600)
-            return;
-        video_seek_target_ = -1.0;
-    }
-    const std::int64_t start = now_us();
-    emit_video(frame);
-    av_frame_unref(frame);
-    hardware_convert_us_ += now_us() - start;
-    ++hardware_convert_count_;
-    const auto wall = std::chrono::steady_clock::now();
-    if (wall - hardware_log_ >= std::chrono::seconds(5))
-    {
-        hardware_log_ = wall;
-        log::line("ffmpeg: hardware %llu pictures, read back + convert %.1f ms avg",
-                  static_cast<unsigned long long>(hardware_pictures_),
-                  hardware_convert_count_ > 0
-                      ? static_cast<double>(hardware_convert_us_) / 1000.0 / hardware_convert_count_
-                      : 0.0);
-        hardware_convert_us_ = 0;
-        hardware_convert_count_ = 0;
-    }
-}
-
 void FfmpegPlayer::pump_video_hardware(int budget)
 {
     int work = 0;
     while (work < budget && hardware_active_ && !video_.drained)
     {
-        if (out_of_time() || video_queue_.size() >= video_queue_depth_)
+        if (out_of_time())
             return;
-        // The split frames of the last packet first.
+        // Converted pictures first: each one is a buffer swap into the pool.
+        if (video_queue_.size() < video_queue_depth_)
+        {
+            HardwareWorker::Picture picture;
+            if (hardware_worker_->take(&picture))
+            {
+                ++work;
+                if (!picture.ok)
+                {
+                    log::line("ffmpeg: hardware decode failed: %s", picture.error.c_str());
+                    if (++hardware_failures_ >= 3 || hardware_pictures_ == 0)
+                    {
+                        fall_back_to_software(picture.error);
+                        return;
+                    }
+                    continue;
+                }
+                hardware_failures_ = 0;
+                queue_hardware_picture(picture);
+                continue;
+            }
+        }
+        // Then keep the worker fed; it decodes while this thread draws.
+        if (!hardware_worker_->wants_packet())
+            return;
         const int filtered = av_bsf_receive_packet(hardware_bsf_, hardware_packet_);
         if (filtered == 0)
         {
-            hui::ps5::DecodedPicture picture;
-            std::string error;
-            const std::int64_t pts = hardware_packet_->pts;
-            const bool ok = hardware_->decode(hardware_packet_->data,
-                                              static_cast<std::size_t>(hardware_packet_->size),
-                                              &picture, &error);
-            av_packet_unref(hardware_packet_);
+            hardware_worker_->submit(hardware_packet_);
             ++work;
-            if (!ok)
-            {
-                log::line("ffmpeg: hardware decode failed: %s", error.c_str());
-                if (++hardware_failures_ >= 3 || hardware_pictures_ == 0)
-                {
-                    fall_back_to_software(error);
-                    return;
-                }
-                continue;
-            }
-            hardware_failures_ = 0;
-            if (picture.address != nullptr && picture.width > 0 && picture.height > 0)
-                hardware_picture(picture, pts);
             continue;
         }
         if (filtered != AVERROR(EAGAIN))
         {
             if (filtered == AVERROR_EOF)
             {
+                // The end: once the worker has handed over its last picture.
+                if (!hardware_worker_->empty())
+                    return;
                 video_.drained = true;
                 log::line("ffmpeg: video stream ended (eof, hardware)");
                 return;
@@ -1584,6 +1851,87 @@ void FfmpegPlayer::pump_video_hardware(int budget)
             continue;
         }
         return;
+    }
+}
+
+void FfmpegPlayer::queue_hardware_picture(HardwareWorker::Picture &picture)
+{
+    if (hardware_pictures_ == 0)
+        log::line("ffmpeg: hardware picture %dx(%d) pitch=%d slot=%zu -> %dx%d RGBA on the decode "
+                  "thread",
+                  picture.width, picture.source_height, picture.pitch, picture.slot_size,
+                  picture.width, picture.height);
+    ++hardware_pictures_;
+    const double pts =
+        picture.pts == AV_NOPTS_VALUE || video_.stream == nullptr
+            ? (frame_seen_ ? last_video_pts_ + 1.0 / 30.0 : 0.0)
+            : static_cast<double>(picture.pts) * av_q2d(video_.stream->time_base) - pts_origin_;
+    if (video_seek_target_ >= 0.0)
+    {
+        // Decoded only to reach the seek target (capped as in software).
+        if (pts + kLateFrameToleranceS < video_seek_target_ && ++video_seek_skipped_ < 600)
+        {
+            hardware_worker_->recycle(std::move(picture.bytes), picture.size);
+            return;
+        }
+        video_seek_target_ = -1.0;
+    }
+    source_height_.store(picture.source_height);
+    const int width = picture.width;
+    const int height = picture.height;
+    const std::size_t size = picture.size;
+    if (video_width_ != width || video_height_ != height)
+    {
+        log::line("ffmpeg: video resolution %dx%d -> %dx%d", video_width_, video_height_, width,
+                  height);
+        video_queue_.clear();
+        clear_video_pool();
+        exposed_buffer_ = -1;
+        exposed_pts_ = kNoPts;
+        picture_presented_ = false;
+        video_width_ = width;
+        video_height_ = height;
+        const std::size_t headroom = size * kVideoPoolHeadroom;
+        const std::size_t queue_budget =
+            kVideoPoolBudgetBytes > headroom ? kVideoPoolBudgetBytes - headroom : 0u;
+        video_queue_depth_ = std::clamp(queue_budget / size, kVideoMinQueueDepth, kVideoQueueDepth);
+        log::line("ffmpeg: video queue depth %zu (%zu MB)", video_queue_depth_,
+                  size * (video_queue_depth_ + kVideoPoolHeadroom) / (1024u * 1024u));
+    }
+    const int target = acquire_video_buffer(size);
+    if (target < 0 || static_cast<std::size_t>(target) >= video_buffer_count_ ||
+        video_buffers_[target].size != size)
+    {
+        if (target >= 0)
+            release_video_buffer(target);
+        note_no_memory(width, height, size);
+        hardware_worker_->recycle(std::move(picture.bytes), picture.size);
+        return;
+    }
+    // The converted picture becomes the pool slot; the slot's old memory
+    // goes back to the worker for a later conversion. No copy.
+    std::swap(video_buffers_[target].bytes, picture.bytes);
+    hardware_worker_->recycle(std::move(picture.bytes), size);
+    if (video_queue_.size() >= video_queue_depth_)
+    {
+        release_video_buffer(video_queue_.front().buffer);
+        video_queue_.pop();
+    }
+    if (!video_queue_.push(QueuedPicture{target, pts}))
+    {
+        release_video_buffer(target);
+        return;
+    }
+    last_video_pts_ = pts;
+    if (!frame_seen_)
+        log::line("ffmpeg: first frame %dx%d pts=%.2f", width, height, pts);
+    frame_seen_ = true;
+    const auto wall = std::chrono::steady_clock::now();
+    if (wall - hardware_log_ >= std::chrono::seconds(5))
+    {
+        hardware_log_ = wall;
+        log::line("ffmpeg: hardware %llu pictures on the decode thread",
+                  static_cast<unsigned long long>(hardware_pictures_));
     }
 }
 
@@ -2609,6 +2957,8 @@ void FfmpegPlayer::seek(double seconds)
         {
             // The hardware decoder starts over from the keyframe the seek lands on.
             std::string ignored;
+            if (hardware_worker_ != nullptr)
+                hardware_worker_->settle(); // no Decode may run during the reset
             if (hardware_ != nullptr)
                 (void)hardware_->reset(&ignored);
             av_bsf_flush(hardware_bsf_);
@@ -2797,6 +3147,7 @@ void FfmpegPlayer::release()
     sws_src_w_ = sws_src_h_ = sws_dst_w_ = sws_dst_h_ = 0;
     sws_src_format_ = -1;
     // Null in software mode, where the session was never created.
+    hardware_worker_.reset(); // before the session it decodes with
     hardware_.reset();
     hardware_active_ = false;
     if (hardware_bsf_ != nullptr)
