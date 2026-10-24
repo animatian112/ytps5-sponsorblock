@@ -558,6 +558,31 @@ TEST(Codec, APickedHeightPlaysPastTheSoftwareCeiling)
     EXPECT_EQ(picked->height, 480);
 }
 
+TEST(Codec, AutoAvoidsAv1AbovePickedFullHd)
+{
+    // Auto plays a pick above 1080p on the console's decoder, which has no AV1:
+    // the VP9 copy at that height wins, whichever comes first in the list.
+    const std::vector<Format> av1_first{video(Codec::av1, 2160, 20000000),
+                                        video(Codec::vp9, 2160, 18000000)};
+    const std::vector<Format> vp9_first{video(Codec::vp9, 2160, 18000000),
+                                        video(Codec::av1, 2160, 20000000)};
+    CodecChoice choice;
+    choice.decode = DecodeMode::auto_detect;
+    choice.max_height = 2160;
+    choice.exact_height = 2160;
+    for (const auto *formats : {&av1_first, &vp9_first})
+    {
+        const Format *picked = yt::select_video_format(*formats, choice);
+        ASSERT_NE(picked, nullptr);
+        EXPECT_EQ(picked->codec, Codec::vp9);
+    }
+    // With AV1 alone at that height, AV1 still plays (nothing else has it).
+    const std::vector<Format> only_av1{video(Codec::av1, 2160, 20000000)};
+    const Format *picked = yt::select_video_format(only_av1, choice);
+    ASSERT_NE(picked, nullptr);
+    EXPECT_EQ(picked->codec, Codec::av1);
+}
+
 } // namespace
 
 // A format picked from the full "Video formats" list plays as picked, even

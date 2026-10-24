@@ -191,7 +191,8 @@ const char *decode_mode_description(yt::DecodeMode mode)
                "Falls back to software if it fails; AVC, AV1 and HDR stay software";
     case yt::DecodeMode::auto_detect:
     default:
-        return "Auto: software for now (Hardware turns on the experimental chip decoding)";
+        return "Auto: software up to 1080p; a 1440p or 4K pick plays on the console's "
+               "decoder chip (VP9)";
     }
 }
 

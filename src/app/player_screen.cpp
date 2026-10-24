@@ -1726,8 +1726,11 @@ void PlayerScreen::update_extras(float dt)
 
     // Smooth over sharp: a picture above 1080p the CPU cannot decode in time
     // (frames dropped every check, two checks running) goes to 1080p.
+    // With the switch off, a 4K picture that keeps dropping frames gets one
+    // tip instead: the screen is drawn at 1080p, so 1440p looks the same.
     if (player_ != nullptr && !player_->paused() && !ended_ && player_->source_height() > 1080 &&
-        context_.settings.dev_auto_quality)
+        (context_.settings.dev_auto_quality ||
+         (player_->source_height() > 1440 && heavy_hint_for_ != playing_id_)))
     {
         smooth_check_s_ += dt;
         if (smooth_check_s_ >= 4.0f)
@@ -1740,7 +1743,18 @@ void PlayerScreen::update_extras(float dt)
             const bool behind = smooth_check_s_ < 100.0f && fresh >= 12;
             smooth_strikes_ = behind ? smooth_strikes_ + 1 : 0;
             smooth_check_s_ = 0.0f;
-            if (smooth_strikes_ >= 2)
+            if (smooth_strikes_ >= 2 && !context_.settings.dev_auto_quality)
+            {
+                smooth_strikes_ = 0;
+                heavy_hint_for_ = playing_id_;
+                yt::log::line("player: %dp drops frames (%llu in 4 s); tip shown",
+                              player_->source_height(), static_cast<unsigned long long>(fresh));
+                context_.toasts.push(ui::StatusKind::info, "4K is at the PS5 decoder's limit here",
+                                     "1440p looks the same on this screen and plays smoothly "
+                                     "(Quality in the player)",
+                                     8.0f);
+            }
+            else if (smooth_strikes_ >= 2)
             {
                 smooth_strikes_ = 0;
                 yt::log::line("player: %dp drops frames (%llu in 4 s); 1080p",

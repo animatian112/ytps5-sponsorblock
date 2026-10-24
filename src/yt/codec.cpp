@@ -136,8 +136,19 @@ const Format *select_video_format(const std::vector<Format> &formats, const Code
             if (!is_video_codec(format.codec) || !codec_enabled(choice, format.codec) ||
                 format.url.empty() || format.height != choice.exact_height)
                 continue;
-            if (choice.decode == DecodeMode::hardware && format.codec == Codec::av1)
+            // Hardware never takes AV1; Auto plays above 1080p on the hardware
+            // decoder too, so there AV1 only plays when nothing else has the height.
+            if (format.codec == Codec::av1 && (choice.decode == DecodeMode::hardware ||
+                                               (choice.decode == DecodeMode::auto_detect &&
+                                                format.height > 1080 && exact != nullptr)))
                 continue;
+            if (exact != nullptr && exact->codec == Codec::av1 && format.codec != Codec::av1 &&
+                choice.decode == DecodeMode::auto_detect && format.height > 1080 &&
+                (exact->ciphered || !format.ciphered))
+            {
+                exact = &format;
+                continue;
+            }
             if (exact == nullptr || (exact->ciphered && !format.ciphered) ||
                 (exact->ciphered == format.ciphered && beats_at_equal_height(format, *exact)))
                 exact = &format;

@@ -812,6 +812,7 @@ class FfmpegPlayer final : public Player
     // back from the CPU-readable frame slot and converted like a software one.
     void pump_video_hardware(int budget);
     bool start_hardware();
+    bool wants_hardware() const;
     void queue_hardware_picture(HardwareWorker::Picture &picture);
     void fall_back_to_software(const std::string &why);
     void pump_audio(int budget);
@@ -1177,7 +1178,7 @@ bool FfmpegPlayer::open(const std::string &video_url, const std::string &audio_u
     // has none), so software mode never touches the hardware API at all. Every
     // failure here is logged and software takes over: open() never fails
     // because the hardware path was unavailable.
-    if (decode_mode_ != DecodeMode::software)
+    if (wants_hardware())
     {
         const Codec codec = codec_from_av_id(video_.stream->codecpar->codec_id);
         if (codec != Codec::unknown && hui::ps5::videodec_supports(codec))
@@ -1803,6 +1804,17 @@ void FfmpegPlayer::clear_video_pool()
     video_free_count_ = 0;
 }
 
+bool FfmpegPlayer::wants_hardware() const
+{
+    // Hardware on request, and on Auto above 1080p: there the CPU cannot keep
+    // up (a 4K VP9 stream runs it out of memory and frames), while the
+    // console's decoder plays it.
+    if (decode_mode_ == DecodeMode::hardware)
+        return true;
+    return decode_mode_ == DecodeMode::auto_detect && video_.stream != nullptr &&
+           video_.stream->codecpar->height > 1080;
+}
+
 bool FfmpegPlayer::start_hardware()
 {
     // Experimental, and only on request: Decoding set to Hardware, a VP9
@@ -1810,8 +1822,9 @@ bool FfmpegPlayer::start_hardware()
     // which a depth-one session cannot be trusted with; HDR VP9 is profile 2.
     const AVCodecParameters *par = video_.stream->codecpar;
     const char *refusal = nullptr;
-    if (decode_mode_ != DecodeMode::hardware)
-        refusal = "Decoding is not set to Hardware";
+    if (!wants_hardware())
+        refusal = decode_mode_ == DecodeMode::software ? "Decoding is set to Software"
+                                                       : "Auto decodes 1080p and below on the CPU";
     else if (par->codec_id != AV_CODEC_ID_VP9)
         refusal = "only VP9 takes the hardware path";
     else if (par->profile > 0 || par->bits_per_raw_sample > 8 ||
