@@ -382,6 +382,24 @@ class HardwareWorker
         }
         changed_.notify_all();
     }
+    // Decode and convert time since the last call, for the 5-second line.
+    struct Timing
+    {
+        int decodes = 0;
+        std::int64_t decode_us = 0;
+        std::int64_t decode_max_us = 0;
+        int converts = 0;
+        std::int64_t convert_us = 0;
+        std::int64_t convert_max_us = 0;
+        int waits_for_room = 0; // a picture ready but the ready list full
+    };
+    Timing take_timing()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Timing out = timing_;
+        timing_ = Timing{};
+        return out;
+    }
     bool take(Picture *out)
     {
         {
@@ -456,13 +474,36 @@ class HardwareWorker
             Picture picture;
             picture.pts = packet->pts;
             hui::ps5::DecodedPicture decoded;
+            const auto decode_start = std::chrono::steady_clock::now();
             picture.ok = decoder_->decode(packet->data, static_cast<std::size_t>(packet->size),
                                           &decoded, &picture.error);
+            const auto decode_end = std::chrono::steady_clock::now();
             av_packet_free(&packet);
-            if (picture.ok && decoded.address != nullptr && decoded.width > 0 && decoded.height > 0)
+            const bool has_picture =
+                picture.ok && decoded.address != nullptr && decoded.width > 0 && decoded.height > 0;
+            if (has_picture)
                 convert(decoded, &picture);
+            const auto convert_end = std::chrono::steady_clock::now();
             {
                 std::lock_guard<std::mutex> lock(mutex_);
+                const std::int64_t decode_us =
+                    std::chrono::duration_cast<std::chrono::microseconds>(decode_end - decode_start)
+                        .count();
+                ++timing_.decodes;
+                timing_.decode_us += decode_us;
+                timing_.decode_max_us = std::max(timing_.decode_max_us, decode_us);
+                if (has_picture)
+                {
+                    const std::int64_t convert_us =
+                        std::chrono::duration_cast<std::chrono::microseconds>(convert_end -
+                                                                              decode_end)
+                            .count();
+                    ++timing_.converts;
+                    timing_.convert_us += convert_us;
+                    timing_.convert_max_us = std::max(timing_.convert_max_us, convert_us);
+                }
+                if (ready_.size() + 1 >= kReady)
+                    ++timing_.waits_for_room;
                 busy_ = false;
                 // A hidden frame (no picture) needs no slot in the ready list,
                 // but a failure does: the frame thread counts them.
@@ -593,6 +634,7 @@ class HardwareWorker
     std::vector<AVPacket *> packets_;
     std::vector<Picture> ready_;
     std::vector<Spare> spare_;
+    Timing timing_;
     // Used by the worker only.
     SwsContext *sws_ = nullptr;
     int sws_src_w_ = 0;
@@ -944,6 +986,9 @@ class FfmpegPlayer final : public Player
     AVFrame *hardware_frame_ = nullptr; // wraps the decoder's picture for the converter
     int hardware_failures_ = 0;
     std::uint64_t hardware_pictures_ = 0;
+    int hardware_queue_empty_ = 0;   // presents that found no picture queued (5-second line)
+    bool hardware_wait_key_ = false; // after a seek: packets until a keyframe are skipped
+    int hardware_skipped_to_key_ = 0;
     std::chrono::steady_clock::time_point hardware_log_{};
 
     double clock_ = 0.0;
@@ -1827,7 +1872,26 @@ void FfmpegPlayer::pump_video_hardware(int budget)
         {
             video_.consecutive_errors = 0;
             video_.stalled_reads = 0;
-            if (video_.packet->stream_index == video_.stream_index)
+            const bool ours = video_.packet->stream_index == video_.stream_index;
+            if (ours && hardware_wait_key_ && (video_.packet->flags & AV_PKT_FLAG_KEY) == 0)
+            {
+                // After a seek the decoder starts over: a picture that refers
+                // to frames it never saw decodes as a smear of the old scene.
+                // Everything up to the next keyframe is left out.
+                ++hardware_skipped_to_key_;
+                av_packet_unref(video_.packet);
+                ++work;
+                continue;
+            }
+            if (ours && hardware_wait_key_)
+            {
+                hardware_wait_key_ = false;
+                if (hardware_skipped_to_key_ > 0)
+                    log::line("ffmpeg: hardware seek: %d packets before the keyframe left out",
+                              hardware_skipped_to_key_);
+                hardware_skipped_to_key_ = 0;
+            }
+            if (ours)
                 av_bsf_send_packet(hardware_bsf_, video_.packet); // takes the packet
             av_packet_unref(video_.packet);
             ++work;
@@ -1930,8 +1994,16 @@ void FfmpegPlayer::queue_hardware_picture(HardwareWorker::Picture &picture)
     if (wall - hardware_log_ >= std::chrono::seconds(5))
     {
         hardware_log_ = wall;
-        log::line("ffmpeg: hardware %llu pictures on the decode thread",
-                  static_cast<unsigned long long>(hardware_pictures_));
+        const HardwareWorker::Timing t = hardware_worker_->take_timing();
+        log::line("ffmpeg: hardware %llu pictures; last 5 s: %d decodes %.1f ms avg %.1f max, "
+                  "%d converts %.1f ms avg %.1f max, ahead-full %d, queue empty %d times",
+                  static_cast<unsigned long long>(hardware_pictures_), t.decodes,
+                  t.decodes > 0 ? static_cast<double>(t.decode_us) / 1000.0 / t.decodes : 0.0,
+                  static_cast<double>(t.decode_max_us) / 1000.0, t.converts,
+                  t.converts > 0 ? static_cast<double>(t.convert_us) / 1000.0 / t.converts : 0.0,
+                  static_cast<double>(t.convert_max_us) / 1000.0, t.waits_for_room,
+                  hardware_queue_empty_);
+        hardware_queue_empty_ = 0;
     }
 }
 
@@ -2518,6 +2590,8 @@ bool FfmpegPlayer::present_due_picture()
     }
     if (video_queue_.empty())
     {
+        if (hardware_active_ && !paused_ && picture_presented_)
+            ++hardware_queue_empty_;
         return false;
     }
 
@@ -2959,6 +3033,8 @@ void FfmpegPlayer::seek(double seconds)
             std::string ignored;
             if (hardware_worker_ != nullptr)
                 hardware_worker_->settle(); // no Decode may run during the reset
+            hardware_wait_key_ = true;
+            hardware_skipped_to_key_ = 0;
             if (hardware_ != nullptr)
                 (void)hardware_->reset(&ignored);
             av_bsf_flush(hardware_bsf_);
