@@ -6,6 +6,7 @@
 
 #include <GL/glcorearb.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -64,6 +65,10 @@ class VideoUploader
     // kVideoBufferHandle for the buffer method); valid until the next
     // upload() or release().
     std::uint32_t upload(int width, int height, const std::uint8_t *rgba);
+    // An NV12 picture (Y plane, then interleaved UV) into a buffer texture for
+    // the video program to convert: kVideoBufferHandle, or 0 when buffer
+    // textures are unavailable or too small for it.
+    std::uint32_t upload_nv12(const std::uint8_t *bytes, std::size_t size);
     // Deletes every texture and buffer.
     void release();
 
@@ -77,6 +82,7 @@ class VideoUploader
     static constexpr int kRing = 3;
 
     void ensure_ring(int width, int height, bool with_buffers);
+    std::uint32_t upload_buffer(const std::uint8_t *bytes, std::size_t size);
     void measure(int width, int height, const std::uint8_t *rgba);
     std::uint32_t upload_with(UploadMethod method, int width, int height, const std::uint8_t *rgba);
 

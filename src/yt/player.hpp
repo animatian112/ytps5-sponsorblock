@@ -13,6 +13,7 @@
 
 #include "yt/types.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -40,7 +41,9 @@ class AudioSink
 // One frame, RGBA8, owned by the player; valid until the next poll_frame().
 struct VideoFrameView
 {
-    const std::uint8_t *rgba = nullptr;
+    const std::uint8_t *rgba = nullptr; // RGBA, or NV12 when nv12 is set
+    bool nv12 = false;                  // Y plane, then interleaved UV (the GPU converts)
+    std::size_t bytes = 0;              // the picture's size in bytes
     int width = 0;
     int height = 0;
     double pts = 0.0; // presentation time, seconds

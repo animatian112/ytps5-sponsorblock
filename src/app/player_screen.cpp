@@ -530,6 +530,7 @@ void PlayerScreen::skip_segment_now(ui::Feedback &feedback)
 void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedback)
 {
     clock_ += dt;
+    check_buffer_support();
     const Settings &settings = context_.settings;
     // Settings > Player > Video speed: a new default applies at once.
     if (settings.speed_index != applied_speed_index_)
@@ -628,20 +629,57 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         update_max_us_ = std::max(update_max_us_, update_us);
         ++update_count_;
         const yt::VideoFrameView frame = player_->poll_frame();
-        if (frame.fresh && frame.rgba != nullptr && frame.width > 0 && frame.height > 0)
+        if (frame.fresh && frame.rgba != nullptr && frame.width > 0 && frame.height > 0 &&
+            frame.nv12)
+        {
+            // GPU conversion: the decoder's planes as they are, into a
+            // buffer texture the video program converts while drawing.
+            const auto upload_start = std::chrono::steady_clock::now();
+            const std::uint32_t uploaded = uploader_.upload_nv12(frame.rgba, frame.bytes);
+            if (uploaded == gfx::kVideoBufferHandle)
+            {
+                texture_ = uploaded;
+                context_.batch.set_video_source(uploader_.buffer_texture(), frame.width,
+                                                frame.height, true);
+                texture_width_ = frame.width;
+                texture_height_ = frame.height;
+                last_pts_ = frame.pts;
+            }
+            else if (!nv12_refused_logged_)
+            {
+                nv12_refused_logged_ = true;
+                yt::log::line("upload: NV12 %dx%d (%zu bytes) does not fit a buffer texture",
+                              frame.width, frame.height, frame.bytes);
+            }
+            upload_us_ += std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::steady_clock::now() - upload_start)
+                              .count();
+            ++upload_count_;
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last_upload_log_ >= std::chrono::seconds(1))
+            {
+                last_upload_log_ = now;
+                yt::log::line(
+                    "ffmpeg: texture upload (NV12 buffer) %dx%d (%d in the last second, "
+                    "%.1f ms avg); player update %.1f ms avg, %.1f ms max over %d frames",
+                    frame.width, frame.height, upload_count_,
+                    upload_count_ > 0 ? static_cast<double>(upload_us_) / 1000.0 / upload_count_
+                                      : 0.0,
+                    update_count_ > 0 ? static_cast<double>(update_us_) / 1000.0 / update_count_
+                                      : 0.0,
+                    static_cast<double>(update_max_us_) / 1000.0, update_count_);
+                upload_us_ = 0;
+                upload_count_ = 0;
+                update_us_ = 0;
+                update_max_us_ = 0;
+                update_count_ = 0;
+            }
+        }
+        else if (frame.fresh && frame.rgba != nullptr && frame.width > 0 && frame.height > 0)
         {
             const auto upload_start = std::chrono::steady_clock::now();
             uploader_.set_method(static_cast<gfx::UploadMethod>(context_.settings.dev_upload));
-            if (!buffer_support_checked_)
-            {
-                // Once per run: builds the buffer-texture video program.
-                buffer_support_checked_ = true;
-                const bool supported = context_.batch.video_buffers_supported();
-                const long long texels = context_.batch.max_buffer_texels();
-                uploader_.set_buffer_support(supported, texels);
-                yt::log::line("upload: buffer textures %s (up to %lld texels)",
-                              supported ? "available" : "unavailable", texels);
-            }
+            check_buffer_support();
             texture_ = uploader_.upload(frame.width, frame.height, frame.rgba);
             if (texture_ == gfx::kVideoBufferHandle && !buffer_verified_)
             {
@@ -655,6 +693,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
                 {
                     yt::log::line("upload: buffer texture check failed, using 2D textures");
                     uploader_.set_buffer_support(false, 0);
+                    context_.video_buffers_ok = false;
                     texture_ = uploader_.upload(frame.width, frame.height, frame.rgba);
                 }
             }
@@ -1139,6 +1178,22 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     chrome_.update(dt);
     related_.update(dt);
     chapters_row_.update(dt);
+}
+
+void PlayerScreen::check_buffer_support()
+{
+    // Once per run: builds the buffer-texture video program. Done before the
+    // first video opens, so its hardware path knows whether NV12 pictures
+    // can be shown (Settings > Developer > Convert on the GPU).
+    if (buffer_support_checked_)
+        return;
+    buffer_support_checked_ = true;
+    const bool supported = context_.batch.video_buffers_supported();
+    const long long texels = context_.batch.max_buffer_texels();
+    uploader_.set_buffer_support(supported, texels);
+    context_.video_buffers_ok = supported;
+    yt::log::line("upload: buffer textures %s (up to %lld texels)",
+                  supported ? "available" : "unavailable", texels);
 }
 
 float PlayerScreen::rise() const

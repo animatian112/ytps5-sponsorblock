@@ -94,6 +94,7 @@ class PlayerScreen final : public Screen
     // The rows' heading showing under the controls before they are opened.
     static constexpr float kRowPeek = 92.0f;
     float peek() const;
+    void check_buffer_support();
     float rise() const;
     void fill_chapter_row();
     std::vector<yt::FeedItem> related_items_;
@@ -110,6 +111,7 @@ class PlayerScreen final : public Screen
     double last_pts_ = -1.0;
     std::chrono::steady_clock::time_point last_upload_log_{};
     std::string heavy_hint_for_; // the video the 4K tip was shown for
+    bool nv12_refused_logged_ = false;
     bool in_related_ = false;
     bool ended_ = false;
     bool consumed_player_ = false;

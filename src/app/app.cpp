@@ -1322,6 +1322,8 @@ void App::update(const InputFrame &input, float dt)
         tuning.convert_threads = settings_.dev_convert_threads;
         tuning.skip_deblock = settings_.dev_deblock;
         tuning.av_offset_ms = settings_.dev_av_offset_ms;
+        tuning.gpu_convert = settings_.dev_gpu_convert && context_.video_buffers_ok;
+        tuning.hardware_depth = settings_.dev_hw_depth;
         yt::set_player_tuning(tuning);
     }
     if (context_.sb_excluded_changed)

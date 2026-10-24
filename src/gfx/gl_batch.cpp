@@ -256,6 +256,7 @@ constexpr const char *kVideoFragment = R"(
 layout(location = 0) uniform vec4 u_viewport;
 layout(location = 9) uniform usamplerBuffer u_video;
 layout(location = 10) uniform ivec2 u_video_size;
+layout(location = 11) uniform int u_video_nv12;
 in vec2 v_local;
 in vec2 v_uv;
 in float v_t;
@@ -265,12 +266,30 @@ flat in vec4 v_bottom;
 flat in vec4 v_params;
 out vec4 frag_color;
 
+// One byte of the buffer (16 a texel).
+float byte_at(int offset)
+{
+    uvec4 texel = texelFetch(u_video, offset >> 4);
+    uint word = texel[(offset >> 2) & 3];
+    return float((word >> uint((offset & 3) * 8)) & 0xffu) * (1.0 / 255.0);
+}
+
 vec4 fetch(ivec2 p)
 {
     p = clamp(p, ivec2(0), u_video_size - ivec2(1));
     int index = p.y * u_video_size.x + p.x;
-    uvec4 four = texelFetch(u_video, index >> 2);
-    return unpackUnorm4x8(four[index & 3]);
+    if (u_video_nv12 == 0)
+    {
+        uvec4 four = texelFetch(u_video, index >> 2);
+        return unpackUnorm4x8(four[index & 3]);
+    }
+    // NV12, limited range BT.709 (YouTube's HD and 4K).
+    int chroma = u_video_size.x * u_video_size.y + (p.y >> 1) * u_video_size.x + (p.x & ~1);
+    float y = (byte_at(index) - 16.0 / 255.0) * (255.0 / 219.0);
+    float cb = (byte_at(chroma) - 128.0 / 255.0) * (255.0 / 224.0);
+    float cr = (byte_at(chroma + 1) - 128.0 / 255.0) * (255.0 / 224.0);
+    vec3 rgb = vec3(y + 1.5748 * cr, y - 0.1873 * cb - 0.4681 * cr, y + 1.8556 * cb);
+    return vec4(clamp(rgb, 0.0, 1.0), 1.0);
 }
 
 float round_box(vec2 p, vec2 b, float r)
@@ -458,11 +477,12 @@ long long GlBatch::max_buffer_texels()
     return texels;
 }
 
-void GlBatch::set_video_source(GLuint buffer_texture, int width, int height)
+void GlBatch::set_video_source(GLuint buffer_texture, int width, int height, bool nv12)
 {
     video_texture_ = buffer_texture;
     video_width_ = width;
     video_height_ = height;
+    video_nv12_ = nv12;
 }
 
 bool GlBatch::verify_video_buffer(GLuint buffer_texture, int index, const std::uint8_t *expected)
@@ -593,6 +613,7 @@ void GlBatch::draw(const DrawList &list, const Viewport &viewport, int surface_w
         // The video program keeps its buffer on unit 7 for the whole frame.
         glUniform1i(9, 7);
         glUniform2i(10, video_width_, video_height_);
+        glUniform1i(11, video_nv12_ ? 1 : 0);
         glActiveTexture(GL_TEXTURE7);
         glBindTexture(GL_TEXTURE_BUFFER, video_texture_);
     }

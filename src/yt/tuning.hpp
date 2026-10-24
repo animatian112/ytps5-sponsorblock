@@ -13,6 +13,10 @@ struct PlayerTuning
     int skip_deblock = 1;    // 0 never, 1 above 1080p, 2 always
     int convert_threads = 4; // the RGBA conversion's threads
     int av_offset_ms = 0;    // the picture this much later (+) or earlier (-) than the sound
+    // Hardware decoding: pictures handed to the screen as NV12 for the GPU to
+    // convert (only when the screen can take them), and the decoder's depth.
+    bool gpu_convert = false;
+    int hardware_depth = 1;
 };
 
 // Set by the app from its settings; read by the platform player as it opens

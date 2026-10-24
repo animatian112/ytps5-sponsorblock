@@ -135,6 +135,8 @@ struct Settings
     bool dev_auto_quality = true; // step down to 1080p when a higher quality cannot keep up
     int dev_av_offset_ms = 0;     // picture later (+) or earlier (-) than the sound
     int dev_upload = 0;           // gfx::UploadMethod for video pictures; 0 measures once
+    bool dev_gpu_convert = false; // hardware pictures go to the GPU as NV12 (no CPU conversion)
+    int dev_hw_depth = 1;         // pictures the hardware decoder works on at once (1 or 2)
     int region = 0;               // index into kRegions: the feeds' country and language
     static constexpr int kRegionCount = 14;
     static constexpr const char *kRegions[kRegionCount][3] = {

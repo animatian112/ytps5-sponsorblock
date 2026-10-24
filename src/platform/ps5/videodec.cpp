@@ -317,8 +317,9 @@ constexpr std::size_t kDirectAlignment = 0x4000;
 constexpr int kDirectMemoryType = 12;
 constexpr int kProtectionCpuGpu = 0x33;
 // Decoded-picture slots used in turn (one picture converting, one waiting,
-// one decoding).
+// one decoding); one more at depth 2 for the picture still in the decoder.
 constexpr int kFrameSlots = 3;
+constexpr int kMaxFrameSlots = 4;
 constexpr int kProtectionGpu = 0x32;
 constexpr int kProtectionFlexibleCpu = 0x03;
 
@@ -671,6 +672,8 @@ struct HardwareDecoder::Session
     std::size_t frame_slot_bytes = 0;
     int frame_slots = 1;
     int next_slot = 0; // the slot the next Decode writes its picture to
+    std::int64_t slot_tags[kMaxFrameSlots] = {};
+    int depth = 1;
 
     int reachable = 0;
     bool vp9 = false;
@@ -685,9 +688,10 @@ HardwareDecoder::~HardwareDecoder()
     close();
 }
 
-bool HardwareDecoder::open(yt::Codec codec, int width, int height, std::string *error)
+bool HardwareDecoder::open(yt::Codec codec, int width, int height, std::string *error, int depth)
 {
     close();
+    depth = depth >= 2 ? 2 : 1;
 
     if (!videodec_supports(codec))
     {
@@ -710,6 +714,7 @@ bool HardwareDecoder::open(yt::Codec codec, int width, int height, std::string *
 
     m_session = std::make_unique<Session>();
     Session &session = *m_session;
+    session.depth = depth;
     session.reachable = videodec_imports_reachable();
     const int reachable = session.reachable;
     sys::log("[YTV] videodec2 open: %s %dx%d (imports %d/%d)", yt::codec_label(codec), width,
@@ -787,16 +792,17 @@ bool HardwareDecoder::open(yt::Codec codec, int width, int height, std::string *
     config.max_width = roundup16(width);
     config.max_height = roundup16(height);
     config.max_dpb_frames = -1; // AutoFrameSetting, as the verified path passes it
-    config.pipeline_depth = 1;  // proven depth, docs/HARDWARE_DECODE.md
+    config.pipeline_depth = static_cast<std::uint32_t>(depth); // 1 proven (docs/HARDWARE_DECODE.md)
     config.compute_queue = reinterpret_cast<std::uint64_t>(session.compute_queue);
     config.cpu_affinity = 0x3F; // cores 0-5, as the verified path passes it
     config.cpu_priority = 700;
     config.optimize_progressive = 1;
     config.check_memory_type = 0;
-    sys::log("[YTV] videodec2 config: codec=%u profile=%u level=%u max=%dx%d resource=%u",
-             static_cast<unsigned>(config.codec_type), static_cast<unsigned>(config.profile),
-             static_cast<unsigned>(config.max_level), static_cast<int>(config.max_width),
-             static_cast<int>(config.max_height), static_cast<unsigned>(config.resource_type));
+    sys::log("[YTV] videodec2 config: depth=%u codec=%u profile=%u level=%u max=%dx%d resource=%u",
+             static_cast<unsigned>(config.pipeline_depth), static_cast<unsigned>(config.codec_type),
+             static_cast<unsigned>(config.profile), static_cast<unsigned>(config.max_level),
+             static_cast<int>(config.max_width), static_cast<int>(config.max_height),
+             static_cast<unsigned>(config.resource_type));
 
     // 3. Query the decoder's own memory requirement for that configuration.
     DecoderMemoryInfo memory{};
@@ -870,11 +876,20 @@ bool HardwareDecoder::open(yt::Codec codec, int width, int height, std::string *
     // slots in turn (as the Stremio and Nuvio ports do): a picture stays
     // readable while the next ones decode into the other slots, so the
     // conversion no longer has to finish before the next Decode starts.
-    session.frame_slots = kFrameSlots;
-    if (!alloc_direct("frame", frame_slot * kFrameSlots, kProtectionCpuGpu, limit,
-                      &session.frame_physical, &session.frame_pool, reachable, error))
+    const int wanted_slots = depth >= 2 ? kMaxFrameSlots : kFrameSlots;
+    session.frame_slots = wanted_slots;
+    if (!alloc_direct("frame", frame_slot * static_cast<std::size_t>(wanted_slots),
+                      kProtectionCpuGpu, limit, &session.frame_physical, &session.frame_pool,
+                      reachable, error))
     {
-        sys::log("[YTV] videodec2 open: %d frame slots did not fit, one slot", kFrameSlots);
+        sys::log("[YTV] videodec2 open: %d frame slots did not fit, one slot", wanted_slots);
+        if (depth >= 2)
+        {
+            // A picture held inside the decoder needs a slot of its own.
+            set_error(error, "depth 2 needs more than one frame slot");
+            close();
+            return false;
+        }
         session.frame_slots = 1;
         if (!alloc_direct("frame", frame_slot, kProtectionCpuGpu, limit, &session.frame_physical,
                           &session.frame_pool, reachable, error))
@@ -908,6 +923,11 @@ bool HardwareDecoder::open(yt::Codec codec, int width, int height, std::string *
     return true;
 }
 
+int HardwareDecoder::depth() const
+{
+    return m_session != nullptr ? m_session->depth : 1;
+}
+
 int HardwareDecoder::frame_slots() const
 {
     return m_session != nullptr ? m_session->frame_slots : 1;
@@ -918,8 +938,8 @@ bool HardwareDecoder::ready() const
     return m_session != nullptr && m_session->decoder != nullptr;
 }
 
-bool HardwareDecoder::decode(const std::uint8_t *data, std::size_t size, DecodedPicture *out,
-                             std::string *error)
+bool HardwareDecoder::decode(const std::uint8_t *data, std::size_t size, std::int64_t tag,
+                             DecodedPicture *out, std::string *error)
 {
     if (m_session == nullptr || m_session->decoder == nullptr)
     {
@@ -940,12 +960,14 @@ bool HardwareDecoder::decode(const std::uint8_t *data, std::size_t size, Decoded
     input.this_size = sizeof(InputData);
     input.au_data = data;
     input.au_size = size;
+    input.presentation_time = static_cast<std::uint64_t>(tag);
 
     FrameBuffer frame{};
     frame.this_size = sizeof(FrameBuffer);
     frame.frame_buffer = static_cast<std::uint8_t *>(session.frame_pool) +
                          session.frame_slot_bytes * static_cast<std::size_t>(session.next_slot);
     frame.frame_buffer_size = session.frame_slot_bytes;
+    session.slot_tags[session.next_slot] = tag;
     session.next_slot = (session.next_slot + 1) % session.frame_slots;
 
     OutputInfo output{};
@@ -1006,6 +1028,9 @@ bool HardwareDecoder::decode(const std::uint8_t *data, std::size_t size, Decoded
                                                                    : output.frame_pitch);
     out->format = output.frame_format;
     out->size = static_cast<std::size_t>(output.frame_buffer_size);
+    // Whose picture: the slot it landed in was offered with that unit.
+    const std::size_t slot = (address - base) / session.frame_slot_bytes;
+    out->tag = session.slot_tags[slot < static_cast<std::size_t>(kMaxFrameSlots) ? slot : 0];
     return true;
 }
 

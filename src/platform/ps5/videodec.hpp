@@ -51,6 +51,9 @@ struct DecodedPicture
     int pitch = 0;
     unsigned format = 0;  // the decoder's reported frame format
     std::size_t size = 0; // bytes of the picture in the frame slot
+    // The tag passed with the unit whose picture this is (at depth 2 the
+    // picture can belong to the unit before the one just decoded).
+    std::int64_t tag = 0;
 };
 
 // Depth-1 Videodec2 session for one codec/resolution. Not copyable: the session
@@ -71,7 +74,9 @@ class HardwareDecoder
 
     // Creates the session for one codec/resolution. On failure *error names the
     // step (and the decoder library's return value); the object stays closed.
-    bool open(yt::Codec codec, int width, int height, std::string *error);
+    // depth: pictures the decoder works on at once (1 proven, 2 experimental).
+    bool open(yt::Codec codec, int width, int height, std::string *error, int depth = 1);
+    int depth() const;
     bool ready() const;
     // Slots the pictures decode into in turn: a picture stays readable until
     // this many more Decode calls have run.
@@ -81,7 +86,7 @@ class HardwareDecoder
     // be done with the previous picture before submitting the next unit.
     // A VP9 unit that shows nothing (a hidden reference frame) succeeds with
     // out->address null.
-    bool decode(const std::uint8_t *data, std::size_t size, DecodedPicture *out,
+    bool decode(const std::uint8_t *data, std::size_t size, std::int64_t tag, DecodedPicture *out,
                 std::string *error);
     // Drops what the decoder holds (a seek): the next unit must be a keyframe.
     bool reset(std::string *error);

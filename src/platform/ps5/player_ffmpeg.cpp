@@ -315,8 +315,9 @@ class HardwareWorker
         bool ok = true;     // false: a failed Decode, `error` says why
         bool shown = false; // false: a hidden VP9 frame, nothing to show
         std::string error;
-        std::unique_ptr<std::uint8_t[]> bytes; // RGBA, width x height
+        std::unique_ptr<std::uint8_t[]> bytes; // RGBA, width x height (or NV12)
         std::size_t size = 0;
+        bool nv12 = false; // the planes as decoded: Y, then interleaved UV
         int width = 0;
         int height = 0;
         int source_height = 0;
@@ -326,8 +327,10 @@ class HardwareWorker
         std::size_t slot_size = 0;
     };
 
-    HardwareWorker(hui::ps5::HardwareDecoder *decoder, int shown_height, int convert_threads)
-        : decoder_(decoder), shown_height_(shown_height), convert_threads_(convert_threads)
+    HardwareWorker(hui::ps5::HardwareDecoder *decoder, int shown_height, int convert_threads,
+                   bool nv12)
+        : decoder_(decoder), shown_height_(shown_height), convert_threads_(convert_threads),
+          nv12_(nv12)
     {
     }
     ~HardwareWorker()
@@ -363,7 +366,9 @@ class HardwareWorker
         pthread_attr_setstacksize(&attributes, 1u << 20); // console threads need a stack
         // Decode and convert on threads of their own: the next picture decodes
         // into another slot while this one converts.
-        slots_ = std::max(1, decoder_->frame_slots());
+        // At depth 2 one slot is inside the decoder and each picture comes
+        // out one call late, so two fewer may wait for the converter.
+        slots_ = std::max(1, decoder_->frame_slots() - 2 * (decoder_->depth() - 1));
         decode_started_ =
             pthread_create(&decode_thread_, &attributes, &HardwareWorker::decode_main, this) == 0;
         convert_started_ =
@@ -508,7 +513,10 @@ class HardwareWorker
             decoded.pts = packet->pts;
             const auto start = std::chrono::steady_clock::now();
             decoded.ok = decoder_->decode(packet->data, static_cast<std::size_t>(packet->size),
-                                          &decoded.picture, &decoded.error);
+                                          packet->pts, &decoded.picture, &decoded.error);
+            // The picture's own unit (at depth 2, often the one before).
+            if (decoded.ok && decoded.picture.address != nullptr)
+                decoded.pts = decoded.picture.tag;
             const std::int64_t took = std::chrono::duration_cast<std::chrono::microseconds>(
                                           std::chrono::steady_clock::now() - start)
                                           .count();
@@ -591,6 +599,11 @@ class HardwareWorker
         const int source_width = decoded.width;
         const int source_height =
             shown_height_ > 0 ? std::min(decoded.height, shown_height_) : decoded.height;
+        if (nv12_)
+        {
+            convert_nv12(decoded, pitch, source_width & ~1, source_height & ~1, picture);
+            return;
+        }
         int width = source_width;
         int height = source_height;
         if (width > kMaxOutputWidth || height > kMaxOutputHeight)
@@ -689,9 +702,64 @@ class HardwareWorker
         picture->shown = true;
     }
 
+    // The decoder's planes copied tight (no pitch padding, no rows past the
+    // picture) for the GPU to convert and scale.
+    void convert_nv12(const hui::ps5::DecodedPicture &decoded, int pitch, int width, int height,
+                      Picture *picture)
+    {
+        if (width <= 0 || height <= 0)
+            return;
+        const std::size_t luma = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+        const std::size_t size = luma + luma / 2;
+        std::unique_ptr<std::uint8_t[]> bytes = take_spare(size);
+        if (bytes == nullptr)
+            return;
+        const auto *base = static_cast<const std::uint8_t *>(decoded.address);
+        const std::size_t row = static_cast<std::size_t>(pitch);
+        std::uint8_t *out = bytes.get();
+        if (row == static_cast<std::size_t>(width))
+            std::memcpy(out, base, luma);
+        else
+            for (int y = 0; y < height; ++y)
+                std::memcpy(out + static_cast<std::size_t>(y) * width, base + row * y,
+                            static_cast<std::size_t>(width));
+        const std::uint8_t *chroma = base + row * static_cast<std::size_t>(decoded.height);
+        out += luma;
+        for (int y = 0; y < height / 2; ++y)
+            std::memcpy(out + static_cast<std::size_t>(y) * width, chroma + row * y,
+                        static_cast<std::size_t>(width));
+        picture->bytes = std::move(bytes);
+        picture->size = size;
+        picture->width = width;
+        picture->height = height;
+        picture->source_height = height;
+        picture->pitch = pitch;
+        picture->slot_size = decoded.size;
+        picture->nv12 = true;
+        picture->shown = true;
+    }
+
+    std::unique_ptr<std::uint8_t[]> take_spare(std::size_t size)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto it = spare_.begin(); it != spare_.end(); ++it)
+            {
+                if (it->size == size)
+                {
+                    std::unique_ptr<std::uint8_t[]> bytes = std::move(it->bytes);
+                    spare_.erase(it);
+                    return bytes;
+                }
+            }
+        }
+        return std::unique_ptr<std::uint8_t[]>(new (std::nothrow) std::uint8_t[size]);
+    }
+
     hui::ps5::HardwareDecoder *decoder_;
     const int shown_height_;
     const int convert_threads_;
+    const bool nv12_;
     mutable std::mutex mutex_;
     std::condition_variable changed_;
     pthread_t decode_thread_{};
@@ -999,6 +1067,7 @@ class FfmpegPlayer final : public Player
     bool picture_presented_ = false;
     double last_video_pts_ = 0.0;
     int video_width_ = 0;
+    bool video_nv12_ = false; // the pool holds NV12 pictures (GPU conversion)
     int video_height_ = 0;
     bool frame_seen_ = false;
 
@@ -1185,9 +1254,18 @@ bool FfmpegPlayer::open(const std::string &video_url, const std::string &audio_u
         {
             std::string hardware_error;
             hardware_ = std::make_unique<hui::ps5::HardwareDecoder>();
-            if (!hardware_->open(codec, video_.stream->codecpar->width,
-                                 video_.stream->codecpar->height, &hardware_error) ||
-                !hardware_->ready())
+            const int depth = player_tuning().hardware_depth >= 2 ? 2 : 1;
+            bool opened = hardware_->open(codec, video_.stream->codecpar->width,
+                                          video_.stream->codecpar->height, &hardware_error, depth);
+            if (!opened && depth > 1)
+            {
+                // The experimental depth refused: the proven one.
+                log::line("ffmpeg: hardware depth 2 refused (%s); depth 1", hardware_error.c_str());
+                hardware_error.clear();
+                opened = hardware_->open(codec, video_.stream->codecpar->width,
+                                         video_.stream->codecpar->height, &hardware_error, 1);
+            }
+            if (!opened || !hardware_->ready())
             {
                 if (hardware_error.empty())
                 {
@@ -1854,8 +1932,9 @@ bool FfmpegPlayer::start_hardware()
         av_frame_free(&hardware_frame_);
         return false;
     }
+    const bool nv12 = player_tuning().gpu_convert && par->width <= 4096 && par->height <= 2304;
     hardware_worker_ =
-        std::make_unique<HardwareWorker>(hardware_.get(), par->height, convert_threads_);
+        std::make_unique<HardwareWorker>(hardware_.get(), par->height, convert_threads_, nv12);
     if (!hardware_worker_->start())
     {
         log::line("ffmpeg: hardware decode not used: no decode thread");
@@ -1869,8 +1948,9 @@ bool FfmpegPlayer::start_hardware()
     hardware_failures_ = 0;
     hardware_pictures_ = 0;
     log::line("ffmpeg: hardware decode ON (experimental): vp9 %dx%d via Videodec2 on its own "
-              "thread, read back",
-              par->width, par->height);
+              "thread, depth %d, %d free slots, %s",
+              par->width, par->height, hardware_->depth(), hardware_->frame_slots(),
+              nv12 ? "NV12 to the GPU" : "RGBA converted on the CPU");
     return true;
 }
 
@@ -2006,10 +2086,9 @@ void FfmpegPlayer::pump_video_hardware(int budget)
 void FfmpegPlayer::queue_hardware_picture(HardwareWorker::Picture &picture)
 {
     if (hardware_pictures_ == 0)
-        log::line("ffmpeg: hardware picture %dx(%d) pitch=%d slot=%zu -> %dx%d RGBA on the decode "
-                  "thread",
-                  picture.width, picture.source_height, picture.pitch, picture.slot_size,
-                  picture.width, picture.height);
+        log::line("ffmpeg: hardware picture (%d) pitch=%d slot=%zu -> %dx%d %s",
+                  picture.source_height, picture.pitch, picture.slot_size, picture.width,
+                  picture.height, picture.nv12 ? "NV12" : "RGBA");
     ++hardware_pictures_;
     const double pts =
         picture.pts == AV_NOPTS_VALUE || video_.stream == nullptr
@@ -2029,8 +2108,9 @@ void FfmpegPlayer::queue_hardware_picture(HardwareWorker::Picture &picture)
     const int width = picture.width;
     const int height = picture.height;
     const std::size_t size = picture.size;
-    if (video_width_ != width || video_height_ != height)
+    if (video_width_ != width || video_height_ != height || video_nv12_ != picture.nv12)
     {
+        video_nv12_ = picture.nv12;
         log::line("ffmpeg: video resolution %dx%d -> %dx%d", video_width_, video_height_, width,
                   height);
         video_queue_.clear();
@@ -2446,10 +2526,11 @@ void FfmpegPlayer::emit_video(AVFrame *frame)
     const std::size_t size =
         static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
 
-    if (video_width_ != width || video_height_ != height)
+    if (video_width_ != width || video_height_ != height || video_nv12_)
     {
         // A resolution change invalidates everything decoded so far (and the
         // pool: the buffers are reallocated at the new size on demand).
+        video_nv12_ = false;
         log::line("ffmpeg: video resolution %dx%d -> %dx%d", video_width_, video_height_, width,
                   height);
         video_queue_.clear();
@@ -3079,6 +3160,8 @@ VideoFrameView FfmpegPlayer::poll_frame()
         video_buffers_[exposed_buffer_].bytes != nullptr)
     {
         view.rgba = video_buffers_[exposed_buffer_].bytes.get();
+        view.nv12 = video_nv12_;
+        view.bytes = video_buffers_[exposed_buffer_].size;
         view.width = video_width_;
         view.height = video_height_;
         view.pts = exposed_pts_;
@@ -3351,6 +3434,7 @@ void FfmpegPlayer::release()
     picture_presented_ = false;
     last_video_pts_ = 0.0;
     video_width_ = 0;
+    video_nv12_ = false;
     video_height_ = 0;
     video_queue_depth_ = kVideoQueueDepth;
     frame_seen_ = false;

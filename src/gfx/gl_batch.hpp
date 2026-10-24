@@ -46,7 +46,9 @@ class GlBatch
     // Texels one buffer texture may hold (GL_MAX_TEXTURE_BUFFER_SIZE); each
     // carries four pixels.
     long long max_buffer_texels();
-    void set_video_source(GLuint buffer_texture, int width, int height);
+    // nv12: the buffer holds the decoder's planes (Y, then interleaved UV)
+    // and the program converts them (BT.709) as it draws.
+    void set_video_source(GLuint buffer_texture, int width, int height, bool nv12 = false);
     // Draws texel `index` of a filled buffer texture into a 1x1 target and
     // reads it back: true when it matches `expected` (RGBA), so a GL that
     // builds the program but samples wrongly falls back instead of showing
@@ -77,6 +79,7 @@ class GlBatch
     GLuint video_texture_ = 0;
     int video_width_ = 0;
     int video_height_ = 0;
+    bool video_nv12_ = false;
     GLuint font_textures_[kFontSlots] = {};
     std::uint32_t font_count_ = 0;
 };

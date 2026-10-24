@@ -122,6 +122,9 @@ struct Context
     Remote remote;
     // The remote control's TV code and status for Settings (null: none).
     const yt::Lounge *lounge = nullptr;
+    // Buffer textures work here (the player screen checks once): the
+    // hardware path may then hand over NV12 pictures for the GPU to convert.
+    bool video_buffers_ok = false;
 };
 
 } // namespace hui::app

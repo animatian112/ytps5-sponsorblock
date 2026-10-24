@@ -515,6 +515,13 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     add_steps(dev, "Skip the deblocking filter", &S::dev_deblock, {0, 1, 2},
               {"Never", "Above 1080p", "Always"},
               "Faster decoding for a little blockiness; above 1080p it is scaled away");
+    dev.add_header("Hardware decoding (experimental)");
+    add_flag(dev, "Convert on the GPU", &S::dev_gpu_convert,
+             "Hardware pictures go to the screen as they leave the decoder and the GPU makes "
+             "the colours: no CPU conversion. Applies to the next video");
+    add_steps(dev, "Decoder depth", &S::dev_hw_depth, {1, 2}, {"1 picture", "2 pictures"},
+              "2: the decoder starts the next picture before the last is out (untested on this "
+              "console; 1 if a video will not play). Applies to the next video");
     dev.add_header("Diagnostics");
     add_flag(dev, "Show log on screen", &S::dev_log,
              "The log's last lines on the player and on an empty Home");
