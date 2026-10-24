@@ -58,6 +58,7 @@ extern "C"
 #include <cstdio>
 #include <cstring>
 #include <condition_variable>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -336,8 +337,10 @@ class HardwareWorker
             quit_ = true;
         }
         changed_.notify_all();
-        if (started_)
-            pthread_join(thread_, nullptr);
+        if (decode_started_)
+            pthread_join(decode_thread_, nullptr);
+        if (convert_started_)
+            pthread_join(convert_thread_, nullptr);
         for (AVPacket *&packet : packets_)
             av_packet_free(&packet);
         if (sws_ != nullptr)
@@ -358,9 +361,16 @@ class HardwareWorker
         if (pthread_attr_init(&attributes) != 0)
             return false;
         pthread_attr_setstacksize(&attributes, 1u << 20); // console threads need a stack
-        started_ = pthread_create(&thread_, &attributes, &HardwareWorker::main, this) == 0;
+        // Decode and convert on threads of their own: the next picture decodes
+        // into another slot while this one converts.
+        slots_ = std::max(1, decoder_->frame_slots());
+        decode_started_ =
+            pthread_create(&decode_thread_, &attributes, &HardwareWorker::decode_main, this) == 0;
+        convert_started_ =
+            decode_started_ &&
+            pthread_create(&convert_thread_, &attributes, &HardwareWorker::convert_main, this) == 0;
         pthread_attr_destroy(&attributes);
-        return started_;
+        return decode_started_ && convert_started_;
     }
 
     // Room for another packet.
@@ -421,13 +431,14 @@ class HardwareWorker
         if (spare_.size() < kReady + 1)
             spare_.push_back(Spare{std::move(bytes), size});
     }
-    // Nothing fed, decoding or waiting: the stream's end can be declared.
+    // Nothing fed, decoding, converting or waiting: the stream's end can be
+    // declared.
     bool empty() const
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        return packets_.empty() && !busy_ && ready_.empty();
+        return packets_.empty() && !decoding_ && decoded_.empty() && ready_.empty();
     }
-    // Drops what is queued and waits for the picture in flight (dropped too):
+    // Drops what is queued and waits for the pictures in flight (dropped too):
     // before a reset, a seek or the end of the session.
     void settle()
     {
@@ -435,11 +446,13 @@ class HardwareWorker
         for (AVPacket *&packet : packets_)
             av_packet_free(&packet);
         packets_.clear();
-        changed_.wait(lock, [this] { return !busy_; });
+        changed_.wait(lock, [this] { return !decoding_ && !converting_; });
+        decoded_.clear();
         for (Picture &picture : ready_)
             if (picture.bytes != nullptr && spare_.size() < kReady + 1)
                 spare_.push_back(Spare{std::move(picture.bytes), picture.size});
         ready_.clear();
+        changed_.notify_all();
     }
 
   private:
@@ -449,66 +462,120 @@ class HardwareWorker
         std::size_t size = 0;
     };
 
-    static void *main(void *argument)
+    // A Decode's outcome, waiting for the converter. Its picture stays in the
+    // decoder's slot until slots_ more Decode calls have run.
+    struct Decoded
     {
-        static_cast<HardwareWorker *>(argument)->run();
+        bool ok = true;
+        std::string error;
+        hui::ps5::DecodedPicture picture;
+        std::int64_t pts = AV_NOPTS_VALUE;
+    };
+
+    static void *decode_main(void *argument)
+    {
+        static_cast<HardwareWorker *>(argument)->decode_loop();
+        return nullptr;
+    }
+    static void *convert_main(void *argument)
+    {
+        static_cast<HardwareWorker *>(argument)->convert_loop();
         return nullptr;
     }
 
-    void run()
+    void decode_loop()
     {
         for (;;)
         {
             AVPacket *packet = nullptr;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
-                // A packet, and room for the picture it may give.
-                changed_.wait(lock, [this]
-                              { return quit_ || (!packets_.empty() && ready_.size() < kReady); });
+                // A packet, and a slot whose picture has been converted: the
+                // outcomes not yet converted hold the other slots.
+                changed_.wait(lock,
+                              [this] {
+                                  return quit_ ||
+                                         (!packets_.empty() &&
+                                          decoded_.size() < static_cast<std::size_t>(slots_));
+                              });
                 if (quit_)
                     return;
                 packet = packets_.front();
                 packets_.erase(packets_.begin());
-                busy_ = true;
+                decoding_ = true;
             }
-            Picture picture;
-            picture.pts = packet->pts;
-            hui::ps5::DecodedPicture decoded;
-            const auto decode_start = std::chrono::steady_clock::now();
-            picture.ok = decoder_->decode(packet->data, static_cast<std::size_t>(packet->size),
-                                          &decoded, &picture.error);
-            const auto decode_end = std::chrono::steady_clock::now();
+            Decoded decoded;
+            decoded.pts = packet->pts;
+            const auto start = std::chrono::steady_clock::now();
+            decoded.ok = decoder_->decode(packet->data, static_cast<std::size_t>(packet->size),
+                                          &decoded.picture, &decoded.error);
+            const std::int64_t took = std::chrono::duration_cast<std::chrono::microseconds>(
+                                          std::chrono::steady_clock::now() - start)
+                                          .count();
             av_packet_free(&packet);
-            const bool has_picture =
-                picture.ok && decoded.address != nullptr && decoded.width > 0 && decoded.height > 0;
-            if (has_picture)
-                convert(decoded, &picture);
-            const auto convert_end = std::chrono::steady_clock::now();
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                const std::int64_t decode_us =
-                    std::chrono::duration_cast<std::chrono::microseconds>(decode_end - decode_start)
-                        .count();
                 ++timing_.decodes;
-                timing_.decode_us += decode_us;
-                timing_.decode_max_us = std::max(timing_.decode_max_us, decode_us);
+                timing_.decode_us += took;
+                timing_.decode_max_us = std::max(timing_.decode_max_us, took);
+                decoding_ = false;
+                decoded_.push_back(std::move(decoded));
+            }
+            changed_.notify_all();
+        }
+    }
+
+    void convert_loop()
+    {
+        for (;;)
+        {
+            Decoded decoded;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                changed_.wait(lock,
+                              [this]
+                              {
+                                  if (!quit_ && !decoded_.empty() && ready_.size() >= kReady)
+                                      ++timing_.waits_for_room; // counted once per wake, roughly
+                                  return quit_ || (!decoded_.empty() && ready_.size() < kReady);
+                              });
+                if (quit_)
+                    return;
+                // A copy: the entry stays (and keeps its slot) until converted.
+                decoded = decoded_.front();
+                converting_ = true;
+            }
+            Picture picture;
+            picture.ok = decoded.ok;
+            picture.error = decoded.error;
+            picture.pts = decoded.pts;
+            const bool has_picture = decoded.ok && decoded.picture.address != nullptr &&
+                                     decoded.picture.width > 0 && decoded.picture.height > 0;
+            const auto start = std::chrono::steady_clock::now();
+            if (has_picture)
+                convert(decoded.picture, &picture);
+            const std::int64_t took = std::chrono::duration_cast<std::chrono::microseconds>(
+                                          std::chrono::steady_clock::now() - start)
+                                          .count();
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
                 if (has_picture)
                 {
-                    const std::int64_t convert_us =
-                        std::chrono::duration_cast<std::chrono::microseconds>(convert_end -
-                                                                              decode_end)
-                            .count();
                     ++timing_.converts;
-                    timing_.convert_us += convert_us;
-                    timing_.convert_max_us = std::max(timing_.convert_max_us, convert_us);
+                    timing_.convert_us += took;
+                    timing_.convert_max_us = std::max(timing_.convert_max_us, took);
                 }
-                if (ready_.size() + 1 >= kReady)
-                    ++timing_.waits_for_room;
-                busy_ = false;
-                // A hidden frame (no picture) needs no slot in the ready list,
-                // but a failure does: the frame thread counts them.
-                if (!picture.ok || picture.shown)
-                    ready_.push_back(std::move(picture));
+                converting_ = false;
+                // settle() may have emptied the list meanwhile: then this one
+                // belongs to the old position and is dropped.
+                if (!decoded_.empty())
+                {
+                    decoded_.pop_front();
+                    // A hidden frame (no picture) needs no place in the ready
+                    // list, but a failure does: the frame thread counts them.
+                    if (!picture.ok || picture.shown)
+                        ready_.push_back(std::move(picture));
+                }
             }
             changed_.notify_all();
         }
@@ -627,11 +694,16 @@ class HardwareWorker
     const int convert_threads_;
     mutable std::mutex mutex_;
     std::condition_variable changed_;
-    pthread_t thread_{};
-    bool started_ = false;
+    pthread_t decode_thread_{};
+    pthread_t convert_thread_{};
+    bool decode_started_ = false;
+    bool convert_started_ = false;
+    int slots_ = 1;
     bool quit_ = false;
-    bool busy_ = false;
+    bool decoding_ = false;
+    bool converting_ = false;
     std::vector<AVPacket *> packets_;
+    std::deque<Decoded> decoded_;
     std::vector<Picture> ready_;
     std::vector<Spare> spare_;
     Timing timing_;

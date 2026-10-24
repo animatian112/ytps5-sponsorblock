@@ -316,6 +316,9 @@ Symbol import_at(std::size_t index)
 constexpr std::size_t kDirectAlignment = 0x4000;
 constexpr int kDirectMemoryType = 12;
 constexpr int kProtectionCpuGpu = 0x33;
+// Decoded-picture slots used in turn (one picture converting, one waiting,
+// one decoding).
+constexpr int kFrameSlots = 3;
 constexpr int kProtectionGpu = 0x32;
 constexpr int kProtectionFlexibleCpu = 0x03;
 
@@ -662,10 +665,12 @@ struct HardwareDecoder::Session
     std::int64_t cpu_gpu_physical = 0;
     std::size_t cpu_gpu_bytes = 0;
 
-    void *frame_pool = nullptr; // caller-owned decoded frame slot
+    void *frame_pool = nullptr; // caller-owned decoded frame slots, frame_slots of them
     std::int64_t frame_physical = 0;
     std::size_t frame_pool_bytes = 0;
     std::size_t frame_slot_bytes = 0;
+    int frame_slots = 1;
+    int next_slot = 0; // the slot the next Decode writes its picture to
 
     int reachable = 0;
     bool vp9 = false;
@@ -861,15 +866,26 @@ bool HardwareDecoder::open(yt::Codec codec, int width, int height, std::string *
         return false;
     }
     // CPU-readable (0x33, as evo_vdec_native.c maps every region): the player
-    // reads each decoded picture back to convert it for the screen.
-    if (!alloc_direct("frame", frame_slot, kProtectionCpuGpu, limit, &session.frame_physical,
-                      &session.frame_pool, reachable, error))
+    // reads each decoded picture back to convert it for the screen. Several
+    // slots in turn (as the Stremio and Nuvio ports do): a picture stays
+    // readable while the next ones decode into the other slots, so the
+    // conversion no longer has to finish before the next Decode starts.
+    session.frame_slots = kFrameSlots;
+    if (!alloc_direct("frame", frame_slot * kFrameSlots, kProtectionCpuGpu, limit,
+                      &session.frame_physical, &session.frame_pool, reachable, error))
     {
-        close();
-        return false;
+        sys::log("[YTV] videodec2 open: %d frame slots did not fit, one slot", kFrameSlots);
+        session.frame_slots = 1;
+        if (!alloc_direct("frame", frame_slot, kProtectionCpuGpu, limit, &session.frame_physical,
+                          &session.frame_pool, reachable, error))
+        {
+            close();
+            return false;
+        }
     }
-    session.frame_pool_bytes = frame_slot;
+    session.frame_pool_bytes = frame_slot * static_cast<std::size_t>(session.frame_slots);
     session.frame_slot_bytes = frame_slot;
+    session.next_slot = 0;
 
     // 5. Create the decoder on that memory and put it in its initial state.
     void *decoder = nullptr;
@@ -886,9 +902,15 @@ bool HardwareDecoder::open(yt::Codec codec, int width, int height, std::string *
         return false;
     }
 
-    sys::log("[YTV] videodec2 open: ready slot=%zu compute=%zu (imports %d/%d)",
-             session.frame_slot_bytes, session.compute_bytes, reachable, kVideodecImportCount);
+    sys::log("[YTV] videodec2 open: ready slot=%zu x%d compute=%zu (imports %d/%d)",
+             session.frame_slot_bytes, session.frame_slots, session.compute_bytes, reachable,
+             kVideodecImportCount);
     return true;
+}
+
+int HardwareDecoder::frame_slots() const
+{
+    return m_session != nullptr ? m_session->frame_slots : 1;
 }
 
 bool HardwareDecoder::ready() const
@@ -921,8 +943,10 @@ bool HardwareDecoder::decode(const std::uint8_t *data, std::size_t size, Decoded
 
     FrameBuffer frame{};
     frame.this_size = sizeof(FrameBuffer);
-    frame.frame_buffer = session.frame_pool;
+    frame.frame_buffer = static_cast<std::uint8_t *>(session.frame_pool) +
+                         session.frame_slot_bytes * static_cast<std::size_t>(session.next_slot);
     frame.frame_buffer_size = session.frame_slot_bytes;
+    session.next_slot = (session.next_slot + 1) % session.frame_slots;
 
     OutputInfo output{};
     output.this_size = sizeof(OutputInfo);

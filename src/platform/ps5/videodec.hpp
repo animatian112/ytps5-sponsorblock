@@ -73,6 +73,9 @@ class HardwareDecoder
     // step (and the decoder library's return value); the object stays closed.
     bool open(yt::Codec codec, int width, int height, std::string *error);
     bool ready() const;
+    // Slots the pictures decode into in turn: a picture stays readable until
+    // this many more Decode calls have run.
+    int frame_slots() const;
     // One compressed access unit; on success *out describes the decoded picture
     // that now sits in the caller-owned frame slot. Depth one: the caller must
     // be done with the previous picture before submitting the next unit.
