@@ -1439,19 +1439,13 @@ void FfmpegPlayer::fall_back_to_software(const std::string &why)
 void FfmpegPlayer::hardware_picture(const hui::ps5::DecodedPicture &picture, std::int64_t pts)
 {
     // The decoder's picture: NV12 (a full-size luma plane, then the half-height
-    // interleaved chroma plane) at `pitch` bytes a row. The luma plane is the
-    // height rounded up to 64 rows, and the slot is rounded up to 32 KiB: on
-    // the console a 3840x2160 slot is 12550144 bytes = 3840 x (2176 + 1088)
-    // rounded up, so the chroma starts at row 2176. (1.0.161-1.0.166 took
-    // 2178 from the size alone: colours two rows high, a green bottom edge.)
+    // interleaved chroma plane) at `pitch` bytes a row. The chroma starts right
+    // after the picture's own height, as the Nuvio and Stremio PS5 ports read
+    // it (planes[1] = data + pitch x height). 1.0.161-1.0.168 put it at the
+    // height rounded up (2178, then 2176 rows at 4K, 1472 at 1440p): colours
+    // shifted up and a green bottom edge. The slot's size is padding only.
     const int pitch = picture.pitch > 0 ? picture.pitch : picture.width;
-    int rows = (picture.height + 63) & ~63;
-    if (picture.size > 0 && pitch > 0 &&
-        static_cast<std::size_t>(pitch) * static_cast<std::size_t>(rows) * 3 / 2 > picture.size)
-    {
-        // A slot too small for that layout: the plane is only 16-row aligned.
-        rows = (picture.height + 15) & ~15;
-    }
+    const int rows = picture.height;
     if (hardware_pictures_ == 0)
         log::line("ffmpeg: hardware picture %dx%d pitch=%d format=0x%x size=%zu luma rows=%d",
                   picture.width, picture.height, pitch, picture.format, picture.size, rows);
@@ -1469,7 +1463,12 @@ void FfmpegPlayer::hardware_picture(const hui::ps5::DecodedPicture &picture, std
         return;
     frame->format = AV_PIX_FMT_NV12;
     frame->width = picture.width;
-    frame->height = picture.height;
+    // The decoder may report the coded height (1088 for 1080p); the rows past
+    // the stream's own height are padding, not picture.
+    const int shown_height = video_.stream != nullptr && video_.stream->codecpar->height > 0
+                                 ? std::min(picture.height, video_.stream->codecpar->height)
+                                 : picture.height;
+    frame->height = shown_height;
     frame->data[0] = base;
     frame->linesize[0] = pitch;
     frame->data[1] = base + static_cast<std::size_t>(pitch) * static_cast<std::size_t>(rows);
