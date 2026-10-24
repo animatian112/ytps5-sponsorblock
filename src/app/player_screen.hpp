@@ -91,6 +91,9 @@ class PlayerScreen final : public Screen
     bool in_chapters_ = false;
     std::uint64_t chapters_row_for_ = 0; // chapters_revision_ the row was built from
     // How far the controls rise for the rows below them.
+    // The rows' heading showing under the controls before they are opened.
+    static constexpr float kRowPeek = 92.0f;
+    float peek() const;
     float rise() const;
     void fill_chapter_row();
     std::vector<yt::FeedItem> related_items_;

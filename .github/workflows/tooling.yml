@@ -361,10 +361,15 @@ jobs:
               gh release upload "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY"
             fi
           else
-            # Creates the version tag at the commit that was just built and tested.
+            # Creates the version tag at the commit that was just built and tested. The
+            # notes are that commit's message (what the app shows under Updates >
+            # Changelog), without its trailers.
+            notes=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .commit.message \
+              | grep -v -E '^(Co-Authored-By|Claude-Session|Signed-off-by):' || true)
+            if [[ -z ${notes//[[:space:]]/} ]]; then notes="SmartTube $VERSION"; fi
             gh release create "$VERSION" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --generate-notes \
+              --notes "$notes" \
               --title "SmartTube $VERSION"
           fi

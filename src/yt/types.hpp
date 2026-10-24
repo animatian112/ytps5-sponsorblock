@@ -246,6 +246,8 @@ struct FeedPage
     std::string channel_avatar;
     // A watch page's upload line ("May 1, 2024", "Premiered 3 hours ago").
     std::string date_text;
+    // A watch page's channel subscriber line ("1.54M subscribers").
+    std::string subscribers;
     bool ok() const
     {
         return error.empty();

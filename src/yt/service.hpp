@@ -72,6 +72,7 @@ struct VideoView
     std::vector<Chapter> chapters;
     std::string channel_avatar; // the channel's picture (from the watch page)
     std::string date_text;      // the watch page's upload line ("May 1, 2024")
+    std::string subscribers;    // the channel's subscriber line ("1.54M subscribers")
     // Return YouTube Dislike's counts (-1: not known).
     long long likes = -1;
     long long dislikes = -1;

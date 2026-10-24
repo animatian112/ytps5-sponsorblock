@@ -2001,6 +2001,17 @@ bool parse_feed_page(std::string_view json, FeedPage *page)
             break;
     }
 
+    // The channel's subscriber line on a watch page (the owner line's, as
+    // SmartTube shows it under the title).
+    {
+        yyjson_val *owner = find_object(root, "videoOwnerRenderer");
+        std::string line = text_of(yyjson_obj_get(owner, "subscriberCountText"));
+        if (line.empty())
+            line = text_of(find_object(root, "subscriberCountText"));
+        if (contains_text(line.c_str(), "subscriber"))
+            page->subscribers = line;
+    }
+
     // The account's standing toward the video (a /next answer).
     yyjson_val *subscribe = find_object(root, "subscribeButtonRenderer");
     if (subscribe != nullptr)

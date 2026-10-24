@@ -1675,12 +1675,14 @@ struct Service::Impl
                 FeedPage related_page;
                 if (tube.related(video_id, &related_page))
                 {
-                    if (!related_page.channel_avatar.empty() || !related_page.date_text.empty())
+                    if (!related_page.channel_avatar.empty() || !related_page.date_text.empty() ||
+                        !related_page.subscribers.empty())
                     {
                         std::lock_guard<std::mutex> lock(mutex);
                         if (!related_page.channel_avatar.empty())
                             video.channel_avatar = related_page.channel_avatar;
                         video.date_text = related_page.date_text;
+                        video.subscribers = related_page.subscribers;
                         video.revision++;
                     }
                     if (!related_page.chapters.empty())
@@ -2624,6 +2626,7 @@ void Service::request_video(std::string video_id, CodecChoice choice)
     impl_->video.chapters.clear();
     impl_->video.channel_avatar.clear();
     impl_->video.date_text.clear();
+    impl_->video.subscribers.clear();
     impl_->video.likes = -1;
     impl_->video.dislikes = -1;
     impl_->video.subscribed = false;

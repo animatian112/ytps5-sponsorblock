@@ -108,6 +108,8 @@ class SettingsScreen final : public Screen
     // The Accounts page lists the remembered accounts; it is rebuilt each
     // time it opens and when the list changes.
     void rebuild_accounts();
+    // Updates: this version, the check, an install, and the release's notes.
+    void rebuild_updates();
     void refresh_remote();
     std::string accounts_key_;
     void apply(int id, ui::Feedback &feedback);
@@ -124,6 +126,7 @@ class SettingsScreen final : public Screen
     // The "Check for updates" action waits for the background check to settle
     // before it reports the result.
     bool update_watching_ = false;
+    std::uint64_t updates_form_revision_ = ~0ull;
     std::uint64_t update_watch_revision_ = 0;
 };
 

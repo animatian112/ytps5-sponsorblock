@@ -119,7 +119,10 @@ enum : int
     kDevReset,
     kRemoteCode,
     kRemoteStatus,
-    kAccountBase = 100, // + the index of a remembered account
+    kInstallUpdate,
+    kUpdateVersion,
+    kUpdateNoteBase = 50000, // + a line of the release notes (past the bindings)
+    kAccountBase = 100,      // + the index of a remembered account
 };
 
 constexpr std::size_t kMaxAccounts = 3;
@@ -523,7 +526,8 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     reset.danger = true;
 
     tiles_.push_back({"Network test", Icon::network, nullptr, kNetTest});
-    tiles_.push_back({"Updates", Icon::updates, nullptr, kCheckUpdates});
+    add_tile("Updates", Icon::updates);
+    rebuild_updates();
     tiles_.push_back({"About", Icon::about, nullptr, kAbout});
 }
 
@@ -679,6 +683,134 @@ void SettingsScreen::rebuild_accounts()
         tiles_[0].form->enter();
         tiles_[0].form->set_active(true);
     }
+}
+
+namespace
+{
+
+// A release's notes as short lines: markdown marks and links dropped, long
+// paragraphs wrapped.
+std::vector<std::string> note_lines(const std::string &notes)
+{
+    constexpr std::size_t kWidth = 72;
+    constexpr std::size_t kMaxLines = 40;
+    std::vector<std::string> out;
+    std::size_t at = 0;
+    while (at <= notes.size() && out.size() < kMaxLines)
+    {
+        std::size_t end = notes.find('\n', at);
+        if (end == std::string::npos)
+            end = notes.size();
+        std::string line = notes.substr(at, end - at);
+        at = end + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+            line.pop_back();
+        if (line.find("Full Changelog") != std::string::npos ||
+            line.find("http") != std::string::npos)
+            continue;
+        std::size_t start = line.find_first_not_of(" #*-");
+        const bool bullet = !line.empty() && (line[0] == '-' || line[0] == '*');
+        if (start == std::string::npos)
+            continue;
+        line = line.substr(start);
+        std::string prefix = bullet ? "\xE2\x80\xA2 " : "";
+        while (!line.empty() && out.size() < kMaxLines)
+        {
+            std::size_t cut = line.size();
+            if (cut > kWidth)
+            {
+                cut = line.rfind(' ', kWidth);
+                if (cut == std::string::npos || cut == 0)
+                    cut = kWidth;
+            }
+            out.push_back(prefix + line.substr(0, cut));
+            line = cut < line.size()
+                       ? line.substr(line.find_first_not_of(' ', cut) == std::string::npos
+                                         ? line.size()
+                                         : line.find_first_not_of(' ', cut))
+                       : std::string();
+            prefix = bullet ? "   " : "";
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+void SettingsScreen::rebuild_updates()
+{
+    ui::Form *form = nullptr;
+    int index = -1;
+    for (std::size_t i = 0; i < tiles_.size(); ++i)
+        if (tiles_[i].icon == Icon::updates)
+        {
+            form = tiles_[i].form.get();
+            index = static_cast<int>(i);
+        }
+    if (form == nullptr)
+        return;
+    const yt::update::Snapshot snapshot = yt::update::snapshot();
+    if (snapshot.revision == updates_form_revision_)
+        return;
+    updates_form_revision_ = snapshot.revision;
+    const int focus = form->focus();
+    form->clear();
+
+    using yt::update::State;
+    form->add_value(kUpdateVersion, "This version",
+                    snapshot.current_version.empty() ? std::string("unknown")
+                                                     : snapshot.current_version);
+    std::string status;
+    switch (snapshot.state)
+    {
+    case State::checking:
+        status = "Checking...";
+        break;
+    case State::up_to_date:
+        status = "Up to date";
+        break;
+    case State::available:
+        status = snapshot.latest_version + " is out";
+        break;
+    case State::downloading:
+        status = "Downloading";
+        break;
+    case State::staged:
+        status = "Ready";
+        break;
+    case State::failed:
+        status = "Check failed";
+        break;
+    case State::no_release:
+        status = "No release yet";
+        break;
+    default:
+        break;
+    }
+    ui::FormRow &check = form->add_action(kCheckUpdates, "Check for updates");
+    check.text = status;
+    check.description = "Asks GitHub for the newest release";
+    if (snapshot.state == State::available)
+    {
+        ui::FormRow &install = form->add_action(kInstallUpdate, "Install update");
+        install.text = snapshot.latest_version;
+        install.description = "Downloads it; the app closes and starts the new version";
+    }
+    const bool newer = snapshot.state == State::available || snapshot.state == State::downloading ||
+                       snapshot.state == State::staged;
+    form->add_header(snapshot.latest_version.empty()
+                         ? std::string("Changelog")
+                         : (newer ? "What's new in " : "Changelog: ") + snapshot.latest_version);
+    const std::vector<std::string> lines = note_lines(snapshot.notes);
+    if (lines.empty())
+        form->add_value(kUpdateNoteBase,
+                        snapshot.latest_version.empty() ? "Check for updates to see the notes"
+                                                        : "No notes for this release",
+                        {});
+    for (std::size_t i = 0; i < lines.size(); ++i)
+        form->add_value(kUpdateNoteBase + static_cast<int>(i), lines[i], {});
+    if (open_ == index)
+        form->set_focus(std::clamp(focus, 0, form->row_count() - 1));
 }
 
 void SettingsScreen::refresh_remote()
@@ -883,6 +1015,11 @@ void SettingsScreen::activate(int id)
         start_net_test();
         return;
     }
+    if (id == kInstallUpdate)
+    {
+        context_.nav.install_update = true;
+        return;
+    }
     if (id == kCheckUpdates)
     {
         // The check runs in the background; update() reports how it settled.
@@ -981,6 +1118,7 @@ void SettingsScreen::update(const InputFrame &input, float dt, ui::Feedback &fee
     }
 
     refresh_remote();
+    rebuild_updates();
 
     {
         std::vector<std::pair<std::string, std::string>> done;

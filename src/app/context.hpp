@@ -50,8 +50,9 @@ struct Nav
     bool start_login = false;
     bool cancel_login = false;
     bool sign_out = false;
-    bool add_account = false; // keep this account, sign in one more
-    int switch_account = -1;  // index into Service::saved_accounts()
+    bool install_update = false; // Settings > Updates > Install update
+    bool add_account = false;    // keep this account, sign in one more
+    int switch_account = -1;     // index into Service::saved_accounts()
     // "Add to playlist" from the player: the app's playlist picker for this video.
     bool add_to_playlist = false;
     yt::FeedItem playlist_item;

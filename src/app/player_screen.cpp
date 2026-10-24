@@ -221,7 +221,7 @@ PlayerScreen::PlayerScreen(Context &context) : context_(context)
     related_.style.card.info_focus_text = gfx::Color::rgb(0x4a4a4a);
     related_.style.item_width = 330.0f;
     related_.style.counter = false;
-    related_.title = "Suggestions";
+    related_.title = "Recommended";
     related_.set_bounds({96.0f, 1080.0f, 1728.0f, 370.0f});
     chapters_row_.style = related_.style;
     chapters_row_.style.item_width = 240.0f;
@@ -791,8 +791,11 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     chrome_.set_stats_on(settings.dev_stats);
     chrome_.set_has_next(next_suggestion() != nullptr);
     {
-        // SmartTube's line under the title: channel, then the view count.
+        // SmartTube's line under the title: channel (and its subscribers),
+        // then the view count.
         std::string meta = view.info.author;
+        if (!view.subscribers.empty())
+            meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + view.subscribers;
         if (!view.info.view_count.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") +
                     grouped_digits(view.info.view_count) + " views";
@@ -1140,7 +1143,16 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
 
 float PlayerScreen::rise() const
 {
-    return (chapters_.empty() ? 400.0f : 700.0f) * chrome_.lift();
+    return (chapters_.empty() ? 400.0f : 700.0f) * chrome_.lift() + peek();
+}
+
+float PlayerScreen::peek() const
+{
+    // As in SmartTube: while the controls show, the first row's heading and
+    // the top of its pictures wait under them (Down opens the row).
+    if (chapters_.empty() && (related_items_.empty() || !context_.settings.suggestions))
+        return 0.0f;
+    return kRowPeek * chrome_.visibility() * (1.0f - chrome_.lift());
 }
 
 void PlayerScreen::fill_chapter_row()
@@ -2056,9 +2068,10 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
     // The controls, and the suggestions row under them when it is open.
     const float lift = chrome_.lift();
     chrome_.draw(canvas, context.fonts, rise());
-    if (lift > 0.01f)
+    if (lift > 0.01f || peek() > 1.0f)
     {
-        canvas.list.push_opacity(std::min(1.0f, lift * 1.5f));
+        canvas.list.push_opacity(
+            std::max(std::min(1.0f, lift * 1.5f), 0.85f * chrome_.visibility() * (1.0f - lift)));
         if (!chapters_.empty())
             chapters_row_.draw(canvas);
         if (!related_items_.empty())

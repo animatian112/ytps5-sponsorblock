@@ -1656,6 +1656,16 @@ void App::update(const InputFrame &input, float dt)
         service_.sign_out();
         toasts_.push(ui::StatusKind::info, "Signed out");
     }
+    if (ask.install_update)
+    {
+        // The update card shows the download, even after an earlier "Later".
+        update_dismissed_ = false;
+        if (yt::update::install())
+            update_forced_ = true;
+        else
+            toasts_.push(ui::StatusKind::warning, "Nothing to install", "Check for updates first",
+                         3.0f);
+    }
     if (context_.settings_changed)
         settings_changed_ = true;
     if (ask.backup_settings || ask.restore_settings)

@@ -600,13 +600,15 @@ TEST(InnerTube, ReadsUploadDates)
         "metadata":{"contentMetadataViewModel":{"metadataRows":[
           {"metadataParts":[{"text":{"content":"Some Channel"}}]},
           {"metadataParts":[{"text":{"content":"12K views"}},{"text":{"content":"3 weeks ago"}}]}]}}}}}}],
-      "videoPrimaryInfoRenderer":{"dateText":{"simpleText":"May 1, 2024"}}})";
+      "videoPrimaryInfoRenderer":{"dateText":{"simpleText":"May 1, 2024"}},
+      "videoOwnerRenderer":{"subscriberCountText":{"simpleText":"1.54M subscribers"}}})";
     yt::FeedPage page;
     ASSERT_TRUE(yt::parse_feed_page(lockup, &page)) << page.error;
     ASSERT_EQ(page.items.size(), 1u);
     EXPECT_EQ(page.items[0].author, "Some Channel");
     EXPECT_EQ(page.items[0].detail, "12K views \xE2\x80\xA2 3 weeks ago");
     EXPECT_EQ(page.date_text, "May 1, 2024");
+    EXPECT_EQ(page.subscribers, "1.54M subscribers");
 
     yt::VideoInfo info;
     std::string player = fixture("player_ok.json");
