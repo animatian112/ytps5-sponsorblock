@@ -4,6 +4,7 @@
 
 #include "app/subscriptions_screen.hpp"
 
+#include "app/glow.hpp"
 #include "app/theme.hpp"
 #include "yt/service.hpp"
 #include "ui/components.hpp"
@@ -92,6 +93,15 @@ void SubscriptionsScreen::refresh_from_service()
 void SubscriptionsScreen::update(const InputFrame &input, float dt, ui::Feedback &feedback)
 {
     clock_ += dt;
+    {
+        // Settings > User interface > Layout: Glow puts the content under its
+        // header (the focused video's title).
+        const float top = content_top(context_.settings, 150.0f);
+        if (subs_.grid().bounds().y != top)
+        {
+            subs_.grid().set_bounds({kContentX, top, kContentW, 1010.0f - top});
+        }
+    }
 
     if (!context_.service.signed_in())
     {

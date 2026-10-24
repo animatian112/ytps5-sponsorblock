@@ -22,6 +22,10 @@ class RowsView
 {
   public:
     void set_bounds(const gfx::Rect &bounds);
+    const gfx::Rect &bounds() const
+    {
+        return bounds_;
+    }
     // Groups consecutive items by FeedItem::shelf; untitled items join the row
     // before them (or a "Recommended" row). Keeps the focus where it was.
     void set_items(const std::vector<yt::FeedItem> &items, const Context &context);

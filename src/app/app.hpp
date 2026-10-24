@@ -7,6 +7,7 @@
 
 #include "app/card_menu.hpp"
 #include "app/frame.hpp"
+#include "app/glow.hpp"
 #include "app/screen.hpp"
 #include "app/screens.hpp"
 #include "app/telemetry.hpp"
@@ -147,6 +148,10 @@ class App
     Telemetry telemetry_;
     yt::Service &service_;
     std::unique_ptr<ThumbCache> thumbs_;
+    // Settings > User interface > Layout > Glow: the focused video's picture
+    // behind the page (and its title above the rows).
+    GlowBackdrop glow_;
+    bool glow_shown_ = false;
     // Cast from the phone (Settings > Remote control).
     std::unique_ptr<yt::Lounge> lounge_;
     std::vector<std::string> remote_list_;

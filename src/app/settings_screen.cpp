@@ -267,6 +267,8 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     }
     add_steps(ui_form, "Video grid scale", &S::grid_columns, {5, 4, 3},
               {"Small", "Normal", "Large"}, "Cards a row in Subscriptions, History and the grids");
+    add_steps(ui_form, "Layout", &S::ui_layout, {0, 1}, {"SmartTube", "Glow"},
+              "Glow: the focused video fills the screen behind its title, with rounded cards");
     add_steps(ui_form, "Card title lines", &S::title_lines, {1, 2, 3}, {"1", "2", "3"});
     add_flag(ui_form, "Rounded card corners", &S::rounded_cards);
     add_flag(ui_form, "Home: top right corner clock", &S::corner_clock);

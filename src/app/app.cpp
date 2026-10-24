@@ -1538,6 +1538,14 @@ void App::update(const InputFrame &input, float dt)
     // the CPU and the start does not stutter.
     thumbs_->set_quiet(current_ == kPlayerScreen);
     screens_[current_]->update(screen_input, dt, feedback_);
+    // Glow: every page but the player, Settings and the sign-in follows its
+    // focused card.
+    glow_shown_ = glow_layout(settings_) && current_ != kPlayerScreen &&
+                  current_ != kSettingsScreen && current_ != kLoginScreen && thumbs_ != nullptr;
+    if (glow_shown_)
+        glow_.update(screens_[current_]->focused_item(), *thumbs_, dt);
+    else
+        glow_.clear();
     thumbs_->pump();
     // A video request that neither arrives nor fails would leave the player on
     // "loading" forever; the watchdog ends it and logs why.
@@ -1952,13 +1960,14 @@ void App::draw_chrome(Frame &frame)
                      gfx::Color::rgb(0xffffff), gfx::Align::center);
         }
         // SmartTube's logo: the red TV with its "S" (assets/icons/logo.png).
+        // (Glow keeps the corner to the clock: the page is the picture.)
         const gfx::Rect badge{1708.0f, 66.0f, 100.0f, 79.0f};
-        if (!draw_icon(overlay.list, "logo", badge, gfx::Color::rgb(0xffffff)))
+        if (!glow_shown_ && !draw_icon(overlay.list, "logo", badge, gfx::Color::rgb(0xffffff)))
             overlay.list.rounded_rect(badge, 10.0f, gfx::Color::rgb(0xe52d27));
         // No build number or button hints along the bottom, as in SmartTube
         // (Settings > Updates names the version). A newer release only
         // shows as a white dot on the logo.
-        if (!update_latest_.empty())
+        if (!update_latest_.empty() && !glow_shown_)
             overlay.list.circle(badge.x + badge.w - 4.0f, badge.y + 4.0f, 9.0f,
                                 gfx::Color::rgb(0xffffff));
     }
@@ -1984,8 +1993,12 @@ void App::draw_screen()
     // Leanback: the open sidebar pushes the page to the right instead of
     // covering it.
     const float shift = current_ < kTabCount ? rail_.expansion() * (540.0f - 104.0f) : 0.0f;
+    if (glow_shown_)
+        glow_.draw_backdrop(frame_.scene);
     if (shift > 0.5f)
         frame_.scene.push_transform(1.0f, 0.0f, 0.0f, shift, 0.0f);
+    if (glow_shown_ && screens_[current_]->glow_hero())
+        glow_.draw_hero(frame_.scene, fonts_);
     screens_[current_]->draw(context_, frame_);
     if (shift > 0.5f)
         frame_.scene.pop_transform();

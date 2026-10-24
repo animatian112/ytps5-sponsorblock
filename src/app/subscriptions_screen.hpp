@@ -51,6 +51,10 @@ class SubscriptionsScreen final : public Screen
     {
         return subs_.focused_item();
     }
+    bool glow_hero() const override
+    {
+        return true;
+    }
     void update(const InputFrame &input, float dt, ui::Feedback &feedback) override;
     void draw(const Context &context, Frame &frame) const override;
     std::span<const TourStep> tour() const override;

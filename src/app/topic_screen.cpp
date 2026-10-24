@@ -5,6 +5,7 @@
 #include "app/topic_screen.hpp"
 
 #include "app/screens.hpp"
+#include "app/glow.hpp"
 #include "app/theme.hpp"
 #include "yt/service.hpp"
 
@@ -76,6 +77,17 @@ void TopicScreen::refresh()
 void TopicScreen::update(const InputFrame &input, float dt, ui::Feedback &feedback)
 {
     clock_ += dt;
+    {
+        // Settings > User interface > Layout: Glow puts the content under its
+        // header (the focused video's title).
+        const float top = content_top(context_.settings, 150.0f);
+        if (grid_.grid().bounds().y != top)
+        {
+            grid_.grid().set_bounds({kContentX, top, kContentW, 1010.0f - top});
+            const float rows_top = content_top(context_.settings, 140.0f);
+            rows_.set_bounds({kContentX, rows_top, kContentW, 1020.0f - rows_top});
+        }
+    }
     if (playlist_page_ && input.is_pressed(Action::back))
     {
         context_.nav.leave_browse = true;

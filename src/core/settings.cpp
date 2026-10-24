@@ -93,6 +93,7 @@ constexpr Extra kExtras[] = {
     {80, &Settings::dev_upload, nullptr, 0, 5},
     {81, nullptr, &Settings::dearrow_titles, 0, 1},
     {82, nullptr, &Settings::dearrow_thumbnails, 0, 1},
+    {83, &Settings::ui_layout, nullptr, 0, 1},
 };
 // 60 + i: Settings::sb_act[i].
 constexpr std::uint8_t kSbActionKey = 60;

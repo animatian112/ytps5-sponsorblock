@@ -5,6 +5,7 @@
 #include "app/feed_view.hpp"
 
 #include "app/branding.hpp"
+#include "app/glow.hpp"
 #include "app/theme.hpp"
 #include "app/thumbs.hpp"
 #include "ui/motion.hpp"
@@ -173,8 +174,8 @@ void FeedView::update(float dt, const Context &context)
     const Settings &settings = context.settings;
     if (!portrait_)
         grid_.style.columns = settings.grid_columns;
-    grid_.style.card.title_lines = settings.title_lines;
-    grid_.style.card.radius = settings.rounded_cards ? 6.0f : 0.0f;
+    // ... and the layout's card look (SmartTube's or Glow's).
+    style_cards(grid_.style.card, settings);
     // Refresh visible thumbnails even without input (the grid may not call
     // handle() when it is inactive).
     refresh_thumbnails(context);

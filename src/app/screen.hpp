@@ -77,6 +77,12 @@ class Screen
     {
         return nullptr;
     }
+    // Glow layout: the focused card's title stands large above the content
+    // (screens of rows and grids); the others get the picture alone.
+    virtual bool glow_hero() const
+    {
+        return false;
+    }
     virtual void update(const InputFrame &input, float dt, ui::Feedback &feedback) = 0;
     // Must not change state: the app may draw a screen more than once per
     // frame (glass pass, transitions).

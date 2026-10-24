@@ -4,6 +4,8 @@
 
 #include "app/rows_view.hpp"
 
+#include "app/glow.hpp"
+
 #include "app/feed_view.hpp"
 #include "app/theme.hpp"
 #include "app/thumbs.hpp"
@@ -293,9 +295,8 @@ void RowsView::update(float dt, const Context &context)
     {
         auto &row = rows_[r];
         const int index = static_cast<int>(r);
-        // Settings > User interface: title lines and corners.
-        row->shelf.style.card.title_lines = context.settings.title_lines;
-        row->shelf.style.card.radius = context.settings.rounded_cards ? 6.0f : 0.0f;
+        // Settings > User interface: title lines, corners and the layout's look.
+        style_cards(row->shelf.style.card, context.settings);
         if (index >= focus_row_ - 1 && index <= focus_row_ + 2)
         {
             const int focus = std::max(0, row->shelf.focus());

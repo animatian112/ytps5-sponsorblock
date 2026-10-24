@@ -95,6 +95,7 @@ struct Settings
     int title_lines = 2;      // card title lines, 1..3
     int grid_columns = 4;     // cards a row in the grids, 3..5
     bool rounded_cards = true;
+    int ui_layout = 0;    // 0 SmartTube, 1 Glow (the focused video behind a large header)
     int color_scheme = 0; // index into kColorSchemes
     // Search
     bool keyboard_auto = true;  // the keyboard opens with the search

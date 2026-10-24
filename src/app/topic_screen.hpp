@@ -47,6 +47,10 @@ class TopicScreen final : public Screen
     {
         return use_rows_ ? rows_.focused_item() : grid_.focused_item();
     }
+    bool glow_hero() const override
+    {
+        return true;
+    }
     void update(const InputFrame &input, float dt, ui::Feedback &feedback) override;
     void draw(const Context &context, Frame &frame) const override;
 
