@@ -43,6 +43,23 @@ TEST(DrawList, SplitsRunsOnTextureAndClipChanges)
     EXPECT_FALSE(list.runs()[3].clipped);
 }
 
+TEST(DrawList, TheVideoBufferPictureHasARunToItself)
+{
+    // Its program draws only that picture: shapes before or after it, and
+    // glyphs (which otherwise join any run), must not share its run.
+    DrawList list;
+    list.rounded_rect({0, 0, 10, 10}, 0, Color{});
+    list.image(hui::gfx::kVideoBufferHandle, {0, 0, 10, 10}, {0, 0, 1, 1}, Color{});
+    list.rounded_rect({0, 0, 10, 10}, 0, Color{});
+    list.circle(5, 5, 2, Color{});
+    ASSERT_EQ(list.runs().size(), 3u);
+    EXPECT_EQ(list.runs()[0].texture, 0u);
+    EXPECT_EQ(list.runs()[1].texture, hui::gfx::kVideoBufferHandle);
+    EXPECT_EQ(list.runs()[1].count, 1u);
+    EXPECT_EQ(list.runs()[2].count, 2u);
+    EXPECT_NE(list.runs()[2].texture, hui::gfx::kVideoBufferHandle);
+}
+
 TEST(DrawList, NestedClipsIntersect)
 {
     DrawList list;

@@ -58,7 +58,11 @@ Instance &DrawList::append(std::uint32_t texture)
 {
     const bool clipped = !clips_.empty();
     const Rect clip = clipped ? clips_.back() : Rect{};
-    if (runs_.empty() || runs_.back().mesh ||
+    // The video picture's program draws only that picture: it never shares
+    // a run, neither with untextured shapes nor with glyphs (1.0.167 drew the
+    // title and the shadows after it with it).
+    const bool video = texture == kVideoBufferHandle;
+    if (runs_.empty() || runs_.back().mesh || video || runs_.back().texture == kVideoBufferHandle ||
         (runs_.back().texture != texture && texture != 0 && runs_.back().texture != 0) ||
         !same_clip(runs_.back(), clipped, clip))
     {

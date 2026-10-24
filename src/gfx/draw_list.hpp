@@ -70,6 +70,10 @@ struct Rect
 // run of shapes: GlBatch::create_font_texture returns a handle made of this
 // base plus a slot number (1..kFontSlots) instead of a GL texture name.
 constexpr std::uint32_t kFontHandleBase = 0xf0000000u;
+// The texture handle of the video picture when it lives in a buffer texture
+// (see GlBatch::set_video_source): an image drawn with it samples that buffer,
+// through a program that draws nothing else, so it always has a run alone.
+constexpr std::uint32_t kVideoBufferHandle = 0xe0000001u;
 constexpr std::uint32_t kFontSlots = 6;
 constexpr bool is_font_handle(std::uint32_t texture)
 {

@@ -15,10 +15,6 @@
 namespace hui::gfx
 {
 
-// The texture handle of the video picture when it lives in a buffer texture
-// (see GlBatch::set_video_source): an image drawn with it samples that buffer.
-constexpr std::uint32_t kVideoBufferHandle = 0xe0000001u;
-
 // Draws a DrawList with one instanced program: all instances are uploaded
 // once per frame into an orphaned stream buffer, then each run is one
 // glDrawArraysInstancedBaseInstance call (triangle lists only).
