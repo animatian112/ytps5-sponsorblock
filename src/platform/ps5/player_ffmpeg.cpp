@@ -455,6 +455,7 @@ class HardwareWorker
         packets_.clear();
         changed_.wait(lock, [this] { return !decoding_ && !converting_; });
         decoded_.clear();
+        shown_pts_.clear();
         for (Picture &picture : ready_)
             if (picture.bytes != nullptr && spare_.size() < kReady + 1)
                 spare_.push_back(Spare{std::move(picture.bytes), picture.size});
@@ -478,6 +479,25 @@ class HardwareWorker
         hui::ps5::DecodedPicture picture;
         std::int64_t pts = AV_NOPTS_VALUE;
     };
+
+    // A VP9 frame's uncompressed header: shown when show_existing_frame or
+    // show_frame is set (hidden frames are references only).
+    static bool vp9_shows_picture(const std::uint8_t *data, int size)
+    {
+        if (data == nullptr || size < 1)
+            return true;
+        const std::uint8_t b = data[0];
+        if ((b >> 6) != 2)
+            return true; // not a frame header we know: count it
+        const int profile = ((b >> 5) & 1) | (((b >> 4) & 1) << 1);
+        int bit = profile == 3 ? 2 : 3; // a reserved zero bit after profile 3
+        if ((b >> bit) & 1)
+            return true; // show_existing_frame
+        bit -= 2;        // past frame_type
+        if (bit >= 0)
+            return ((b >> bit) & 1) != 0;
+        return size < 2 || (data[1] & 0x80) != 0;
+    }
 
     static void *decode_main(void *argument)
     {
@@ -510,15 +530,34 @@ class HardwareWorker
                 packet = packets_.front();
                 packets_.erase(packets_.begin());
                 decoding_ = true;
+                // Pictures leave the decoder in the order they are shown,
+                // which VP9 makes the order of the units that show one.
+                if (vp9_shows_picture(packet->data, packet->size))
+                {
+                    shown_pts_.push_back(packet->pts);
+                    if (shown_pts_.size() > 16) // out of step: start over
+                        shown_pts_.pop_front();
+                }
             }
             Decoded decoded;
             decoded.pts = packet->pts;
             const auto start = std::chrono::steady_clock::now();
             decoded.ok = decoder_->decode(packet->data, static_cast<std::size_t>(packet->size),
                                           packet->pts, &decoded.picture, &decoded.error);
-            // The picture's own unit (at depth 2, often the one before).
+            // The picture's time: the oldest unit that shows one and has
+            // not had its picture yet (at depth 2, often the one before; a
+            // "show existing frame" unit shows a picture decoded earlier).
             if (decoded.ok && decoded.picture.address != nullptr)
-                decoded.pts = decoded.picture.tag;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (!shown_pts_.empty())
+                {
+                    decoded.pts = shown_pts_.front();
+                    shown_pts_.pop_front();
+                }
+                else
+                    decoded.pts = decoded.picture.tag;
+            }
             const std::int64_t took = std::chrono::duration_cast<std::chrono::microseconds>(
                                           std::chrono::steady_clock::now() - start)
                                           .count();
@@ -778,6 +817,7 @@ class HardwareWorker
     bool converting_ = false;
     std::vector<AVPacket *> packets_;
     std::deque<Decoded> decoded_;
+    std::deque<std::int64_t> shown_pts_; // units that show a picture, not yet out
     std::vector<Picture> ready_;
     std::vector<Spare> spare_;
     Timing timing_;
