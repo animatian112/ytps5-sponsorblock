@@ -994,7 +994,12 @@ bool HardwareDecoder::decode(const std::uint8_t *data, std::size_t size, std::in
             return false;
     }
 
-    if (!output.valid || output.error || output.picture_count == 0)
+    // The error flag alone is not fatal: the console sets it on some pictures
+    // it still delivers (VP9 at depth 2, several a minute), and restarting at
+    // the next keyframe for each one skipped a second of video. The log
+    // counts them ("flagged") so a picture that looks wrong can be traced.
+    if (!output.valid || output.picture_count == 0 ||
+        (output.error && output.frame_buffer == nullptr))
     {
         sys::log("[YTV] videodec2 sceVideodec2Decode: no picture (valid=%u error=%u pics=%u)",
                  static_cast<unsigned>(output.valid), static_cast<unsigned>(output.error),
@@ -1032,6 +1037,7 @@ bool HardwareDecoder::decode(const std::uint8_t *data, std::size_t size, std::in
     out->format = output.frame_format;
     out->size = static_cast<std::size_t>(output.frame_buffer_size);
     out->count = static_cast<int>(output.picture_count);
+    out->flagged = output.error != 0;
     // Whose picture: the slot it landed in was offered with that unit.
     const std::size_t slot = (address - base) / session.frame_slot_bytes;
     out->tag = session.slot_tags[slot < static_cast<std::size_t>(kMaxFrameSlots) ? slot : 0];

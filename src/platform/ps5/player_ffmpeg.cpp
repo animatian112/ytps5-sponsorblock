@@ -409,6 +409,8 @@ class HardwareWorker
         int waits_for_room = 0; // a picture ready but the ready list full
         int no_picture = 0;     // decodes that returned nothing (hidden frame, or held back)
         int several = 0;        // decodes reporting more than one picture
+        int hidden_dropped = 0; // pictures of hidden frames, not shown
+        int flagged = 0;        // pictures the decoder flagged with an error
     };
     Timing take_timing()
     {
@@ -584,6 +586,14 @@ class HardwareWorker
             const auto start = std::chrono::steady_clock::now();
             decoded.ok = decoder_->decode(packet->data, static_cast<std::size_t>(packet->size),
                                           packet->pts, &decoded.picture, &decoded.error);
+            // A hidden frame (VP9's alternate reference) comes out as a
+            // picture too, in the hidden unit's slot (no time of its own):
+            // it is a future frame, shown later by a "show existing frame"
+            // unit, and must not be shown here.
+            bool hidden_out = false;
+            if (decoded.ok && decoded.picture.address != nullptr &&
+                decoded.picture.tag == AV_NOPTS_VALUE)
+                hidden_out = true;
             // The picture's time: the oldest unit that shows one and has
             // not had its picture yet (at depth 2, often the one before; a
             // "show existing frame" unit shows a picture decoded earlier).
@@ -597,6 +607,8 @@ class HardwareWorker
                 event.address = reinterpret_cast<std::uintptr_t>(decoded.picture.address);
                 event.tag = decoded.picture.tag;
                 event.waiting = static_cast<int>(shown_pts_.size());
+                if (hidden_out)
+                    decoded.picture.address = nullptr;
                 if (decoded.ok && decoded.picture.address != nullptr)
                 {
                     if (!shown_pts_.empty())
@@ -620,6 +632,10 @@ class HardwareWorker
                 ++timing_.decodes;
                 if (decoded.ok && decoded.picture.address == nullptr)
                     ++timing_.no_picture;
+                if (hidden_out)
+                    ++timing_.hidden_dropped;
+                if (decoded.picture.flagged)
+                    ++timing_.flagged;
                 if (decoded.picture.count > 1)
                     ++timing_.several;
                 timing_.decode_us += took;
@@ -2316,14 +2332,15 @@ void FfmpegPlayer::queue_hardware_picture(HardwareWorker::Picture &picture)
         const HardwareWorker::Timing t = hardware_worker_->take_timing();
         log::line("ffmpeg: hardware %llu pictures; last 5 s: %d decodes %.1f ms avg %.1f max, "
                   "%d converts %.1f ms avg %.1f max, ahead-full %d, queue empty %d times; "
-                  "no picture %d, several %d, missing %d, out of order %d",
+                  "no picture %d (hidden %d), flagged %d, several %d, missing %d, out of "
+                  "order %d",
                   static_cast<unsigned long long>(hardware_pictures_), t.decodes,
                   t.decodes > 0 ? static_cast<double>(t.decode_us) / 1000.0 / t.decodes : 0.0,
                   static_cast<double>(t.decode_max_us) / 1000.0, t.converts,
                   t.converts > 0 ? static_cast<double>(t.convert_us) / 1000.0 / t.converts : 0.0,
                   static_cast<double>(t.convert_max_us) / 1000.0, t.waits_for_room,
-                  hardware_queue_empty_, t.no_picture, t.several, hardware_missing_,
-                  hardware_out_of_order_);
+                  hardware_queue_empty_, t.no_picture, t.hidden_dropped, t.flagged, t.several,
+                  hardware_missing_, hardware_out_of_order_);
         hardware_queue_empty_ = 0;
         hardware_missing_ = 0;
         hardware_out_of_order_ = 0;
