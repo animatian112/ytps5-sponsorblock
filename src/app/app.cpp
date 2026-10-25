@@ -737,8 +737,18 @@ std::vector<yt::FeedItem> App::current_section(const std::string &video_id, Sect
     const auto channel_row = [&](yt::FeedKind kind) -> std::vector<yt::FeedItem>
     {
         const std::vector<yt::FeedItem> items = service_.feed(kind).items;
-        const auto found = std::find_if(items.begin(), items.end(), [&](const yt::FeedItem &item)
-                                        { return item.video_id == video_id; });
+        // A video can sit in two rows (Videos and Popular): the row of the
+        // card that was pressed.
+        const yt::FeedItem *pressed =
+            current_ < screens_.size() ? screens_[current_]->focused_item() : nullptr;
+        auto found = items.end();
+        if (pressed != nullptr && pressed->video_id == video_id)
+            found =
+                std::find_if(items.begin(), items.end(), [&](const yt::FeedItem &item)
+                             { return item.video_id == video_id && item.shelf == pressed->shelf; });
+        if (found == items.end())
+            found = std::find_if(items.begin(), items.end(), [&](const yt::FeedItem &item)
+                                 { return item.video_id == video_id; });
         if (found == items.end())
             return {};
         std::vector<yt::FeedItem> row;
@@ -916,6 +926,7 @@ void App::activate_rail(int position)
             // upload order, newest first, without the channel page's
             // featured shelf on top.
             pending_browse_ = "VLUU" + mine.substr(2);
+            context_.pending_browse_title = "My videos";
             rail_focused_ = false;
             show(kBrowseScreen);
         }
@@ -1623,6 +1634,11 @@ void App::update(const InputFrame &input, float dt)
     {
         // A playlist card: its videos on the browse screen.
         pending_browse_ = ask.video_id;
+        {
+            const yt::FeedItem *card = screens_[current_]->focused_item();
+            context_.pending_browse_title =
+                card != nullptr && card->video_id == ask.video_id ? card->title : std::string();
+        }
         show(kBrowseScreen);
     }
     else if (ask.open_video && !ask.video_id.empty())

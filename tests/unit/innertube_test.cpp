@@ -248,6 +248,20 @@ TEST(InnerTubePlayer, ReadsTheSignatureTimestampFromPlayerJs)
     EXPECT_EQ(yt::signature_timestamp(""), "");
 }
 
+// A featured channel's card carries a subscriber line of its own: the page's
+// line is the channel's, wherever the client puts it.
+TEST(InnerTubeChannel, SubscribersAreTheChannelsNotAFeaturedChannels)
+{
+    const char *json = R"({"contents":{"tvBrowseRenderer":{"content":{
+      "shelfRenderer":{"content":{"horizontalListRenderer":{"items":[
+        {"tileRenderer":{"metadata":{"subscriberCountText":{"simpleText":"12K subscribers"}}}}]}}},
+      "channelHeader":{"title":{"simpleText":"Big Channel"},
+        "subscriberCountText":{"simpleText":"3.4M subscribers"}}}}}})";
+    yt::ChannelPage page;
+    yt::parse_channel_page(json, &page);
+    EXPECT_EQ(page.channel.subscribers, "3.4M subscribers");
+}
+
 TEST(InnerTubeChannel, ReadsTheTabsTheHeaderAndTheSelectedTabItems)
 {
     yt::ChannelPage page;

@@ -43,9 +43,11 @@ void TopicScreen::enter()
     {
         browse_id_ = context_.pending_browse;
         context_.pending_browse.clear();
-        title_ = browse_id_ == "VLWL"   ? "Watch later"
-                 : browse_id_ == "VLLL" ? "Liked videos"
-                                        : "Playlist";
+        title_ = browse_id_ == "VLWL"                     ? "Watch later"
+                 : browse_id_ == "VLLL"                   ? "Liked videos"
+                 : !context_.pending_browse_title.empty() ? context_.pending_browse_title
+                                                          : "Playlist";
+        context_.pending_browse_title.clear();
     }
     // One slot serves every topic: ask for this one unless it already holds it.
     const yt::FeedView view = context_.service.feed(yt::FeedKind::topic);

@@ -869,6 +869,15 @@ struct Service::Impl
             }
         };
         bool uploads = false;
+        // Broadcasts (live now, or a finished stream) get a row of their own
+        // instead of mixing into the uploads.
+        std::vector<FeedItem> streams;
+        const auto is_stream = [&](const FeedItem &item)
+        {
+            const std::string detail = lower(item.detail);
+            return item.live || detail.find("streamed") != std::string::npos ||
+                   detail.find("watching") != std::string::npos || lower(item.badge) == "live";
+        };
         if (channel_id.size() == 24 && channel_id.rfind("UC", 0) == 0)
         {
             FeedPage page_uploads;
@@ -889,7 +898,10 @@ struct Service::Impl
                     for (FeedItem &item : next.items)
                         page_uploads.items.push_back(std::move(item));
                 }
-                add_row(page_uploads.items, "Videos", 60);
+                std::vector<FeedItem> videos;
+                for (FeedItem &item : page_uploads.items)
+                    (is_stream(item) ? streams : videos).push_back(std::move(item));
+                add_row(videos, "Videos", 60);
                 uploads = true;
             }
         }
@@ -928,6 +940,8 @@ struct Service::Impl
         publish(FeedKind::channel, Load::ready, rows, {}, {});
         for (const char *wanted : {"shorts", "live", "playlists"})
         {
+            const bool live_row = std::strcmp(wanted, "live") == 0;
+            bool added = false;
             for (const ChannelTab &tab : tabs)
             {
                 if (lower(tab.title) != wanted || tab.params.empty())
@@ -935,10 +949,31 @@ struct Service::Impl
                 FeedPage tab_page;
                 if (tube.channel_tab(channel_id, tab.params, &tab_page) && !tab_page.items.empty())
                 {
-                    add_row(tab_page.items, tab.title, 40);
+                    if (live_row)
+                    {
+                        // The Live tab, plus the broadcasts the uploads had
+                        // that it does not list.
+                        for (FeedItem &item : streams)
+                        {
+                            const bool listed =
+                                std::any_of(tab_page.items.begin(), tab_page.items.end(),
+                                            [&](const FeedItem &other)
+                                            { return other.video_id == item.video_id; });
+                            if (!listed)
+                                tab_page.items.push_back(std::move(item));
+                        }
+                    }
+                    add_row(tab_page.items, live_row ? std::string("Live streams") : tab.title,
+                            live_row ? 60 : 40);
                     publish(FeedKind::channel, Load::ready, rows, {}, {});
+                    added = true;
                 }
                 break;
+            }
+            if (live_row && !added && !streams.empty())
+            {
+                add_row(streams, "Live streams", 60);
+                publish(FeedKind::channel, Load::ready, rows, {}, {});
             }
         }
         if (!channels_row.empty())

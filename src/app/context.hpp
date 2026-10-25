@@ -134,6 +134,8 @@ struct Context
     int section_kind = -1;
     std::string section_shelf;
     std::uint64_t section_revision = 0;
+    // The name of the playlist pending_browse opens (its card's title).
+    std::string pending_browse_title;
 };
 
 } // namespace hui::app

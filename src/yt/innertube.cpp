@@ -1493,17 +1493,78 @@ std::string channel_avatar_from(yyjson_val *root)
     return best.url;
 }
 
+// The channel's own subscriber line, never one of the cards on its page (the
+// channels it features carry subscriber lines of their own, usually far
+// smaller): rows, shelves and cards are not searched.
+std::string subscribers_outside_cards(yyjson_val *value, int depth = 0)
+{
+    if (depth > 40)
+        return {};
+    if (yyjson_is_arr(value))
+    {
+        yyjson_val *entry = nullptr;
+        yyjson_arr_iter iter;
+        yyjson_arr_iter_init(value, &iter);
+        while ((entry = yyjson_arr_iter_next(&iter)) != nullptr)
+            if (std::string found = subscribers_outside_cards(entry, depth + 1); !found.empty())
+                return found;
+        return {};
+    }
+    if (!yyjson_is_obj(value))
+        return {};
+    static const char *const kCards[] = {"shelfRenderer",
+                                         "richShelfRenderer",
+                                         "horizontalListRenderer",
+                                         "gridRenderer",
+                                         "tileRenderer",
+                                         "channelRenderer",
+                                         "gridChannelRenderer",
+                                         "compactChannelRenderer",
+                                         "lockupViewModel",
+                                         "richItemRenderer",
+                                         "horizontalCardListRenderer"};
+    if (yyjson_val *count = yyjson_obj_get(value, "subscriberCountText"); count != nullptr)
+        if (std::string text = text_of(count); !text.empty())
+            return text;
+    for (const char *key : {"simpleText", "content"})
+    {
+        yyjson_val *text = yyjson_obj_get(value, key);
+        if (yyjson_is_str(text) && std::strstr(yyjson_get_str(text), "subscriber") != nullptr)
+            return yyjson_get_str(text);
+    }
+    yyjson_obj_iter iter;
+    yyjson_obj_iter_init(value, &iter);
+    yyjson_val *entry = nullptr;
+    while ((entry = yyjson_obj_iter_next(&iter)) != nullptr)
+    {
+        const char *name = yyjson_get_str(entry);
+        if (name == nullptr || is_ad_key(name))
+            continue;
+        bool card = false;
+        for (const char *skip : kCards)
+            card = card || std::strcmp(name, skip) == 0;
+        if (card)
+            continue;
+        if (std::string found =
+                subscribers_outside_cards(yyjson_obj_iter_get_val(entry), depth + 1);
+            !found.empty())
+            return found;
+    }
+    return {};
+}
+
 std::string channel_subscribers_from(yyjson_val *root)
 {
-    yyjson_val *count = find_object(root, "subscriberCountText");
-    if (count != nullptr)
+    // The page header first (web: pageHeaderRenderer's metadata rows).
+    if (yyjson_val *header = yyjson_obj_get(root, "header"); header != nullptr)
     {
-        std::string text = text_of(count);
-        if (!text.empty())
+        if (yyjson_val *count = find_object(header, "subscriberCountText"); count != nullptr)
+            if (std::string text = text_of(count); !text.empty())
+                return text;
+        if (std::string text = find_text_containing(header, "subscriber"); !text.empty())
             return text;
     }
-    // The page header renders the line as one metadata row part.
-    return find_text_containing(root, "subscriber");
+    return subscribers_outside_cards(root);
 }
 
 std::string first_error_message(yyjson_val *root)
