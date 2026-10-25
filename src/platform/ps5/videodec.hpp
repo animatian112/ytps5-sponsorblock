@@ -54,6 +54,7 @@ struct DecodedPicture
     // The tag passed with the unit whose picture this is (at depth 2 the
     // picture can belong to the unit before the one just decoded).
     std::int64_t tag = 0;
+    int count = 0; // the decoder's picture count for this call (diagnostics)
 };
 
 // Depth-1 Videodec2 session for one codec/resolution. Not copyable: the session

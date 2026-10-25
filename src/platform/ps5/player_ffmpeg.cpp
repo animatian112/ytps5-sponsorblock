@@ -407,6 +407,8 @@ class HardwareWorker
         std::int64_t convert_us = 0;
         std::int64_t convert_max_us = 0;
         int waits_for_room = 0; // a picture ready but the ready list full
+        int no_picture = 0;     // decodes that returned nothing (hidden frame, or held back)
+        int several = 0;        // decodes reporting more than one picture
     };
     Timing take_timing()
     {
@@ -524,6 +526,10 @@ class HardwareWorker
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 ++timing_.decodes;
+                if (decoded.ok && decoded.picture.address == nullptr)
+                    ++timing_.no_picture;
+                if (decoded.picture.count > 1)
+                    ++timing_.several;
                 timing_.decode_us += took;
                 timing_.decode_max_us = std::max(timing_.decode_max_us, took);
                 decoding_ = false;
@@ -1128,6 +1134,8 @@ class FfmpegPlayer final : public Player
     AVFrame *hardware_frame_ = nullptr; // wraps the decoder's picture for the converter
     int hardware_failures_ = 0;
     std::uint64_t hardware_pictures_ = 0;
+    int hardware_missing_ = 0;       // frames skipped between pictures (diagnostics)
+    int hardware_out_of_order_ = 0;  // pictures earlier than the one before
     int hardware_queue_empty_ = 0;   // presents that found no picture queued (5-second line)
     bool hardware_wait_key_ = false; // after a seek: packets until a keyframe are skipped
     int hardware_skipped_to_key_ = 0;
@@ -2094,6 +2102,18 @@ void FfmpegPlayer::queue_hardware_picture(HardwareWorker::Picture &picture)
         picture.pts == AV_NOPTS_VALUE || video_.stream == nullptr
             ? (frame_seen_ ? last_video_pts_ + 1.0 / 30.0 : 0.0)
             : static_cast<double>(picture.pts) * av_q2d(video_.stream->time_base) - pts_origin_;
+    // Diagnostics: pictures that never came out (a jump past one frame's
+    // step) and pictures out of order.
+    if (frame_seen_ && video_.stream != nullptr && video_seek_target_ < 0.0)
+    {
+        const AVRational rate = video_.stream->avg_frame_rate;
+        const double step = rate.num > 0 && rate.den > 0 ? av_q2d(av_inv_q(rate)) : 1.0 / 30.0;
+        const double gap = pts - last_video_pts_;
+        if (gap < 0.0)
+            ++hardware_out_of_order_;
+        else if (gap > step * 1.5 && gap < 2.0)
+            hardware_missing_ += static_cast<int>(gap / step + 0.5) - 1;
+    }
     if (video_seek_target_ >= 0.0)
     {
         // Decoded only to reach the seek target (capped as in software).
@@ -2161,14 +2181,18 @@ void FfmpegPlayer::queue_hardware_picture(HardwareWorker::Picture &picture)
         hardware_log_ = wall;
         const HardwareWorker::Timing t = hardware_worker_->take_timing();
         log::line("ffmpeg: hardware %llu pictures; last 5 s: %d decodes %.1f ms avg %.1f max, "
-                  "%d converts %.1f ms avg %.1f max, ahead-full %d, queue empty %d times",
+                  "%d converts %.1f ms avg %.1f max, ahead-full %d, queue empty %d times; "
+                  "no picture %d, several %d, missing %d, out of order %d",
                   static_cast<unsigned long long>(hardware_pictures_), t.decodes,
                   t.decodes > 0 ? static_cast<double>(t.decode_us) / 1000.0 / t.decodes : 0.0,
                   static_cast<double>(t.decode_max_us) / 1000.0, t.converts,
                   t.converts > 0 ? static_cast<double>(t.convert_us) / 1000.0 / t.converts : 0.0,
                   static_cast<double>(t.convert_max_us) / 1000.0, t.waits_for_room,
-                  hardware_queue_empty_);
+                  hardware_queue_empty_, t.no_picture, t.several, hardware_missing_,
+                  hardware_out_of_order_);
         hardware_queue_empty_ = 0;
+        hardware_missing_ = 0;
+        hardware_out_of_order_ = 0;
     }
 }
 

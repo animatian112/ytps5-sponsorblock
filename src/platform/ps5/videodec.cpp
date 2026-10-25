@@ -1028,6 +1028,7 @@ bool HardwareDecoder::decode(const std::uint8_t *data, std::size_t size, std::in
                                                                    : output.frame_pitch);
     out->format = output.frame_format;
     out->size = static_cast<std::size_t>(output.frame_buffer_size);
+    out->count = static_cast<int>(output.picture_count);
     // Whose picture: the slot it landed in was offered with that unit.
     const std::size_t slot = (address - base) / session.frame_slot_bytes;
     out->tag = session.slot_tags[slot < static_cast<std::size_t>(kMaxFrameSlots) ? slot : 0];
