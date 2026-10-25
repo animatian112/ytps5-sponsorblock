@@ -981,7 +981,7 @@ bool HardwareDecoder::decode(const std::uint8_t *data, std::size_t size, std::in
     // records exactly this for the tested H.264 streams (no picture from decode,
     // an immediate flush produced it); VP9 returned the picture straight away, so
     // this only runs when decode produced nothing.
-    if (!output.valid && session.vp9 && !output.error)
+    if (session.vp9 && !output.error && (!output.valid || output.picture_count == 0))
     {
         // VP9 shows nothing for a hidden reference frame (the alt-ref of a
         // superframe): not a failure, and no flush (it would end the stream).
@@ -999,7 +999,10 @@ bool HardwareDecoder::decode(const std::uint8_t *data, std::size_t size, std::in
         sys::log("[YTV] videodec2 sceVideodec2Decode: no picture (valid=%u error=%u pics=%u)",
                  static_cast<unsigned>(output.valid), static_cast<unsigned>(output.error),
                  static_cast<unsigned>(output.picture_count));
-        set_error(error, "sceVideodec2Decode: no picture produced");
+        set_error(error,
+                  "sceVideodec2Decode: no picture produced (valid=" + std::to_string(output.valid) +
+                      " error=" + std::to_string(output.error) +
+                      " pictures=" + std::to_string(output.picture_count) + ")");
         return false;
     }
 

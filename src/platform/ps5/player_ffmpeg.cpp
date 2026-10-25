@@ -480,6 +480,40 @@ class HardwareWorker
         std::int64_t pts = AV_NOPTS_VALUE;
     };
 
+    // The last decodes, for the log when a picture comes out of order.
+    struct Event
+    {
+        std::int64_t packet_pts = 0;
+        bool shows = true;
+        int bytes = 0;
+        bool ok = true;
+        std::uintptr_t address = 0;
+        std::int64_t tag = 0;
+        std::int64_t given = 0;
+        int waiting = 0;
+    };
+    static constexpr int kEvents = 10;
+    Event events_[kEvents];
+    int event_next_ = 0;
+
+  public:
+    void log_recent(double time_base)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (int i = 0; i < kEvents; ++i)
+        {
+            const Event &e = events_[(event_next_ + i) % kEvents];
+            log::line("ffmpeg:   decode unit %.3f %s %d B -> %s picture %llx tag %.3f, given "
+                      "%.3f (%d waiting)",
+                      static_cast<double>(e.packet_pts) * time_base, e.shows ? "shows" : "hidden",
+                      e.bytes, e.ok ? "ok" : "FAILED",
+                      static_cast<unsigned long long>(e.address & 0xffffffffull),
+                      static_cast<double>(e.tag) * time_base,
+                      static_cast<double>(e.given) * time_base, e.waiting);
+        }
+    }
+
+  private:
     // A VP9 frame's uncompressed header: shown when show_existing_frame or
     // show_frame is set (hidden frames are references only).
     static bool vp9_shows_picture(const std::uint8_t *data, int size)
@@ -515,6 +549,9 @@ class HardwareWorker
         for (;;)
         {
             AVPacket *packet = nullptr;
+            std::int64_t packet_pts = AV_NOPTS_VALUE;
+            int packet_bytes = 0;
+            bool packet_shows = true;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
                 // A packet, and a slot whose picture has been converted: the
@@ -532,7 +569,10 @@ class HardwareWorker
                 decoding_ = true;
                 // Pictures leave the decoder in the order they are shown,
                 // which VP9 makes the order of the units that show one.
-                if (vp9_shows_picture(packet->data, packet->size))
+                packet_pts = packet->pts;
+                packet_bytes = packet->size;
+                packet_shows = vp9_shows_picture(packet->data, packet->size);
+                if (packet_shows)
                 {
                     shown_pts_.push_back(packet->pts);
                     if (shown_pts_.size() > 16) // out of step: start over
@@ -547,16 +587,29 @@ class HardwareWorker
             // The picture's time: the oldest unit that shows one and has
             // not had its picture yet (at depth 2, often the one before; a
             // "show existing frame" unit shows a picture decoded earlier).
-            if (decoded.ok && decoded.picture.address != nullptr)
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                if (!shown_pts_.empty())
+                Event event;
+                event.packet_pts = packet_pts;
+                event.shows = packet_shows;
+                event.bytes = packet_bytes;
+                event.ok = decoded.ok;
+                event.address = reinterpret_cast<std::uintptr_t>(decoded.picture.address);
+                event.tag = decoded.picture.tag;
+                event.waiting = static_cast<int>(shown_pts_.size());
+                if (decoded.ok && decoded.picture.address != nullptr)
                 {
-                    decoded.pts = shown_pts_.front();
-                    shown_pts_.pop_front();
+                    if (!shown_pts_.empty())
+                    {
+                        decoded.pts = shown_pts_.front();
+                        shown_pts_.pop_front();
+                    }
+                    else
+                        decoded.pts = decoded.picture.tag;
                 }
-                else
-                    decoded.pts = decoded.picture.tag;
+                event.given = decoded.pts;
+                events_[event_next_] = event;
+                event_next_ = (event_next_ + 1) % kEvents;
             }
             const std::int64_t took = std::chrono::duration_cast<std::chrono::microseconds>(
                                           std::chrono::steady_clock::now() - start)
@@ -926,6 +979,7 @@ class FfmpegPlayer final : public Player
     // back from the CPU-readable frame slot and converted like a software one.
     void pump_video_hardware(int budget);
     bool start_hardware();
+    void restart_hardware();
     bool wants_hardware() const;
     void queue_hardware_picture(HardwareWorker::Picture &picture);
     void fall_back_to_software(const std::string &why);
@@ -1174,6 +1228,8 @@ class FfmpegPlayer final : public Player
     AVFrame *hardware_frame_ = nullptr; // wraps the decoder's picture for the converter
     int hardware_failures_ = 0;
     std::uint64_t hardware_pictures_ = 0;
+    int hardware_restarts_ = 0;      // decoder restarts after failures, this video
+    int hardware_order_dumps_ = 0;   // out-of-order reports logged, this video
     int hardware_missing_ = 0;       // frames skipped between pictures (diagnostics)
     int hardware_out_of_order_ = 0;  // pictures earlier than the one before
     int hardware_queue_empty_ = 0;   // presents that found no picture queued (5-second line)
@@ -1994,12 +2050,28 @@ bool FfmpegPlayer::start_hardware()
     }
     hardware_active_ = true;
     hardware_failures_ = 0;
+    hardware_restarts_ = 0;
+    hardware_order_dumps_ = 0;
     hardware_pictures_ = 0;
     log::line("ffmpeg: hardware decode ON (experimental): vp9 %dx%d via Videodec2 on its own "
               "thread, depth %d, %d free slots, %s",
               par->width, par->height, hardware_->depth(), hardware_->frame_slots(),
               nv12 ? "NV12 to the GPU" : "RGBA converted on the CPU");
     return true;
+}
+
+void FfmpegPlayer::restart_hardware()
+{
+    // As a seek does it, without moving: settle, reset, skip to a keyframe.
+    if (hardware_worker_ != nullptr)
+        hardware_worker_->settle();
+    std::string ignored;
+    if (hardware_ != nullptr)
+        (void)hardware_->reset(&ignored);
+    av_bsf_flush(hardware_bsf_);
+    hardware_wait_key_ = true;
+    hardware_skipped_to_key_ = 0;
+    hardware_failures_ = 0;
 }
 
 void FfmpegPlayer::fall_back_to_software(const std::string &why)
@@ -2039,6 +2111,18 @@ void FfmpegPlayer::pump_video_hardware(int budget)
                     log::line("ffmpeg: hardware decode failed: %s", picture.error.c_str());
                     if (++hardware_failures_ >= 3 || hardware_pictures_ == 0)
                     {
+                        // Above 1080p software cannot keep up: the decoder
+                        // starts over at the next keyframe instead, a few
+                        // times, before giving up on it.
+                        if (hardware_pictures_ > 0 && hardware_restarts_ < 5)
+                        {
+                            ++hardware_restarts_;
+                            log::line("ffmpeg: hardware decoder restarted at the next keyframe "
+                                      "(%d)",
+                                      hardware_restarts_);
+                            restart_hardware();
+                            return;
+                        }
                         fall_back_to_software(picture.error);
                         return;
                     }
@@ -2150,7 +2234,17 @@ void FfmpegPlayer::queue_hardware_picture(HardwareWorker::Picture &picture)
         const double step = rate.num > 0 && rate.den > 0 ? av_q2d(av_inv_q(rate)) : 1.0 / 30.0;
         const double gap = pts - last_video_pts_;
         if (gap < 0.0)
+        {
             ++hardware_out_of_order_;
+            // The first few: what the decoder was given and gave back.
+            if (hardware_order_dumps_ < 4)
+            {
+                ++hardware_order_dumps_;
+                log::line("ffmpeg: picture at %.3f after %.3f; the last decodes:", pts,
+                          last_video_pts_);
+                hardware_worker_->log_recent(av_q2d(video_.stream->time_base));
+            }
+        }
         else if (gap > step * 1.5 && gap < 2.0)
             hardware_missing_ += static_cast<int>(gap / step + 0.5) - 1;
     }
