@@ -37,6 +37,9 @@ class ThumbCache
     // Quiet: one download at a time, so a starting video's decoder keeps the
     // CPU (several JPEG decodes at once made the first seconds stutter).
     void set_quiet(bool quiet);
+    // Keeps every downloaded picture in this folder too, so the next start
+    // shows them straight away instead of downloading them again.
+    void set_disk_cache(const std::string &directory);
     // width / height of a loaded image, 0 while it is not loaded.
     float aspect(const std::string &url) const;
     // Registers an already decoded image (the QR bitmap) under `key`.

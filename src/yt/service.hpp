@@ -139,6 +139,12 @@ class Service
 
     // ---- requests, called from the frame thread ----
     void request_home(bool force = false);
+    // Home again for the account just signed in, unless a Home answer for it
+    // is already queued, under way or in (the boot asks once, not twice).
+    void request_home_for_account();
+    // Home, Subscriptions or History are being fetched (or queued): a screen
+    // already showing them can wait and rebuild once, not after each answer.
+    bool feeds_settling() const;
     void request_subscriptions(bool force = false);
     void request_history();
     void request_library();

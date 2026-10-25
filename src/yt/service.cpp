@@ -237,6 +237,12 @@ struct Service::Impl
     // folder and loaded it; taken once by the frame (take_token_restored) so
     // the restore message runs exactly then.
     bool token_restored = false;
+    // Home's fetch: taken by the worker, begun, and for which account
+    // (the refresh token; empty: signed out).
+    bool home_taken = false;
+    bool feeds_taken = false; // the worker is on Home, Subscriptions or History
+    bool home_started = false;
+    std::string home_account;
     std::string last_error;
 
     // ---- worker-only ----
@@ -1966,6 +1972,9 @@ struct Service::Impl
                     return;
                 taken = job;
                 job = Job{};
+                home_taken = taken.home;
+                home_started = false;
+                feeds_taken = taken.home || taken.subscriptions || taken.history;
                 region_gl = preferences.gl;
                 region_hl = preferences.hl;
                 search_params = preferences.search_params;
@@ -2052,6 +2061,11 @@ struct Service::Impl
             }
             if (taken.home)
             {
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    home_started = true;
+                    home_account = auth.signed_in() ? auth.refresh_token() : std::string();
+                }
                 do_feed(FeedKind::home, {}, false);
                 // SmartTube's Home is many shelves: the TV answer gives a few
                 // per page, so the next pages are fetched right away.
@@ -2075,6 +2089,11 @@ struct Service::Impl
             {
                 do_feed(FeedKind::history, {}, false);
                 save_feed_cache(FeedKind::history, "history");
+            }
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                feeds_taken = false;
+                home_taken = false;
             }
             if (taken.topic)
                 do_feed(FeedKind::topic, taken.topic_id, false);
@@ -2300,6 +2319,27 @@ void Service::stop()
     }
     impl_->wake.notify_all();
     pthread_join(impl_->worker, nullptr);
+}
+
+bool Service::feeds_settling() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->feeds_taken || impl_->job.home || impl_->job.subscriptions || impl_->job.history;
+}
+
+void Service::request_home_for_account()
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->job.home)
+        return; // queued: it runs after the token, with it
+    if (impl_->home_taken && !impl_->home_started)
+        return; // taken with the token refresh before it
+    const std::string token = impl_->auth.refresh_token();
+    if (!token.empty() && impl_->home_account == token)
+        return; // already asked for with this account
+    impl_->job.home = true;
+    impl_->job.home_force = true;
+    impl_->wake.notify_all();
 }
 
 void Service::request_home(bool force)

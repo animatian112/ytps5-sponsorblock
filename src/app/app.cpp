@@ -107,6 +107,8 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
 {
     if (!data_root_.empty())
     {
+        // Pictures from earlier starts show at once.
+        thumbs_->set_disk_cache(data_root_ + "/thumbs");
         lounge_ = std::make_unique<yt::Lounge>(data_root_, "SmartTube on PS5");
         context_.lounge = lounge_.get();
     }
@@ -282,6 +284,9 @@ void App::start()
     if (started_)
         return;
     started_ = true;
+    // The region and filters before the first request, so Home is not
+    // asked for twice (once more when they arrive).
+    service_.set_preferences(preferences());
     service_.start();
     // A token the user carried over in the install folder wins over nothing:
     // the sandbox copy in /download0 is tried first by the auth object itself.
@@ -1772,7 +1777,7 @@ void App::update(const InputFrame &input, float dt)
     {
         // The feeds the screens asked for while the account was still missing
         // carry no content: request both again now that the token is loaded.
-        service_.request_home(true);
+        service_.request_home_for_account();
         service_.request_subscriptions(true);
         if (login_return_ < screens_.size() && current_ == kLoginScreen)
             show(login_return_); // the player picks the video up again by itself

@@ -4,6 +4,7 @@
 
 #include "app/thumbs.hpp"
 
+#include "core/save_file.hpp"
 #include "gfx/gl_batch.hpp"
 #include "yt/http.hpp"
 #include "yt/image.hpp"
@@ -14,6 +15,7 @@
 #include <atomic>
 #include <iterator>
 #include <condition_variable>
+#include <cstdio>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -35,6 +37,27 @@ constexpr std::uint64_t kRetryFrames = 600;
 constexpr std::uint64_t kStaleFrames = 120;
 // A thumbnail is small; refuse anything that looks like a video.
 constexpr std::size_t kMaxBytes = 2u << 20;
+// Pictures kept on disk; past this many, a slice of them is dropped.
+constexpr std::size_t kDiskFiles = 1500;
+
+// The file a picture is kept in: a hash of its address. A video picture on
+// i.ytimg.com is keyed without its query (the signature part can change
+// between answers while the picture stays the same).
+std::string disk_name(const std::string &url)
+{
+    std::string key = url;
+    if (key.find("ytimg.com/vi") != std::string::npos)
+        key = key.substr(0, key.find('?'));
+    std::uint64_t hash = 1469598103934665603ull;
+    for (const unsigned char ch : key)
+    {
+        hash ^= ch;
+        hash *= 1099511628211ull;
+    }
+    char name[24];
+    std::snprintf(name, sizeof name, "%016llx.img", static_cast<unsigned long long>(hash));
+    return name;
+}
 
 // Halves a picture (2x2 boxes) until it is at most kMaxWidth wide: DeArrow's
 // thumbnails are full video frames, and a card never shows more.
@@ -132,7 +155,9 @@ struct ThumbCache::Impl
     // on screen load before the ones a previous screen (or account) queued.
     std::deque<Job> work;
     bool quiet = false;
-    int active = 0; // downloads running on the workers
+    int active = 0;       // downloads running on the workers
+    std::string disk_dir; // empty: no disk copies
+    int disk_writes = 0;
     pthread_t threads[kWorkers] = {};
 
     Impl(gfx::GlBatch &batch_, Destroy destroy_, std::size_t capacity_)
@@ -170,16 +195,40 @@ struct ThumbCache::Impl
 
             Ready result;
             result.key = key;
-            yt::http::Request request;
-            request.url = key;
-            request.timeout_s = 15;
-            request.max_bytes = kMaxBytes;
-            const yt::http::Response response = yt::http::perform(request);
-            std::string error;
-            if (response.ok() && response.status == 200 &&
-                yt::decode_image(response.body, &result.width, &result.height, &result.rgba,
-                                 &error))
+            std::string directory;
             {
+                std::lock_guard<std::mutex> lock(mutex);
+                directory = disk_dir;
+            }
+            const std::string path =
+                directory.empty() ? std::string() : directory + "/" + disk_name(key);
+            // The copy kept from an earlier start first: no network wait.
+            std::string kept;
+            bool from_disk = false;
+            if (!path.empty() && hui::save::read_file(path, &kept, kMaxBytes))
+            {
+                std::string error;
+                from_disk =
+                    yt::decode_image(kept, &result.width, &result.height, &result.rgba, &error);
+                if (!from_disk)
+                    std::remove(path.c_str());
+            }
+            yt::http::Response response;
+            if (!from_disk)
+            {
+                yt::http::Request request;
+                request.url = key;
+                request.timeout_s = 15;
+                request.max_bytes = kMaxBytes;
+                response = yt::http::perform(request);
+            }
+            std::string error;
+            if (from_disk || (response.ok() && response.status == 200 &&
+                              yt::decode_image(response.body, &result.width, &result.height,
+                                               &result.rgba, &error)))
+            {
+                if (!from_disk && !path.empty())
+                    keep_on_disk(directory, path, response.body);
                 const std::size_t cap = static_cast<std::size_t>(kMaxBytes);
                 if (result.width <= 0 || result.height <= 0 ||
                     static_cast<std::size_t>(result.width) * result.height > cap)
@@ -200,6 +249,27 @@ struct ThumbCache::Impl
             --active;
             wake.notify_all();
         }
+    }
+
+    void keep_on_disk(const std::string &directory, const std::string &path,
+                      const std::string &body)
+    {
+        (void)hui::save::write_atomic(path, body);
+        bool prune = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            prune = ++disk_writes % 100 == 0;
+        }
+        if (!prune)
+            return;
+        // Past the limit, a quarter goes (in listing order: arbitrary, which
+        // is fine for a cache of pictures).
+        const std::vector<std::string> names = hui::save::list_files(directory);
+        if (names.size() <= kDiskFiles)
+            return;
+        const std::size_t drop = names.size() - kDiskFiles + kDiskFiles / 4;
+        for (std::size_t i = 0; i < drop && i < names.size(); ++i)
+            std::remove((directory + "/" + names[i]).c_str());
     }
 
     static void *worker_entry(void *argument)
@@ -272,6 +342,14 @@ std::uint32_t ThumbCache::texture(const std::string &url)
     else
         found->second = impl_->frame; // drawn again: it moves up the queue
     return 0;
+}
+
+void ThumbCache::set_disk_cache(const std::string &directory)
+{
+    if (!directory.empty() && !hui::save::ensure_directory(directory))
+        return;
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->disk_dir = directory;
 }
 
 void ThumbCache::set_quiet(bool quiet)

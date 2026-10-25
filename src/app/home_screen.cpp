@@ -170,10 +170,16 @@ void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedbac
     // Feeds arrive in bursts (Home's extra pages, history, subscriptions):
     // the rows are rebuilt at most twice a second, not once per answer.
     refresh_wait_ = std::max(0.0f, refresh_wait_ - dt);
-    if ((revision != seen_revision_ || subscriptions != seen_subscriptions_ ||
-         history != seen_history_) &&
-        (refresh_wait_ <= 0.0f || feed_.items().empty()))
+    const bool changed = revision != seen_revision_ || subscriptions != seen_subscriptions_ ||
+                         history != seen_history_;
+    // Rows already on screen (the saved Home at boot) stay until every feed
+    // of the burst is in, then change once - not once per answer. Up to 8 s.
+    const bool showing = !feed_.items().empty();
+    if (changed && showing && context_.service.feeds_settling() && settle_s_ < 8.0f)
+        settle_s_ += dt;
+    else if (changed && (refresh_wait_ <= 0.0f || !showing || settle_s_ > 0.0f))
     {
+        settle_s_ = 0.0f;
         seen_revision_ = revision;
         seen_subscriptions_ = subscriptions;
         seen_history_ = history;

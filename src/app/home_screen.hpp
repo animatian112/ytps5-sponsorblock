@@ -53,6 +53,7 @@ class HomeScreen final : public Screen
   private:
     void refresh_from_service();
     float refresh_wait_ = 0.0f; // seconds until the rows may be rebuilt again
+    float settle_s_ = 0.0f;     // seconds the rows have waited for a burst of feeds
 
     Context &context_;
     FeedView feed_;
