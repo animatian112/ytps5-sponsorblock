@@ -751,13 +751,33 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         ended_ = player_->ended();
     }
 
-    // Related row.
-    const std::uint64_t related_revision = context_.service.revision(yt::FeedKind::related);
+    // A playlist or a channel row plays in order: more of its videos as the
+    // end comes near (a playlist arrives a page at a time).
+    follow_section();
+
+    // The row under the controls: the playlist or channel row the video was
+    // opened from (autoplay goes through it), else YouTube's suggestions.
+    const bool from_section = context_.section_ordered && !context_.section.empty();
+    const std::uint64_t related_revision = from_section
+                                               ? (context_.section_revision | (1ull << 63))
+                                               : context_.service.revision(yt::FeedKind::related);
     if (related_revision != related_revision_)
     {
         related_revision_ = related_revision;
-        const yt::FeedView feed = context_.service.feed(yt::FeedKind::related);
-        related_items_ = feed.items;
+        if (from_section)
+        {
+            related_items_.clear();
+            for (const yt::FeedItem &item : context_.section)
+                if (item.video_id.size() == 11)
+                    related_items_.push_back(item);
+            related_.title =
+                context_.section_title.empty() ? std::string("Up next") : context_.section_title;
+        }
+        else
+        {
+            related_items_ = context_.service.feed(yt::FeedKind::related).items;
+            related_.title = "Recommended";
+        }
         std::vector<ui::CardItem> cards;
         cards.reserve(related_items_.size());
         for (const yt::FeedItem &item : related_items_)
@@ -1315,12 +1335,66 @@ const yt::FeedItem *PlayerScreen::next_suggestion() const
             for (const yt::FeedItem &item : *list)
                 if (item.video_id == shuffle_pick_)
                     return &item;
+    if (context_.section_ordered && !context_.section.empty())
+    {
+        // In order through the playlist or channel row; at its end autoplay
+        // stops (it only plays from where the video was opened).
+        const auto &section = context_.section;
+        const auto at = std::find_if(section.begin(), section.end(), [&](const yt::FeedItem &item)
+                                     { return item.video_id == current; });
+        if (at != section.end())
+        {
+            for (auto it = at + 1; it != section.end(); ++it)
+                if (it->video_id.size() == 11)
+                    return &*it;
+            return nullptr;
+        }
+    }
     for (const yt::FeedItem &item : related_items_)
     {
         if (!item.video_id.empty() && item.video_id != current)
             return &item;
     }
     return nullptr;
+}
+
+void PlayerScreen::follow_section()
+{
+    if (!context_.section_ordered || context_.section_kind != static_cast<int>(yt::FeedKind::topic))
+        return;
+    const std::string current = playing_id_.empty() ? requested_id_ : playing_id_;
+    auto &section = context_.section;
+    const auto at = std::find_if(section.begin(), section.end(), [&](const yt::FeedItem &item)
+                                 { return item.video_id == current; });
+    if (at == section.end())
+        return;
+    const auto kind = yt::FeedKind::topic;
+    // The feed grew (a page arrived): take what is new, if it is still the
+    // same playlist (it holds the section's first video).
+    const std::uint64_t revision = context_.service.revision(kind);
+    if (revision != section_feed_revision_)
+    {
+        section_feed_revision_ = revision;
+        const yt::FeedView feed = context_.service.feed(kind);
+        const bool same =
+            !section.empty() &&
+            std::any_of(feed.items.begin(), feed.items.end(), [&](const yt::FeedItem &item)
+                        { return item.video_id == section.front().video_id; });
+        if (same && feed.items.size() > section.size())
+        {
+            section = feed.items;
+            ++context_.section_revision;
+            section_more_asked_ = false;
+            return;
+        }
+    }
+    // Three from the end: ask for the next page once.
+    const std::size_t index = static_cast<std::size_t>(at - section.begin());
+    if (!section_more_asked_ && index + 3 >= section.size())
+    {
+        section_more_asked_ = true;
+        context_.service.request_more(kind);
+    }
 }
 
 void PlayerScreen::update_remote()

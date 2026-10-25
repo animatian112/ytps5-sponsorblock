@@ -95,6 +95,7 @@ class PlayerScreen final : public Screen
     static constexpr float kRowPeek = 92.0f;
     float peek() const;
     void check_buffer_support();
+    void follow_section();
     float rise() const;
     void fill_chapter_row();
     std::vector<yt::FeedItem> related_items_;
@@ -112,6 +113,8 @@ class PlayerScreen final : public Screen
     std::chrono::steady_clock::time_point last_upload_log_{};
     std::string heavy_hint_for_; // the video the 4K tip was shown for
     bool nv12_refused_logged_ = false;
+    std::uint64_t section_feed_revision_ = 0;
+    bool section_more_asked_ = false;
     bool in_related_ = false;
     bool ended_ = false;
     bool consumed_player_ = false;

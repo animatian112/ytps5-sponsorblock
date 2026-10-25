@@ -166,7 +166,15 @@ class App
     void load_sb_excluded();
     void save_sb_excluded() const;
     // The videos of the section the focus is in (for Shuffle).
-    std::vector<yt::FeedItem> current_section(const std::string &video_id) const;
+    struct SectionInfo
+    {
+        bool ordered = false; // a playlist or a channel row: autoplay goes through it
+        std::string title;
+        int kind = -1; // the yt::FeedKind it came from
+        std::string shelf;
+    };
+    std::vector<yt::FeedItem> current_section(const std::string &video_id,
+                                              SectionInfo *info = nullptr) const;
     std::size_t player_return_ = 0; // where Circle in the player goes back to
     Context context_;
     std::vector<std::unique_ptr<Screen>> screens_;

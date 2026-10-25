@@ -730,8 +730,32 @@ void App::open_account_menu()
     card_menu_.open("Accounts", std::move(entries));
 }
 
-std::vector<yt::FeedItem> App::current_section(const std::string &video_id) const
+std::vector<yt::FeedItem> App::current_section(const std::string &video_id, SectionInfo *info) const
 {
+    // A channel's row (its Videos, Popular, a playlist row...): the row the
+    // video sits in, played in order.
+    const auto channel_row = [&](yt::FeedKind kind) -> std::vector<yt::FeedItem>
+    {
+        const std::vector<yt::FeedItem> items = service_.feed(kind).items;
+        const auto found = std::find_if(items.begin(), items.end(), [&](const yt::FeedItem &item)
+                                        { return item.video_id == video_id; });
+        if (found == items.end())
+            return {};
+        std::vector<yt::FeedItem> row;
+        for (const yt::FeedItem &item : items)
+            if (item.shelf == found->shelf && !item.is_channel() && !item.is_playlist())
+                row.push_back(item);
+        if (info != nullptr)
+        {
+            info->ordered = true;
+            info->kind = static_cast<int>(kind);
+            info->shelf = found->shelf;
+            info->title = !found->shelf.empty()    ? found->shelf
+                          : !found->author.empty() ? found->author
+                                                   : std::string("Channel videos");
+        }
+        return row;
+    };
     // The feed of the screen the card is on; a screen with two (search and
     // a channel page) answers with the one that holds the video.
     std::vector<yt::FeedKind> kinds;
@@ -747,25 +771,33 @@ std::vector<yt::FeedItem> App::current_section(const std::string &video_id) cons
         kinds = {yt::FeedKind::history};
         break;
     case kSearchScreen:
-        kinds = {yt::FeedKind::channel, yt::FeedKind::search};
+        // A channel page opened from search plays its row in order.
+        if (std::vector<yt::FeedItem> row = channel_row(yt::FeedKind::channel); !row.empty())
+            return row;
+        kinds = {yt::FeedKind::search};
         break;
     case kPlayerScreen:
         kinds = {yt::FeedKind::related};
         break;
     case kChannelScreen:
+        // A channel page: the row the video sits in, so autoplay and Shuffle
+        // play that channel's videos, not suggestions.
+        return channel_row(yt::FeedKind::channel);
+    case kBrowseScreen:
     {
-        // A channel page: the row the video sits in (its Videos, a playlist
-        // row...), so Shuffle plays that channel's videos, not suggestions.
-        const std::vector<yt::FeedItem> items = service_.feed(yt::FeedKind::channel).items;
-        const auto found = std::find_if(items.begin(), items.end(), [&](const yt::FeedItem &item)
-                                        { return item.video_id == video_id; });
-        if (found == items.end())
+        // A playlist page: the playlist, in order.
+        std::vector<yt::FeedItem> items = service_.feed(yt::FeedKind::topic).items;
+        const bool holds = std::any_of(items.begin(), items.end(), [&](const yt::FeedItem &item)
+                                       { return item.video_id == video_id; });
+        if (!holds)
             return {};
-        std::vector<yt::FeedItem> row;
-        for (const yt::FeedItem &item : items)
-            if (item.shelf == found->shelf && !item.is_channel())
-                row.push_back(item);
-        return row;
+        if (info != nullptr)
+        {
+            info->ordered = true;
+            info->kind = static_cast<int>(yt::FeedKind::topic);
+            info->title = screens_[kBrowseScreen]->title();
+        }
+        return items;
     }
     default:
         kinds = {yt::FeedKind::topic, yt::FeedKind::home};
@@ -1225,6 +1257,10 @@ void App::apply_card_pick(int pick)
         const std::size_t pick =
             static_cast<std::size_t>(static_cast<std::uint64_t>(clock_ * 7919.0) % videos.size());
         section_items_ = videos;
+        context_.section_ordered = false;
+        context_.section_title.clear();
+        context_.section_kind = -1;
+        ++context_.section_revision;
         shuffle_started_ = true;
         context_.nav.open_video = true;
         context_.nav.video_id = videos[pick].video_id;
@@ -1594,7 +1630,15 @@ void App::update(const InputFrame &input, float dt)
         // Shuffle picks from the section the video came from; a suggestion
         // opened in the player keeps the section it had.
         if (current_ != kPlayerScreen && !shuffle_started_)
-            section_items_ = current_section(ask.video_id);
+        {
+            SectionInfo info;
+            section_items_ = current_section(ask.video_id, &info);
+            context_.section_ordered = info.ordered && !section_items_.empty();
+            context_.section_title = info.title;
+            context_.section_kind = info.kind;
+            context_.section_shelf = info.shelf;
+            ++context_.section_revision;
+        }
         shuffle_started_ = false;
         active_video_ = ask.video_id;
         const std::size_t player = kPlayerScreen;

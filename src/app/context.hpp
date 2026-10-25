@@ -125,6 +125,15 @@ struct Context
     // Buffer textures work here (the player screen checks once): the
     // hardware path may then hand over NV12 pictures for the GPU to convert.
     bool video_buffers_ok = false;
+    // The section above, when it plays in order (a playlist, or a channel's
+    // row such as Popular): its name for the player's row, the feed it was
+    // taken from (-1: none) and the row inside that feed (a channel page's
+    // shelf). section_revision changes whenever the section is replaced.
+    bool section_ordered = false;
+    std::string section_title;
+    int section_kind = -1;
+    std::string section_shelf;
+    std::uint64_t section_revision = 0;
 };
 
 } // namespace hui::app
