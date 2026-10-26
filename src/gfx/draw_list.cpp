@@ -4,6 +4,7 @@
 
 #include "gfx/draw_list.hpp"
 
+#include "gfx/emoji.hpp"
 #include "gfx/triangulate.hpp"
 
 #include <algorithm>
@@ -284,6 +285,14 @@ float DrawList::text(const Font &font, std::uint32_t font_texture, std::string_v
     // A glyph from a fallback face brings that face's atlas and spread.
     for (const GlyphQuad &q : glyph_scratch_)
     {
+        if (q.emoji != 0)
+        {
+            // A colour picture: drawn as it is, faded with the text.
+            if (const std::uint32_t picture = emoji::texture(q.emoji); picture != 0)
+                image(picture, {q.x0, q.y0, q.x1 - q.x0, q.y1 - q.y0}, kFullUv,
+                      Color{1.0f, 1.0f, 1.0f, color.a});
+            continue;
+        }
         const std::uint32_t texture = q.texture != 0 ? q.texture : font_texture;
         const bool slotted = is_font_handle(texture);
         const float slot = slotted ? static_cast<float>(texture & 0xfu) : 0.0f;

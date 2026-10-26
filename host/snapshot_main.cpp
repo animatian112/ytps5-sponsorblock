@@ -9,6 +9,7 @@
 // is never started, and the video screen draws a synthetic preview frame.
 
 #include "app/app.hpp"
+#include "app/emoji_textures.hpp"
 #include "app/icons.hpp"
 #include "app/screens.hpp"
 #include "app/theme.hpp"
@@ -87,8 +88,9 @@ std::vector<yt::FeedItem> feed_fixture()
         "DualSense haptics: rumble, triggers and the light bar",
         "AV1, VP9, AVC: what the software decoder does on the console",
         "A long video about codecs and bitrates, part 3",
-        "Tokyo at night in 4K HDR",
-        "Twelve recipes in twenty minutes",
+        "Tokyo at night in 4K HDR \xF0\x9F\x87\xAF\xF0\x9F\x87\xB5",
+        "Twelve recipes in twenty minutes \xF0\x9F\x8D\x9D\xF0\x9F\x94\xA5 "
+        "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7",
         "Road bike service: indexing the gears in nine steps",
         "Rust for the impatient - the first two hours",
         "Mahler 5, third movement, live from the concert hall",
@@ -387,6 +389,7 @@ int main(int argc, char **argv)
     }
 
     hui::app::init_icons(renderer.batch(), assets + "/icons");
+    hui::app::init_emoji(renderer.batch(), assets + "/emoji/twemoji.pack");
     hui::app::App app(fonts, hui::app::App::load_settings(data_root), data_root, renderer.batch(),
                       service);
     app.set_version("host");

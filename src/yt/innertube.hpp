@@ -94,6 +94,9 @@ class InnerTube
     // HTTP status of the last call; 401 means the token has to be refreshed.
     long last_status() const;
     const std::string &last_error() const;
+    // The TV player JS the TV client's signature timestamp came from (empty
+    // until a TV request looked it up): the player whose "n" its URLs need.
+    const std::string &tv_player_url() const;
 
   private:
     struct Impl;

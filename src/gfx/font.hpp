@@ -21,6 +21,7 @@ struct GlyphQuad
     float u0, v0, u1, v1;
     std::uint32_t texture = 0; // the fallback face's atlas; 0: the font's own
     float range = 0.0f;        // distance-field spread of the face it came from
+    int emoji = 0;             // a colour emoji picture (gfx/emoji.hpp) instead of a glyph
 };
 
 enum class Align : std::uint8_t

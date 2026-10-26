@@ -171,3 +171,29 @@ and skip rules are ported from SmartTube, Copyright (c) 2020-present yuliskov
 The root certificates of the Mozilla CA program (as packaged by Debian's
 ca-certificates), embedded as C by the SponsorBlock build. Mozilla Public
 License 2.0.
+
+## QuickJS-ng (third_party/quickjs, built by src/third_party/quickjs)
+
+[QuickJS-ng](https://github.com/quickjs-ng/quickjs) (MIT; Copyright (c)
+2017-2024 Fabrice Bellard, Charlie Gordon and the quickjs-ng contributors),
+the JavaScript engine that runs YouTube's player code for stream URLs. The
+upstream commit is in `third_party/quickjs/UPSTREAM_COMMIT`; its licence ships
+as `assets/js/QUICKJS-LICENSE.txt`.
+
+## yt-dlp EJS solver (assets/js)
+
+`yt.solver.lib.js` and `yt.solver.core.js` from
+[yt-dlp/ejs](https://github.com/yt-dlp/ejs) 0.8.0 (Unlicense, public domain;
+`assets/js/EJS-LICENSE.txt`). The lib bundle carries
+[meriyah](https://github.com/meriyah/meriyah) (ISC) and
+[astring](https://github.com/davidbonnet/astring) (MIT), whose notices are at
+the top of that file.
+
+## Twemoji (assets/emoji)
+
+The colour emoji are [Twemoji](https://github.com/jdecked/twemoji) graphics,
+Copyright 2019 Twitter, Inc and other contributors, Copyright 2024 jdecked and
+other contributors, licensed under CC-BY 4.0
+(`assets/emoji/LICENSE-GRAPHICS.txt`). `tools/pack-emoji.py` packs the 72x72
+PNGs into `assets/emoji/twemoji.pack` unchanged; the upstream commit is in
+`assets/emoji/TWEMOJI_COMMIT`.

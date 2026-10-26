@@ -2616,6 +2616,7 @@ struct InnerTube::Impl
     // page, its script bundle, then the iframe API's player hash with the TV
     // player's file names.
     std::string tv_sts;
+    std::string tv_player; // the TV player JS tv_sts was read from
     bool tv_sts_tried = false;
 
     std::string fetch_text(const std::string &url, std::size_t max_bytes)
@@ -2660,6 +2661,7 @@ struct InnerTube::Impl
             if (!value.empty())
             {
                 tv_sts = value;
+                tv_player = url;
                 return;
             }
         }
@@ -3850,6 +3852,11 @@ bool InnerTube::comments(const std::string &video_id, const std::string &continu
 long InnerTube::last_status() const
 {
     return impl_->status;
+}
+
+const std::string &InnerTube::tv_player_url() const
+{
+    return impl_->tv_player;
 }
 
 const std::string &InnerTube::last_error() const

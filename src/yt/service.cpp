@@ -14,6 +14,7 @@
 #include "yt/log.hpp"
 #include "yt/codec.hpp"
 #include "yt/decipher.hpp"
+#include "yt/js_solver.hpp"
 #include "yt/hls.hpp"
 #include "yt/innertube.hpp"
 #include "yt/watch.hpp"
@@ -253,6 +254,8 @@ struct Service::Impl
     // across the client chain; descrambler_js_url keys that cache.
     Descrambler descrambler;
     std::string descrambler_js_url;
+    // The player's own n transform, run in QuickJS (made on first use).
+    std::unique_ptr<JsSolver> js_solver;
     AudioSink *audio = nullptr;
     pthread_t worker{};
     std::atomic<bool> running{false};
@@ -1350,6 +1353,42 @@ struct Service::Impl
         info.sabr_only = false;
     }
 
+    static bool needs_n_transform(const std::string &client)
+    {
+        // The Apple clients' URLs play as they come; the TV and web ones
+        // need the player's n transform.
+        return client.rfind("TVHTML5", 0) == 0 || client.rfind("WEB", 0) == 0 ||
+               client.rfind("MWEB", 0) == 0;
+    }
+
+    bool ensure_js_solver(const VideoInfo &info, std::string *error)
+    {
+        std::string player = info.player_js_url;
+        if (player.empty() || info.client.rfind("TVHTML5", 0) == 0)
+        {
+            // The TV client's URLs belong to the TV player its request named.
+            const std::string tv = tube.tv_player_url();
+            if (!tv.empty())
+                player = tv;
+        }
+        if (player.empty())
+        {
+            *error = "no player JS known";
+            return false;
+        }
+        if (js_solver == nullptr)
+        {
+            const std::string token = auth.token_path();
+            const std::size_t slash = token.rfind('/');
+            const std::string cache =
+                slash == std::string::npos ? std::string() : token.substr(0, slash) + "/players";
+            js_solver = std::make_unique<JsSolver>(
+                install_root.empty() ? std::string("assets/js") : install_root + "/assets/js",
+                cache);
+        }
+        return js_solver->prepare(player, {}, error);
+    }
+
     bool ensure_descrambler(const VideoInfo &info, std::string *error)
     {
         if (info.player_js_url.empty())
@@ -1645,6 +1684,37 @@ struct Service::Impl
                             log::line("video: audio descramble failed: %s", cipher_error.c_str());
                             audio_url.clear();
                         }
+                    }
+                }
+
+                // The TV and web clients' URLs carry an "n" the player has to
+                // transform first; googlevideo refuses them untouched (403).
+                if (needs_n_transform(info.client) &&
+                    (!url_n_value(video_url).empty() || !url_n_value(audio_url).empty()))
+                {
+                    set_stage(generation, "Player code");
+                    std::string n_error;
+                    std::string video_solved;
+                    std::string audio_solved;
+                    if (ensure_js_solver(info, &n_error))
+                    {
+                        video_solved = js_solver->transform_url(video_url, &n_error);
+                        audio_solved = audio_url.empty()
+                                           ? std::string()
+                                           : js_solver->transform_url(audio_url, &n_error);
+                    }
+                    if (video_solved.empty() || (!audio_url.empty() && audio_solved.empty()))
+                    {
+                        log::line("video: try %s n: %s", info.client.c_str(), n_error.c_str());
+                        add_attempt(generation, info.client + " n: " + n_error);
+                    }
+                    else
+                    {
+                        log::line("video: %s n %s -> %s", info.client.c_str(),
+                                  url_n_value(video_url).c_str(),
+                                  url_n_value(video_solved).c_str());
+                        video_url = video_solved;
+                        audio_url = audio_solved;
                     }
                 }
 

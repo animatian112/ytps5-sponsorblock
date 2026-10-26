@@ -956,7 +956,8 @@ void SettingsScreen::activate(int id)
         context_.toasts.push(ui::StatusKind::info, "SmartTube for PS5",
                              "Unofficial PS5 port in the style of SmartTube (MIT, (c) yuliskov), "
                              "built on ytps5. SponsorBlock segments from sponsor.ajay.app "
-                             "(CC BY-NC-SA 4.0).",
+                             "(CC BY-NC-SA 4.0). Emoji: Twemoji (CC-BY 4.0). Player code "
+                             "runs in QuickJS-ng with yt-dlp's EJS solver.",
                              10.0f);
         return;
     }

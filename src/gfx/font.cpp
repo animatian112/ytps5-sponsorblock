@@ -4,6 +4,8 @@
 
 #include "gfx/font.hpp"
 
+#include "gfx/emoji.hpp"
+
 #include <algorithm>
 #include <cstring>
 
@@ -178,7 +180,19 @@ float Font::measure(std::string_view text, float size, float tracking) const
     int glyphs = 0;
     for (std::size_t index = 0; index < text.size();)
     {
+        std::size_t consumed = 0;
+        if (emoji::match(text, index, &consumed) != 0)
+        {
+            width += size * emoji::kAdvance;
+            index += consumed;
+            previous = 0;
+            previous_face = nullptr;
+            ++glyphs;
+            continue;
+        }
         std::uint32_t codepoint = next_codepoint(text, &index);
+        if (emoji::invisible(codepoint))
+            continue;
         const Resolved resolved = resolve(&codepoint);
         if (resolved.glyph == nullptr)
             continue;
@@ -207,7 +221,30 @@ float Font::layout(std::string_view text, float x, float y, float size, Align al
     const Font *previous_face = nullptr;
     for (std::size_t index = 0; index < text.size();)
     {
+        std::size_t consumed = 0;
+        if (const int id = emoji::match(text, index, &consumed); id != 0)
+        {
+            // A square picture on the baseline, about as tall as capitals
+            // plus descenders, like a phone draws it.
+            GlyphQuad quad{};
+            const float side = size * emoji::kScale;
+            quad.x0 = pen + size * (emoji::kAdvance - emoji::kScale) * 0.5f;
+            quad.y0 = y - size * 0.86f;
+            quad.x1 = quad.x0 + side;
+            quad.y1 = quad.y0 + side;
+            quad.u1 = 1.0f;
+            quad.v1 = 1.0f;
+            quad.emoji = id;
+            quads.push_back(quad);
+            pen += size * emoji::kAdvance + tracking;
+            index += consumed;
+            previous = 0;
+            previous_face = nullptr;
+            continue;
+        }
         std::uint32_t codepoint = next_codepoint(text, &index);
+        if (emoji::invisible(codepoint))
+            continue;
         const Resolved resolved = resolve(&codepoint);
         const ff::Glyph *glyph = resolved.glyph;
         if (glyph == nullptr)

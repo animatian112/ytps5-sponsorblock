@@ -723,8 +723,12 @@ TEST(Service, CachedFeedsShowAtOnceOnTheNextStart)
             }));
         // The cache is written after the extra pages: give the worker its turn.
         service.request_subscriptions();
-        ASSERT_TRUE(
-            settle([&] { return service.feed(FeedKind::subscriptions).state == Load::ready; }));
+        ASSERT_TRUE(settle(
+            [&]
+            {
+                return service.feed(FeedKind::subscriptions).state == Load::ready &&
+                       !service.feeds_settling();
+            }));
         first_count = service.feed(FeedKind::home).items.size();
         service.stop();
     }

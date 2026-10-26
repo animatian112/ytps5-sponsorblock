@@ -126,8 +126,9 @@ TEST(Font, LayoutAlignsAndSkipsSpaces)
 TEST(Font, UnknownCharactersFallBackToQuestionMark)
 {
     const Font &font = inter();
-    EXPECT_FLOAT_EQ(font.measure("\xE2\x98\x83", 30), font.measure("?", 30)); // U+2603 snowman
-    EXPECT_FLOAT_EQ(font.measure("\xFF", 30), font.measure("?", 30));         // invalid byte
+    // U+E000, a private-use code point no face (and no emoji) has.
+    EXPECT_FLOAT_EQ(font.measure("\xEE\x80\x80", 30), font.measure("?", 30));
+    EXPECT_FLOAT_EQ(font.measure("\xFF", 30), font.measure("?", 30)); // invalid byte
 }
 
 TEST(Font, AsksItsFallbacksForWhatItLacks)
@@ -153,7 +154,7 @@ TEST(Font, AsksItsFallbacksForWhatItLacks)
     EXPECT_FLOAT_EQ(quads[1].range, other.sdf_range(32.0f));
     EXPECT_NEAR(quads[1].x1 - quads[1].x0, 8.0f, 0.01f); // 4 atlas pixels at twice the size
     // What no face has is still the font's own question mark.
-    EXPECT_FLOAT_EQ(font.measure("\xE2\x98\x83", 30), inter().measure("?", 30));
+    EXPECT_FLOAT_EQ(font.measure("\xEE\x80\x80", 30), inter().measure("?", 30));
     // A fallback is never asked for what the font has itself.
     EXPECT_FLOAT_EQ(font.measure("Light Up", 40), inter().measure("Light Up", 40));
 

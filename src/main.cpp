@@ -8,6 +8,7 @@
 // logged for hardware runs.
 
 #include "app/app.hpp"
+#include "app/emoji_textures.hpp"
 #include "app/icons.hpp"
 #include "audio/cues.hpp"
 #include "audio/mixer.hpp"
@@ -239,6 +240,7 @@ int main()
     // a re-upload; the sandbox copy lives in /download0 and survives reboots.
     yt::Service service(std::string(kDataRoot) + "/auth.json", kInstallRoot, &sink);
     app::init_icons(renderer.batch(), std::string(kAssets) + "/icons");
+    app::init_emoji(renderer.batch(), std::string(kAssets) + "/emoji/twemoji.pack");
     app::App application(fonts, saved, kDataRoot, renderer.batch(), service);
     const std::string version = read_content_version("/app0/sce_sys/param.json");
     application.set_version(version.empty() ? std::string(yt::log::build_stamp())

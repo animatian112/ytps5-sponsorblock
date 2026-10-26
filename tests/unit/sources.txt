@@ -21,6 +21,7 @@ src/core/settings.cpp
 src/core/version.cpp
 src/gfx/draw_list.cpp
 src/gfx/font.cpp
+src/gfx/emoji.cpp
 src/gfx/triangulate.cpp
 src/third_party/stb/vorbis.c
 src/third_party/yyjson/yyjson.c
@@ -37,6 +38,11 @@ src/update/update_check.c
 src/yt/auth.cpp
 src/yt/codec.cpp
 src/yt/decipher.cpp
+src/yt/js_solver.cpp
+src/third_party/quickjs/qjs_quickjs.c
+src/third_party/quickjs/qjs_dtoa.c
+src/third_party/quickjs/qjs_libregexp.c
+src/third_party/quickjs/qjs_libunicode.c
 src/yt/http.cpp
 src/yt/image.cpp
 src/yt/innertube.cpp
