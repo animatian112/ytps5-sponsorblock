@@ -5,6 +5,7 @@
 #include "platform/ps5/pad.hpp"
 
 #include "platform/ps5/system.hpp"
+#include "yt/log.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -130,12 +131,34 @@ void Pad::open_remote()
 {
     if (remote_ >= 0 || user_ < 0)
         return;
-    remote_ = scePadOpen(user_, kPortRemoteControl, 0, nullptr);
-    // Logged on the first try only: a console without a remote says so once.
-    if (remote_retry_ == 0)
-        sys::log("[HUI] pad media remote open=0x%08x", static_cast<unsigned>(remote_));
-    if (remote_ < 0)
-        remote_ = -1;
+    // The remote as a pad of its own: the remote-control port of the player,
+    // then of the system user (a remote paired to the console rather than to
+    // a player), then the "special" port. The first that opens is read.
+    constexpr int kSystemUser = 0xFF;
+    constexpr int kPortSpecial = 2;
+    const struct
+    {
+        int user;
+        int port;
+    } tries[] = {
+        {user_, kPortRemoteControl}, {kSystemUser, kPortRemoteControl}, {user_, kPortSpecial}};
+    for (const auto &attempt : tries)
+    {
+        remote_ = scePadOpen(attempt.user, attempt.port, 0, nullptr);
+        // Logged on the first round only: a console without a remote says so once.
+        if (remote_retry_ == 0)
+        {
+            sys::log("[HUI] pad media remote user=0x%x port=%d open=0x%08x",
+                     static_cast<unsigned>(attempt.user), attempt.port,
+                     static_cast<unsigned>(remote_));
+            yt::log::line("remote: media remote user=0x%x port=%d -> 0x%08x",
+                          static_cast<unsigned>(attempt.user), attempt.port,
+                          static_cast<unsigned>(remote_));
+        }
+        if (remote_ >= 0)
+            return;
+    }
+    remote_ = -1;
 }
 
 void Pad::set_light_bar(std::uint8_t r, std::uint8_t g, std::uint8_t b)
@@ -229,6 +252,8 @@ std::size_t Pad::read(std::span<PadSample> out)
                 remote_seen_ |= fresh;
                 sys::log("[HUI] pad media remote buttons 0x%08x (new 0x%08x)",
                          static_cast<unsigned>(remote_buttons_), static_cast<unsigned>(fresh));
+                yt::log::line("remote: media remote buttons 0x%08x (new 0x%08x)",
+                              static_cast<unsigned>(remote_buttons_), static_cast<unsigned>(fresh));
             }
         }
         if (got > 0 && count == 0)
