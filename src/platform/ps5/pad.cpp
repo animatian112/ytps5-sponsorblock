@@ -124,7 +124,8 @@ bool Pad::open()
     }
     sys::log("[HUI] pad scePadOpen failed=0x%08x", static_cast<unsigned>(handle_));
     handle_ = -1;
-    return false;
+    open_remote(); // a media remote can drive the app on its own
+    return remote_ >= 0;
 }
 
 void Pad::open_remote()
@@ -221,14 +222,16 @@ std::size_t Pad::read(std::span<PadSample> out)
 {
     if (out.empty())
         return 0;
-    if (handle_ < 0)
+    if (handle_ < 0 && remote_ < 0)
     {
+        if (++remote_retry_ % 300 == 0)
+            open_remote(); // no controller: the remote may still come
         out[0] = PadSample{};
         return 1;
     }
     RawPadSample raw[64];
     const int limit = static_cast<int>(out.size() < 64 ? out.size() : 64);
-    int count = scePadRead(handle_, raw, limit);
+    int count = handle_ >= 0 ? scePadRead(handle_, raw, limit) : 0;
     if (count < 0)
         count = 0;
 
@@ -246,6 +249,7 @@ std::size_t Pad::read(std::span<PadSample> out)
             if (extra[i].connected == 0 && extra[i].buttons == 0)
                 continue;
             remote_buttons_ = extra[i].buttons;
+            remote_connected_ = extra[i].connected != 0;
             const std::uint32_t fresh = remote_buttons_ & ~remote_seen_;
             if (fresh != 0)
             {
@@ -264,7 +268,13 @@ std::size_t Pad::read(std::span<PadSample> out)
             count = 1;
         }
         for (int i = 0; i < count; ++i)
+        {
             raw[i].buttons |= remote_buttons_;
+            // Without a controller the samples say "disconnected", and input
+            // from a disconnected pad is ignored: the remote alone counts.
+            if (remote_connected_)
+                raw[i].connected = 1;
+        }
     }
     if (count > 0)
     {

@@ -51,6 +51,7 @@ class Pad
     int remote_retry_ = 0;
     std::uint32_t remote_seen_ = 0;
     std::uint32_t remote_buttons_ = 0; // the remote's buttons held now
+    bool remote_connected_ = false;    // the remote reported itself connected
     int handle_ = -1;
     int user_ = -1;
     bool owns_user_service_ = false;
