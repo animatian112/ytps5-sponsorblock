@@ -958,6 +958,22 @@ struct Service::Impl
                 FeedPage tab_page;
                 if (tube.channel_tab(channel_id, tab.params, &tab_page) && !tab_page.items.empty())
                 {
+                    // The tab answers a page at a time (a channel with many
+                    // playlists listed only its first ones): the rest follow.
+                    const std::size_t cap = live_row ? 60u : 200u;
+                    for (int extra = 0; extra < 12 && tab_page.items.size() < cap &&
+                                        !tab_page.continuation.empty();
+                         ++extra)
+                    {
+                        FeedPage next;
+                        if (!tube.browse({}, &next, tab_page.continuation) || next.items.empty())
+                            break;
+                        tab_page.continuation = next.continuation;
+                        for (FeedItem &item : next.items)
+                            tab_page.items.push_back(std::move(item));
+                    }
+                    log::line("channel: %s tab %zu cards", tab.title.c_str(),
+                              tab_page.items.size());
                     if (live_row)
                     {
                         // The Live tab, plus the broadcasts the uploads had
@@ -973,7 +989,7 @@ struct Service::Impl
                         }
                     }
                     add_row(tab_page.items, live_row ? std::string("Live streams") : tab.title,
-                            live_row ? 60 : 40);
+                            live_row ? 60 : 200);
                     publish(FeedKind::channel, Load::ready, rows, {}, {});
                     added = true;
                 }
