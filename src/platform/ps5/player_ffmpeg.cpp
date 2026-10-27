@@ -366,9 +366,11 @@ class HardwareWorker
         pthread_attr_setstacksize(&attributes, 1u << 20); // console threads need a stack
         // Decode and convert on threads of their own: the next picture decodes
         // into another slot while this one converts.
-        // At depth 2 one slot is inside the decoder and each picture comes
-        // out one call late, so two fewer may wait for the converter.
-        slots_ = std::max(1, decoder_->frame_slots() - 2 * (decoder_->depth() - 1));
+        // At depth 2 pictures stay inside the decoder for one call or more
+        // and come out late: half the slots are left to it, the other half
+        // may wait for the converter (never fewer than two).
+        const int slots = decoder_->frame_slots();
+        slots_ = decoder_->depth() > 1 ? std::max(2, slots / 2) : std::max(1, slots);
         decode_started_ =
             pthread_create(&decode_thread_, &attributes, &HardwareWorker::decode_main, this) == 0;
         convert_started_ =
@@ -2262,7 +2264,16 @@ void FfmpegPlayer::queue_hardware_picture(HardwareWorker::Picture &picture)
             }
         }
         else if (gap > step * 1.5 && gap < 2.0)
+        {
             hardware_missing_ += static_cast<int>(gap / step + 0.5) - 1;
+            if (hardware_order_dumps_ < 4)
+            {
+                ++hardware_order_dumps_;
+                log::line("ffmpeg: picture at %.3f after %.3f (frames missing); the last decodes:",
+                          pts, last_video_pts_);
+                hardware_worker_->log_recent(av_q2d(video_.stream->time_base));
+            }
+        }
     }
     if (video_seek_target_ >= 0.0)
     {

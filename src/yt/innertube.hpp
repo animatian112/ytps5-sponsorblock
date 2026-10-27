@@ -79,6 +79,10 @@ class InnerTube
     bool channel_page(const std::string &channel_id, ChannelPage *page);
     // Switches to one channel tab (browseId + params from ChannelTab).
     bool channel_tab(const std::string &channel_id, const std::string &params, FeedPage *page);
+    // The same tab asked of the signed-out web client (the TV answer of a
+    // channel page names no tabs), and its next pages by continuation.
+    bool channel_tab_web(const std::string &channel_id, const std::string &params,
+                         const std::string &continuation, FeedPage *page);
     // Timeout of one HTTP call, in seconds (default 20). The player path runs
     // a chain of clients, so the caller lowers it to keep the total bounded.
     void set_timeout(long seconds);

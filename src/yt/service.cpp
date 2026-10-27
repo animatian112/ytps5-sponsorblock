@@ -995,6 +995,47 @@ struct Service::Impl
                 }
                 break;
             }
+            // The TV answer names no tabs: the web client's tab, by the
+            // params every web channel page uses.
+            if (!added && tabs.empty() && channel_id.rfind("UC", 0) == 0)
+            {
+                const char *params = std::strcmp(wanted, "playlists") == 0
+                                         ? "EglwbGF5bGlzdHPyBgQKAkIA"
+                                     : live_row ? "EgdzdHJlYW1z8gYECgJ6AA=="
+                                                : "EgZzaG9ydHPyBgUKA5oBAA==";
+                FeedPage web;
+                if (tube.channel_tab_web(channel_id, params, {}, &web) && !web.items.empty())
+                {
+                    const std::size_t cap = live_row ? 60u : 200u;
+                    for (int extra = 0;
+                         extra < 12 && web.items.size() < cap && !web.continuation.empty(); ++extra)
+                    {
+                        FeedPage next;
+                        if (!tube.channel_tab_web(channel_id, {}, web.continuation, &next) ||
+                            next.items.empty())
+                            break;
+                        web.continuation = next.continuation;
+                        for (FeedItem &item : next.items)
+                            web.items.push_back(std::move(item));
+                    }
+                    if (live_row)
+                        for (FeedItem &item : streams)
+                            if (std::none_of(web.items.begin(), web.items.end(),
+                                             [&](const FeedItem &other)
+                                             { return other.video_id == item.video_id; }))
+                                web.items.push_back(std::move(item));
+                    log::line("channel: web %s tab %zu cards", wanted, web.items.size());
+                    // Rows already holding these playlists (the home page's
+                    // "Created playlists") stay; the tab lists them all.
+                    add_row(web.items,
+                            live_row                                ? std::string("Live streams")
+                            : std::strcmp(wanted, "playlists") == 0 ? std::string("Playlists")
+                                                                    : std::string("Shorts"),
+                            cap);
+                    publish(FeedKind::channel, Load::ready, rows, {}, {});
+                    added = true;
+                }
+            }
             if (live_row && !added && !streams.empty())
             {
                 add_row(streams, "Live streams", 60);

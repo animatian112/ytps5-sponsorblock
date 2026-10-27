@@ -319,7 +319,7 @@ constexpr int kProtectionCpuGpu = 0x33;
 // Decoded-picture slots used in turn (one picture converting, one waiting,
 // one decoding); one more at depth 2 for the picture still in the decoder.
 constexpr int kFrameSlots = 3;
-constexpr int kMaxFrameSlots = 4;
+constexpr int kMaxFrameSlots = 8;
 constexpr int kProtectionGpu = 0x32;
 constexpr int kProtectionFlexibleCpu = 0x03;
 
@@ -876,11 +876,22 @@ bool HardwareDecoder::open(yt::Codec codec, int width, int height, std::string *
     // slots in turn (as the Stremio and Nuvio ports do): a picture stays
     // readable while the next ones decode into the other slots, so the
     // conversion no longer has to finish before the next Decode starts.
-    const int wanted_slots = depth >= 2 ? kMaxFrameSlots : kFrameSlots;
-    session.frame_slots = wanted_slots;
-    if (!alloc_direct("frame", frame_slot * static_cast<std::size_t>(wanted_slots),
-                      kProtectionCpuGpu, limit, &session.frame_physical, &session.frame_pool,
-                      reachable, error))
+    // Depth 2 keeps pictures inside the decoder for a varying while: room
+    // for eight (then six, then four) so none is written over while in use.
+    int wanted_slots = depth >= 2 ? kMaxFrameSlots : kFrameSlots;
+    bool fitted = false;
+    for (;;)
+    {
+        session.frame_slots = wanted_slots;
+        fitted = alloc_direct("frame", frame_slot * static_cast<std::size_t>(wanted_slots),
+                              kProtectionCpuGpu, limit, &session.frame_physical,
+                              &session.frame_pool, reachable, error);
+        if (fitted || depth < 2 || wanted_slots <= 4)
+            break;
+        sys::log("[YTV] videodec2 open: %d frame slots did not fit", wanted_slots);
+        wanted_slots -= 2;
+    }
+    if (!fitted)
     {
         sys::log("[YTV] videodec2 open: %d frame slots did not fit, one slot", wanted_slots);
         if (depth >= 2)

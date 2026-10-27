@@ -3819,6 +3819,30 @@ bool InnerTube::channel_tab(const std::string &channel_id, const std::string &pa
     return parsed;
 }
 
+bool InnerTube::channel_tab_web(const std::string &channel_id, const std::string &params,
+                                const std::string &continuation, FeedPage *page)
+{
+    if (page == nullptr)
+        return false;
+    *page = FeedPage{};
+    std::string extra;
+    if (continuation.empty())
+    {
+        extra = field_string("browseId", channel_id);
+        extra += ',';
+        extra += field_string("params", params);
+    }
+    else
+        extra = field_string("continuation", continuation);
+    Impl::Attempt attempt = impl_->post_once("browse", extra, kWebClient, /*signed_out=*/true);
+    const bool parsed = attempt.http_ok && parse_feed_page(attempt.body, page);
+    impl_->log_line("browse", continuation.empty() ? channel_id + " web tab" : "web continuation",
+                    attempt, page->items.size());
+    if (!parsed && page->error.empty())
+        page->error = impl_->error;
+    return parsed;
+}
+
 bool InnerTube::comments(const std::string &video_id, const std::string &continuation,
                          std::vector<Comment> *out, std::string *next)
 {
