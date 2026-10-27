@@ -163,6 +163,7 @@ std::vector<PlayerChrome::Button> PlayerChrome::bottom_buttons() const
     out.push_back(Button::comments);
     out.push_back(Button::sleep);
     out.push_back(Button::dim);
+    out.push_back(Button::lock);
     out.push_back(Button::stats);
     return out;
 }
@@ -214,6 +215,8 @@ std::string PlayerChrome::tooltip(Button button) const
         return "Screen dimming";
     case Button::stats:
         return stats_on_ ? "Hide stats for nerds" : "Stats for nerds";
+    case Button::lock:
+        return "Lock controls (hold Circle to unlock)";
     case Button::mode:
     {
         static const char *const kModes[] = {"Play next", "Repeat the video", "Pause at the end",
@@ -327,6 +330,8 @@ PlayerChrome::Command PlayerChrome::press(Button button)
         return Command::open_dim;
     case Button::stats:
         return Command::toggle_stats;
+    case Button::lock:
+        return Command::lock_controls;
     }
     return Command::none;
 }
@@ -619,6 +624,7 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
     case Button::comments:
     case Button::sleep:
     case Button::dim:
+    case Button::lock:
         break; // drawn below
     case Button::mode:
     {
@@ -751,6 +757,12 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
             list.line(cx - 11.0f, cy + 3.0f + i * 8.0f, cx - 21.0f, cy + i * 10.0f, 3.0f, ink);
             list.line(cx + 11.0f, cy + 3.0f + i * 8.0f, cx + 21.0f, cy + i * 10.0f, 3.0f, ink);
         }
+        break;
+    case Button::lock: // a padlock
+        list.ring(cx, cy - 8.0f, 10.0f, 3.5f, ink);
+        list.rounded_rect({cx - 16.0f, cy - 4.0f, 32.0f, 24.0f}, 4.0f, ink);
+        list.circle(cx, cy + 6.0f, 3.5f, gfx::Color::rgb(0x202020));
+        list.rounded_rect({cx - 1.5f, cy + 6.0f, 3.0f, 8.0f}, 1.0f, gfx::Color::rgb(0x202020));
         break;
     case Button::dim: // a sun, half dark
         list.ring(cx, cy, 12.0f, 3.5f, ink);

@@ -173,6 +173,12 @@ class App
         int kind = -1; // the yt::FeedKind it came from
         std::string shelf;
     };
+    // The input the screens see: nothing while the player's controls are
+    // locked (Circle held 2 s unlocks).
+    const InputFrame &gate_input(const InputFrame &input, float dt);
+    InputFrame locked_input_;
+    float unlock_hold_s_ = 0.0f;
+    float locked_hint_s_ = 0.0f;
     std::vector<yt::FeedItem> current_section(const std::string &video_id,
                                               SectionInfo *info = nullptr) const;
     std::size_t player_return_ = 0; // where Circle in the player goes back to

@@ -1356,8 +1356,44 @@ void App::handle_global(const InputFrame &input, float dt)
     }
 }
 
-void App::update(const InputFrame &input, float dt)
+const InputFrame &App::gate_input(const InputFrame &input, float dt)
 {
+    if (!context_.controls_locked)
+        return input;
+    if (current_ != kPlayerScreen)
+    {
+        context_.controls_locked = false; // leaving the player (sleep timer, the end) unlocks
+        return input;
+    }
+    locked_hint_s_ = std::max(0.0f, locked_hint_s_ - dt);
+    if (input.is_held(Action::back))
+    {
+        unlock_hold_s_ += dt;
+        if (unlock_hold_s_ >= 2.0f)
+        {
+            context_.controls_locked = false;
+            unlock_hold_s_ = 0.0f;
+            toasts_.push(ui::StatusKind::success, "Controls unlocked", {}, 2.0f);
+        }
+    }
+    else
+    {
+        unlock_hold_s_ = 0.0f;
+        if ((input.pressed != 0 || input.nav != Direction::none) && locked_hint_s_ <= 0.0f)
+        {
+            locked_hint_s_ = 5.0f;
+            toasts_.push(ui::StatusKind::info, "Controls locked",
+                         "Hold Circle for 2 seconds to unlock", 3.0f);
+        }
+    }
+    locked_input_ = InputFrame{};
+    locked_input_.connected = input.connected;
+    return locked_input_;
+}
+
+void App::update(const InputFrame &raw_input, float dt)
+{
+    const InputFrame &input = gate_input(raw_input, dt);
     clock_ += dt;
     feedback_.clear();
     context_.settings_changed = false;

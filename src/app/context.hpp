@@ -136,6 +136,9 @@ struct Context
     std::uint64_t section_revision = 0;
     // The name of the playlist pending_browse opens (its card's title).
     std::string pending_browse_title;
+    // The player's "Lock controls": every button is ignored until Circle is
+    // held (a DualSense left on for its headphone jack).
+    bool controls_locked = false;
 };
 
 } // namespace hui::app

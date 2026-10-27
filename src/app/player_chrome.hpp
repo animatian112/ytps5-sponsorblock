@@ -53,6 +53,7 @@ class PlayerChrome
         open_sleep,
         open_dim,
         toggle_stats,
+        lock_controls, // the controller does nothing until Circle is held
     };
     enum class Panel
     {
@@ -245,6 +246,7 @@ class PlayerChrome
         comments,
         sleep,
         dim,
+        lock,
         stats,
     };
     enum class Zone

@@ -1004,6 +1004,13 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             context_.settings.dev_stats = !context_.settings.dev_stats;
             context_.settings_changed = true;
             break;
+        case PlayerChrome::Command::lock_controls:
+            // The app swallows the controller from here (App::gate_input).
+            context_.controls_locked = true;
+            chrome_.hide();
+            context_.toasts.push(ui::StatusKind::info, "Controls locked",
+                                 "Hold Circle for 2 seconds to unlock", 4.0f);
+            break;
         case PlayerChrome::Command::cycle_mode:
         {
             // SmartTube's playback mode button: next, shuffle, repeat,
