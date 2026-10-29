@@ -425,6 +425,9 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
 
     // ---- Search ----
     ui::Form &search = add_tile("Search", Icon::search);
+    add_flag(search, "PlayStation keyboard", &S::system_keyboard,
+             "Type with the console's own keyboard (predictive text, voice, a USB keyboard); "
+             "off: the SmartTube keys");
     add_flag(search, "Show keyboard automatically", &S::keyboard_auto,
              "The keyboard opens as soon as Search does");
     search.add_header("Filters (Triangle on the Search page)");

@@ -67,6 +67,12 @@ class SearchScreen final : public Screen
         suggestions, // the suggestion row above the keyboard
     };
 
+    // The PlayStation keyboard instead of the keys (Settings > Search):
+    // true while its dialog is up; it failed once this run: the keys.
+    bool system_typing_ = false;
+    bool system_failed_ = false;
+    bool system_took_input_ = false; // the dialog has had the controller
+    bool update_system_keyboard(const InputFrame &input);
     void run_search();
     void refresh_results();
     void refresh_channel();

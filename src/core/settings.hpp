@@ -98,8 +98,9 @@ struct Settings
     int ui_layout = 0;    // 0 SmartTube, 1 Glow (the focused video behind a large header)
     int color_scheme = 0; // index into kColorSchemes
     // Search
-    bool keyboard_auto = true;  // the keyboard opens with the search
-    bool search_history = true; // keep the last searches as suggestions
+    bool keyboard_auto = true;   // the keyboard opens with the search
+    bool system_keyboard = true; // type with the PlayStation's own keyboard dialog
+    bool search_history = true;  // keep the last searches as suggestions
     // SponsorBlock
     bool sb_markers = true; // the segments on the seek bar
     bool sb_once = false;   // a segment skipped once plays the next time

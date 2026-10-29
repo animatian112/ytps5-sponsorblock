@@ -8,8 +8,11 @@
 
 #include "app/search_screen.hpp"
 
+#include "app/system_keyboard.hpp"
+
 #include "app/theme.hpp"
 #include "app/thumbs.hpp"
+#include "yt/log.hpp"
 #include "yt/service.hpp"
 #include "ui/components.hpp"
 
@@ -428,6 +431,70 @@ void SearchScreen::draw_chips(ui::Canvas &canvas, const Context &context) const
                  gfx::Color::rgb(0x9a9a9a), gfx::Align::right);
 }
 
+bool SearchScreen::update_system_keyboard(const InputFrame &input)
+{
+    SystemKeyboard *keyboard = system_keyboard();
+    if (keyboard == nullptr)
+        return false;
+    if (system_typing_)
+    {
+        // The dialog takes the controller (the app reads "focus lost"). A
+        // press reaching the app while the system never took the input means
+        // it is not on screen: it is closed and the keys take over.
+        if (input.focus_lost)
+            system_took_input_ = true;
+        if (!system_took_input_ &&
+            (input.is_pressed(Action::back) || input.is_pressed(Action::confirm)))
+        {
+            keyboard->abort();
+            system_typing_ = false;
+            system_failed_ = true;
+            yt::log::line("ime: the dialog did not take the controller; the app's keys");
+            keys_.enter();
+            spot_ = Spot::keyboard;
+            return true;
+        }
+        std::string text;
+        switch (keyboard->poll(&text))
+        {
+        case SystemKeyboard::State::running:
+            return true;
+        case SystemKeyboard::State::done:
+            system_typing_ = false;
+            field_.set_text(text);
+            asked_ = text;
+            if (!text.empty())
+                run_search();
+            return true;
+        case SystemKeyboard::State::cancelled:
+            system_typing_ = false;
+            return true;
+        case SystemKeyboard::State::failed:
+            system_typing_ = false;
+            system_failed_ = true;
+            keys_.enter();
+            spot_ = Spot::keyboard;
+            return true;
+        }
+        return true;
+    }
+    // The keys are about to show: the dialog opens in their place.
+    if (spot_ != Spot::keyboard || system_failed_ || !context_.settings.system_keyboard)
+        return false;
+    std::string error;
+    if (!keyboard->open("Search", field_.text(), &error))
+    {
+        system_failed_ = true;
+        context_.toasts.push(ui::StatusKind::info, "PlayStation keyboard unavailable",
+                             error + " - using the app's keys", 3.0f);
+        return false;
+    }
+    system_typing_ = true;
+    system_took_input_ = false;
+    spot_ = Spot::field;
+    return true;
+}
+
 void SearchScreen::run_search()
 {
     has_searched_ = true;
@@ -793,6 +860,8 @@ void SearchScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             run_search();
         }
         update_suggestions(dt);
+        if (update_system_keyboard(input))
+            return;
         if (filters_open_)
         {
             update_filters(input, feedback);

@@ -10,6 +10,7 @@
 #include "app/app.hpp"
 #include "app/emoji_textures.hpp"
 #include "app/icons.hpp"
+#include "app/system_keyboard.hpp"
 #include "audio/cues.hpp"
 #include "audio/mixer.hpp"
 #include "audio/stream_ring.hpp"
@@ -21,6 +22,7 @@
 #include "gfx/renderer.hpp"
 #include "platform/ps5/audio_out.hpp"
 #include "platform/ps5/display_egl.hpp"
+#include "platform/ps5/ime_dialog.hpp"
 #include "platform/ps5/pad.hpp"
 #include "platform/ps5/system.hpp"
 #include "ui/fonts.hpp"
@@ -241,6 +243,9 @@ int main()
     yt::Service service(std::string(kDataRoot) + "/auth.json", kInstallRoot, &sink);
     app::init_icons(renderer.batch(), std::string(kAssets) + "/icons");
     app::init_emoji(renderer.batch(), std::string(kAssets) + "/emoji/twemoji.pack");
+    // Search types with the PlayStation keyboard (Settings > Search).
+    static ps5::ImeDialog ime_dialog;
+    app::set_system_keyboard(&ime_dialog);
     app::App application(fonts, saved, kDataRoot, renderer.batch(), service);
     const std::string version = read_content_version("/app0/sce_sys/param.json");
     application.set_version(version.empty() ? std::string(yt::log::build_stamp())
