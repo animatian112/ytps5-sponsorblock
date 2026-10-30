@@ -11,6 +11,7 @@
 #include "yt/log.hpp"
 
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 
 extern "C"
@@ -20,6 +21,14 @@ extern "C"
                                  std::uint32_t flags, const void *option, int *result);
     int sceKernelDlsym(int handle, const char *symbol, void **address);
     int sceUserServiceGetInitialUser(int *user);
+    // The SDK's import library for the dialog: the loader binds these at
+    // start, as it does the pad and audio (a module loaded by path from the
+    // app's sandbox is refused, which is what 1.0.190 tried alone).
+    int sceImeDialogInit(const void *param, const void *extended);
+    int sceImeDialogGetStatus();
+    int sceImeDialogGetResult(void *result);
+    int sceImeDialogTerm();
+    int sceImeDialogAbort();
 }
 
 namespace hui::ps5
@@ -191,6 +200,33 @@ bool ImeDialog::load(std::string *error)
         return false;
     }
     load_failed_ = true; // until it works
+    {
+        // The imports the loader bound (null when it did not).
+        volatile InitFn const init = reinterpret_cast<InitFn>(&sceImeDialogInit);
+        volatile StatusFn const status = &sceImeDialogGetStatus;
+        volatile ResultFn const result = reinterpret_cast<ResultFn>(&sceImeDialogGetResult);
+        volatile TermFn const term = &sceImeDialogTerm;
+        volatile TermFn const abort_fn = &sceImeDialogAbort;
+        yt::log::line("ime: imports init=%d status=%d result=%d term=%d", init != nullptr,
+                      status != nullptr, result != nullptr, term != nullptr);
+        if (init != nullptr && status != nullptr && result != nullptr && term != nullptr)
+        {
+            g_init = init;
+            g_status = status;
+            g_result = result;
+            g_term = term;
+            g_abort = abort_fn;
+            // The common dialog setup, when its module is reachable by name.
+            const int common = load_module("libSceCommonDialog.sprx");
+            if (auto setup =
+                    reinterpret_cast<CommonInitFn>(symbol(common, "sceCommonDialogInitialize")))
+                yt::log::line("ime: sceCommonDialogInitialize 0x%08x",
+                              static_cast<unsigned>(setup()));
+            load_failed_ = false;
+            loaded_ = true;
+            return true;
+        }
+    }
     // The sysmodule way first (a module already loaded answers 0), then
     // the files themselves, whose handles give the entry points.
     volatile SysmoduleFn const sysmodule = &sceSysmoduleLoadModule;
@@ -209,7 +245,7 @@ bool ImeDialog::load(std::string *error)
     g_abort = reinterpret_cast<TermFn>(symbol(ime, "sceImeDialogAbort"));
     if (g_init == nullptr || g_status == nullptr || g_result == nullptr || g_term == nullptr)
     {
-        *error = "the system keyboard is not available";
+        *error = "the keyboard library was not found (see yt.log, ime:)";
         return false;
     }
     load_failed_ = false;
@@ -247,7 +283,9 @@ bool ImeDialog::open(const std::string &title, const std::string &text, std::str
                   static_cast<unsigned>(result));
     if (result != 0)
     {
-        *error = "the system keyboard did not open";
+        char code[16];
+        std::snprintf(code, sizeof code, "0x%08x", static_cast<unsigned>(result));
+        *error = std::string("the keyboard refused to open (") + code + ")";
         return false;
     }
     open_ = true;
