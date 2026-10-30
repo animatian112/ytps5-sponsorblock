@@ -13,6 +13,8 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <vector>
 
 extern "C"
 {
@@ -20,6 +22,8 @@ extern "C"
     int sceKernelLoadStartModule(const char *path, std::size_t args, const void *argp,
                                  std::uint32_t flags, const void *option, int *result);
     int sceKernelDlsym(int handle, const char *symbol, void **address);
+    int sceKernelGetModuleList(int *handles, std::size_t count, std::size_t *found);
+    int sceKernelGetModuleInfo(int handle, void *info);
     int sceUserServiceGetInitialUser(int *user);
     // The SDK's import library for the dialog: the loader binds these at
     // start, as it does the pad and audio (a module loaded by path from the
@@ -117,15 +121,178 @@ int load_module(const char *name)
     return -1;
 }
 
-void *symbol(int handle, const char *name)
+// ---- finding an entry point --------------------------------------------------------------
+// System modules export by NID: the first 8 bytes of SHA-1(name + a fixed
+// suffix), reversed, in base64 with '-' for '/' (11 characters). A name a
+// module does not answer may still be found by its NID.
+
+void sha1(const unsigned char *data, std::size_t size, unsigned char out[20])
+{
+    std::uint32_t h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
+    const auto rotl = [](std::uint32_t x, int n) { return (x << n) | (x >> (32 - n)); };
+    std::size_t total = ((size + 8) / 64 + 1) * 64;
+    unsigned char block[64];
+    for (std::size_t offset = 0; offset < total; offset += 64)
+    {
+        for (std::size_t i = 0; i < 64; ++i)
+        {
+            const std::size_t at = offset + i;
+            if (at < size)
+                block[i] = data[at];
+            else if (at == size)
+                block[i] = 0x80;
+            else if (at >= total - 8)
+                block[i] = static_cast<unsigned char>((static_cast<std::uint64_t>(size) * 8) >>
+                                                      ((total - 1 - at) * 8));
+            else
+                block[i] = 0;
+        }
+        std::uint32_t w[80];
+        for (int i = 0; i < 16; ++i)
+            w[i] = static_cast<std::uint32_t>(block[i * 4]) << 24 |
+                   static_cast<std::uint32_t>(block[i * 4 + 1]) << 16 |
+                   static_cast<std::uint32_t>(block[i * 4 + 2]) << 8 | block[i * 4 + 3];
+        for (int i = 16; i < 80; ++i)
+            w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+        std::uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
+        for (int i = 0; i < 80; ++i)
+        {
+            std::uint32_t f = 0;
+            std::uint32_t k = 0;
+            if (i < 20)
+            {
+                f = (b & c) | (~b & d);
+                k = 0x5A827999u;
+            }
+            else if (i < 40)
+            {
+                f = b ^ c ^ d;
+                k = 0x6ED9EBA1u;
+            }
+            else if (i < 60)
+            {
+                f = (b & c) | (b & d) | (c & d);
+                k = 0x8F1BBCDCu;
+            }
+            else
+            {
+                f = b ^ c ^ d;
+                k = 0xCA62C1D6u;
+            }
+            const std::uint32_t t = rotl(a, 5) + f + e + k + w[i];
+            e = d;
+            d = c;
+            c = rotl(b, 30);
+            b = a;
+            a = t;
+        }
+        h[0] += a;
+        h[1] += b;
+        h[2] += c;
+        h[3] += d;
+        h[4] += e;
+    }
+    for (int i = 0; i < 5; ++i)
+        for (int j = 0; j < 4; ++j)
+            out[i * 4 + j] = static_cast<unsigned char>(h[i] >> (24 - j * 8));
+}
+
+std::string nid_of(const char *name)
+{
+    static const unsigned char kSuffix[16] = {0x51, 0x8D, 0x64, 0xA6, 0x35, 0xDE, 0xD8, 0xC1,
+                                              0xE6, 0xB0, 0x39, 0xB1, 0xC3, 0xE5, 0x52, 0x30};
+    std::string input(name);
+    input.append(reinterpret_cast<const char *>(kSuffix), sizeof kSuffix);
+    unsigned char digest[20];
+    sha1(reinterpret_cast<const unsigned char *>(input.data()), input.size(), digest);
+    unsigned char bytes[8];
+    for (int i = 0; i < 8; ++i)
+        bytes[i] = digest[7 - i];
+    static const char kAlphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-";
+    std::string out;
+    std::uint32_t buffer = 0;
+    int bits = 0;
+    for (const unsigned char byte : bytes)
+    {
+        buffer = (buffer << 8) | byte;
+        bits += 8;
+        while (bits >= 6)
+        {
+            bits -= 6;
+            out += kAlphabet[(buffer >> bits) & 0x3f];
+        }
+    }
+    if (bits > 0)
+        out += kAlphabet[(buffer << (6 - bits)) & 0x3f];
+    return out; // 11 characters
+}
+
+void *dlsym_one(int handle, const std::string &name)
 {
     void *address = nullptr;
     volatile DlsymFn const dlsym_fn = &sceKernelDlsym;
-    if (handle < 0 || dlsym_fn == nullptr || dlsym_fn(handle, name, &address) != 0)
-        address = nullptr;
-    if (address == nullptr)
-        yt::log::line("ime: %s not found", name);
+    if (handle < 0 || dlsym_fn == nullptr || dlsym_fn(handle, name.c_str(), &address) != 0)
+        return nullptr;
     return address;
+}
+
+// The handles of the loaded modules whose name holds `part`.
+std::vector<int> modules_named(const char *part)
+{
+    std::vector<int> out;
+    using ListFn = int (*)(int *, std::size_t, std::size_t *);
+    using InfoFn = int (*)(int, void *);
+    volatile ListFn const list = &sceKernelGetModuleList;
+    volatile InfoFn const info = &sceKernelGetModuleInfo;
+    if (list == nullptr || info == nullptr)
+        return out;
+    int handles[512];
+    std::size_t count = 0;
+    if (list(handles, 512, &count) != 0)
+        return out;
+    for (std::size_t i = 0; i < count && i < 512; ++i)
+    {
+        // SceKernelModuleInfo: its size, then the name.
+        alignas(8) unsigned char buffer[0x200] = {};
+        const std::uint64_t size = 0x160;
+        std::memcpy(buffer, &size, sizeof size);
+        if (info(handles[i], buffer) != 0)
+            continue;
+        const char *name = reinterpret_cast<const char *>(buffer + 8);
+        if (std::strstr(name, part) != nullptr)
+        {
+            yt::log::line("ime: module %s handle 0x%08x", name, static_cast<unsigned>(handles[i]));
+            out.push_back(handles[i]);
+        }
+    }
+    return out;
+}
+
+void *symbol(int handle, const char *name)
+{
+    const std::string nid = nid_of(name);
+    std::vector<int> handles;
+    if (handle >= 0)
+        handles.push_back(handle);
+    for (const int other :
+         modules_named(std::strstr(name, "Common") != nullptr ? "CommonDialog" : "ImeDialog"))
+        if (other != handle)
+            handles.push_back(other);
+    for (const int candidate : handles)
+    {
+        for (const std::string &key : {std::string(name), nid})
+        {
+            if (void *address = dlsym_one(candidate, key))
+            {
+                yt::log::line("ime: %s found as %s in 0x%08x", name, key.c_str(),
+                              static_cast<unsigned>(candidate));
+                return address;
+            }
+        }
+    }
+    yt::log::line("ime: %s (%s) not found", name, nid.c_str());
+    return nullptr;
 }
 
 void to_utf16(const std::string &text, char16_t *out, std::size_t capacity)
