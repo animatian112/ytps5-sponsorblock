@@ -130,6 +130,7 @@ struct Context
     // taken from (-1: none) and the row inside that feed (a channel page's
     // shelf). section_revision changes whenever the section is replaced.
     bool section_ordered = false;
+    bool section_then_related = false; // a Home row: past its end, the suggestions
     std::string section_title;
     int section_kind = -1;
     std::string section_shelf;

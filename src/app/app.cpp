@@ -777,8 +777,37 @@ std::vector<yt::FeedItem> App::current_section(const std::string &video_id, Sect
     switch (current_)
     {
     case kHomeScreen:
+    {
+        // A Home row (Puppets, Mario Kart, Continue watching...): that row
+        // first, in order; autoplay then goes on with the suggestions.
+        const yt::FeedItem *pressed = screens_[current_]->focused_item();
+        if (pressed != nullptr && pressed->video_id == video_id && !pressed->shelf.empty())
+        {
+            const yt::FeedKind source =
+                pressed->shelf == "Continue watching" ? yt::FeedKind::history
+                : pressed->shelf == "Subscriptions"   ? yt::FeedKind::subscriptions
+                                                      : yt::FeedKind::home;
+            std::vector<yt::FeedItem> row;
+            for (const yt::FeedItem &item : service_.feed(source).items)
+                if (item.video_id.size() == 11 &&
+                    (source != yt::FeedKind::home || item.shelf == pressed->shelf))
+                    row.push_back(item);
+            if (row.size() > 1)
+            {
+                if (info != nullptr)
+                {
+                    info->ordered = true;
+                    info->then_related = true;
+                    info->title = pressed->shelf;
+                    info->kind = static_cast<int>(source);
+                    info->shelf = pressed->shelf;
+                }
+                return row;
+            }
+        }
         kinds = {yt::FeedKind::home};
         break;
+    }
     case kSubscriptionsScreen:
         kinds = {yt::FeedKind::subscriptions};
         break;
@@ -1694,6 +1723,7 @@ void App::update(const InputFrame &raw_input, float dt)
             context_.section_title = info.title;
             context_.section_kind = info.kind;
             context_.section_shelf = info.shelf;
+            context_.section_then_related = info.then_related;
             ++context_.section_revision;
         }
         shuffle_started_ = false;

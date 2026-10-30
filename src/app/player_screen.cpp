@@ -758,6 +758,14 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     // The row under the controls: the playlist or channel row the video was
     // opened from (autoplay goes through it), else YouTube's suggestions.
     const bool from_section = context_.section_ordered && !context_.section.empty();
+    // YouTube's suggestions, kept apart: autoplay goes on with them past the
+    // end of a Home row whose videos the row under the player shows.
+    if (const std::uint64_t suggested = context_.service.revision(yt::FeedKind::related);
+        suggested != suggestion_revision_)
+    {
+        suggestion_revision_ = suggested;
+        suggestion_items_ = context_.service.feed(yt::FeedKind::related).items;
+    }
     const std::uint64_t related_revision = from_section
                                                ? (context_.section_revision | (1ull << 63))
                                                : context_.service.revision(yt::FeedKind::related);
@@ -1299,7 +1307,16 @@ void PlayerScreen::choose_shuffle()
     std::vector<const yt::FeedItem *> pool = candidates(true);
     if (pool.empty())
     {
-        played_.clear(); // the whole section played: start a new round
+        // The section played through: YouTube's suggestions that have not
+        // played, before the same videos come round again.
+        for (const yt::FeedItem &item : suggestion_items_)
+            if (item.video_id.size() == 11 && item.video_id != current && item.watched < 0.9f &&
+                std::find(played_.begin(), played_.end(), item.video_id) == played_.end())
+                pool.push_back(&item);
+    }
+    if (pool.empty())
+    {
+        played_.clear(); // everything played: start a new round
         pool = candidates(false);
     }
     if (pool.empty())
@@ -1337,8 +1354,8 @@ const yt::FeedItem *PlayerScreen::next_suggestion() const
     // Shuffle: the pick made for this video, from the section.
     if (context_.settings.playback_mode == 4 && !shuffle_pick_.empty())
         for (const std::vector<yt::FeedItem> *list :
-             std::initializer_list<const std::vector<yt::FeedItem> *>{&context_.section,
-                                                                      &related_items_})
+             std::initializer_list<const std::vector<yt::FeedItem> *>{
+                 &context_.section, &related_items_, &suggestion_items_})
             for (const yt::FeedItem &item : *list)
                 if (item.video_id == shuffle_pick_)
                     return &item;
@@ -1352,17 +1369,40 @@ const yt::FeedItem *PlayerScreen::next_suggestion() const
         if (at != section.end())
         {
             for (auto it = at + 1; it != section.end(); ++it)
-                if (it->video_id.size() == 11)
+                if (it->video_id.size() == 11 && !already_played(it->video_id))
                     return &*it;
-            return nullptr;
+            if (!context_.section_then_related)
+                return nullptr;
         }
     }
-    for (const yt::FeedItem &item : related_items_)
+    // The suggestions: not a video played this session, nor one watched to
+    // the end before (YouTube suggests the same few again and again, and
+    // the one just left often comes first).
+    const std::vector<yt::FeedItem> &suggestions =
+        context_.section_ordered ? suggestion_items_ : related_items_;
+    for (const yt::FeedItem &item : suggestions)
+    {
+        if (item.video_id.size() == 11 && item.video_id != current &&
+            !already_played(item.video_id) && item.watched < 0.9f)
+            return &item;
+    }
+    for (const yt::FeedItem &item : suggestions)
+    {
+        if (item.video_id.size() == 11 && item.video_id != current &&
+            !already_played(item.video_id))
+            return &item;
+    }
+    for (const yt::FeedItem &item : suggestions)
     {
         if (!item.video_id.empty() && item.video_id != current)
             return &item;
     }
     return nullptr;
+}
+
+bool PlayerScreen::already_played(const std::string &video_id) const
+{
+    return std::find(played_.begin(), played_.end(), video_id) != played_.end();
 }
 
 void PlayerScreen::follow_section()

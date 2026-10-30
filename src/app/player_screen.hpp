@@ -96,9 +96,12 @@ class PlayerScreen final : public Screen
     float peek() const;
     void check_buffer_support();
     void follow_section();
+    bool already_played(const std::string &video_id) const;
     float rise() const;
     void fill_chapter_row();
     std::vector<yt::FeedItem> related_items_;
+    std::vector<yt::FeedItem> suggestion_items_; // YouTube's suggestions, whatever the row shows
+    std::uint64_t suggestion_revision_ = ~0ull;
     std::uint64_t related_revision_ = 0;
     std::uint64_t video_revision_ = 0;
     gfx::VideoUploader uploader_;

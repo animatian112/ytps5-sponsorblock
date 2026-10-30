@@ -168,7 +168,8 @@ class App
     // The videos of the section the focus is in (for Shuffle).
     struct SectionInfo
     {
-        bool ordered = false; // a playlist or a channel row: autoplay goes through it
+        bool ordered = false;      // a playlist or a channel row: autoplay goes through it
+        bool then_related = false; // at its end autoplay goes on (a Home row)
         std::string title;
         int kind = -1; // the yt::FeedKind it came from
         std::string shelf;
