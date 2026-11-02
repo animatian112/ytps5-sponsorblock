@@ -144,6 +144,13 @@ struct VideoInfo
 
 // A card in a feed. A playlist is a FeedItem too: its video_id is then the
 // playlist's browse id ("VL" + playlist id), which is_playlist() tells.
+// One live chat message.
+struct ChatMessage
+{
+    std::string author;
+    std::string text;
+};
+
 struct FeedItem
 {
     std::string video_id;
@@ -170,6 +177,7 @@ struct FeedItem
     // The thumbnail's badge when it is not a running time: "8 seasons",
     // "46 videos", "NEW". The card shows it instead of a duration.
     std::string badge;
+    std::string quality; // the card's picture badges: "4K", "8K", "HDR", "4K HDR"
 
     // A channel card: video_id is the channel's "UC..." id.
     bool is_channel() const
@@ -282,6 +290,8 @@ struct CodecChoice
     DecodeMode decode = DecodeMode::auto_detect;
     // audioTrack.id to play; empty picks the video's original track.
     std::string audio_track;
+    // The sound is what matters: the smallest picture (Audio only).
+    bool audio_only = false;
 };
 
 // Load state of anything that arrives from the network.

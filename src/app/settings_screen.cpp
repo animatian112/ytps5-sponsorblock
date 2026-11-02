@@ -297,8 +297,16 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         add_steps(player, "Video speed", &S::speed_index, values, labels,
                   "The speed every video starts at");
     }
+    add_flag(player, "Remember picked quality", &S::remember_quality,
+             "A quality chosen in the player stays for every video, also after a restart");
+    add_flag(player, "Audio only", &S::audio_only,
+             "Plays the sound with a still picture: the smallest video stream is fetched");
     add_flag(player, "Remember speed", &S::remember_speed,
              "A speed picked in the player stays for the next video");
+    add_flag(player, "Live chat", &S::live_chat,
+             "A live stream shows its chat on the right (Top chat)");
+    add_flag(player, "Speed per channel", &S::channel_speed,
+             "A speed picked for a video is kept for that channel's videos (1x forgets it)");
     add_steps(player, "Playback mode", &S::playback_mode, {0, 4, 1, 2, 3},
               {"Next video", "Shuffle", "Repeat", "Pause", "Close"},
               "When a video ends: the next one, a random one from the section, the same again, a "

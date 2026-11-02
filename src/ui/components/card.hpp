@@ -25,6 +25,7 @@ struct CardItem
     std::string title;
     std::string subtitle;
     std::string badge;             // a short pill in a corner of the art ("NEW", "4K")
+    std::string quality;           // a dark pill in the other lower corner ("4K", "HDR")
     std::uint32_t texture = 0;     // the artwork; 0 draws the placeholder gradient
     gfx::Rect uv = gfx::kFullUv;   // gfx::kCanvasUv for textures you rendered into
     float image_aspect = 1.0f;     // width / height of the picture inside `uv`

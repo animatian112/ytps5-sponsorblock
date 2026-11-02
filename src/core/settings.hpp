@@ -57,21 +57,27 @@ struct Settings
     // ---- SmartTube's settings (save version 5, stored as key/value pairs so
     // later additions need no new version) ----
     // Player
-    int speed_index = 3;        // default speed, index into kSpeeds (1x)
-    bool remember_speed = true; // keep a changed speed for the next video
-    int seek_seconds = 10;      // left/right on the seek bar and L1/R1
-    int ui_hide_seconds = 4;    // controls hide after this long (0: never)
-    int playback_mode = 0;      // at the end: 0 next, 1 repeat, 2 pause, 3 close, 4 shuffle
-    bool show_clock = true;     // the clock in the controls
-    bool show_remaining = true; // "Remaining: 4:21" in the controls
-    bool show_quality = true;   // "1080p" in the controls
-    bool show_tooltips = true;  // the name of the focused button
-    bool suggestions = true;    // the suggestions row under the controls
-    bool loop_shorts = false;   // a Short starts again instead of moving on
-    bool resume = true;         // continue where a video was left
-    bool resume_short = false;  // ... also videos under 5 minutes
-    bool prefer_avc = false;    // AVC before VP9/AV1 (1080p at most)
-    int ok_behavior = 0;        // Cross while hidden: 0 controls, 1 pause, 2 both
+    int speed_index = 3;          // default speed, index into kSpeeds (1x)
+    bool remember_speed = true;   // keep a changed speed for the next video
+    bool audio_only = false;      // the sound only: the smallest picture is fetched, a cover shown
+    bool remember_quality = true; // a quality picked in the player stays for the next videos
+    int picked_quality = 0;       // that quality's height; 0 follows Max resolution
+    bool channel_speed = true;    // a speed picked for a video is kept for its channel
+    bool live_chat = true;        // a live stream shows its chat beside the picture
+    bool welcomed = false;        // the first-start welcome was seen
+    int seek_seconds = 10;        // left/right on the seek bar and L1/R1
+    int ui_hide_seconds = 4;      // controls hide after this long (0: never)
+    int playback_mode = 0;        // at the end: 0 next, 1 repeat, 2 pause, 3 close, 4 shuffle
+    bool show_clock = true;       // the clock in the controls
+    bool show_remaining = true;   // "Remaining: 4:21" in the controls
+    bool show_quality = true;     // "1080p" in the controls
+    bool show_tooltips = true;    // the name of the focused button
+    bool suggestions = true;      // the suggestions row under the controls
+    bool loop_shorts = false;     // a Short starts again instead of moving on
+    bool resume = true;           // continue where a video was left
+    bool resume_short = false;    // ... also videos under 5 minutes
+    bool prefer_avc = false;      // AVC before VP9/AV1 (1080p at most)
+    int ok_behavior = 0;          // Cross while hidden: 0 controls, 1 pause, 2 both
     // Subtitles
     int subtitle_language = 0; // index into kSubtitleLanguages (0: off)
     int subtitle_size = 1;     // 0 small, 1 medium, 2 large

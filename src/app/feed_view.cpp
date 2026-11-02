@@ -132,6 +132,7 @@ void FeedView::set_items(const std::vector<yt::FeedItem> &items, const Context &
             card.badge = "LIVE";
         else
             card.badge = item.length_s > 0.0 ? format_duration(item.length_s) : item.badge;
+        card.quality = item.quality;
         cards.push_back(std::move(card));
     }
     grid_.set_items(std::move(cards));

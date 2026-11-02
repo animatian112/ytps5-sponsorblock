@@ -265,6 +265,7 @@ void PlayerScreen::enter()
 
 void PlayerScreen::leave()
 {
+    live_chat_.stop();
     if (player_ != nullptr)
     {
         context_.service.report_watch_progress(player_->clock_s());
@@ -301,8 +302,12 @@ yt::CodecChoice PlayerScreen::codec_choice() const
         choice.max_height = quality_override_;
         choice.exact_height = quality_override_;
     }
+    else if (context_.settings.remember_quality && context_.settings.picked_quality > 0)
+        // A quality picked in an earlier video (or session) caps the next.
+        choice.max_height = context_.settings.picked_quality;
     choice.exact_itag = itag_override_;
     choice.audio_track = audio_track_;
+    choice.audio_only = context_.settings.audio_only;
     return choice;
 }
 
@@ -568,6 +573,22 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
                 (context_.settings.resume_short || length <= 0.0 || length >= 300.0))
                 player_->seek(resume_s_);
             resume_s_ = -1.0;
+            // Settings > Player > Speed per channel: this channel's speed,
+            // else the default again after another channel's.
+            if (context_.settings.channel_speed)
+            {
+                const double kept = context_.resume.channel_speed(video_view().info.channel_id);
+                if (kept > 0.0)
+                {
+                    speed_ = kept;
+                    channel_speed_on_ = true;
+                }
+                else if (channel_speed_on_)
+                {
+                    speed_ = context_.settings.speed();
+                    channel_speed_on_ = false;
+                }
+            }
             if (speed_ != 1.0)
                 player_->set_speed(speed_);
         }
@@ -856,6 +877,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     }
     chrome_.set_mode(settings.playback_mode);
     chrome_.set_stats_on(settings.dev_stats);
+    chrome_.set_audio_only(settings.audio_only);
     chrome_.set_has_next(next_suggestion() != nullptr);
     {
         // SmartTube's line under the title: channel (and its subscribers),
@@ -886,6 +908,16 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         chrome_.set_info(title.empty() ? playing_id_ : title, meta,
                          player_ != nullptr ? player_->quality_label() : std::string());
         chrome_.set_clock(clock_line(context_.settings.time_24h));
+    }
+
+    // Settings > Player > Live chat: the chat of a stream on the air.
+    {
+        const bool wanted = context_.settings.live_chat && view.info.live_now &&
+                            !playing_id_.empty() && view.info.video_id == playing_id_;
+        if (wanted && live_chat_.video_id() != playing_id_)
+            live_chat_.start(playing_id_);
+        else if (!wanted && !live_chat_.video_id().empty())
+            live_chat_.stop();
     }
 
     // Chapters: the watch page's, else the description's timestamps.
@@ -954,7 +986,38 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     update_captions();
 
     bool back_used = false;
-    if (!in_related_)
+    // Shorts: a tall video with the controls away is a vertical feed, Down
+    // the next Short and Up the one before (the controls come with X or
+    // Left/Right).
+    bool swiped = false;
+    if (!in_related_ && shorts_view() && !chrome_.shown() &&
+        (input.nav == Direction::up || input.nav == Direction::down))
+    {
+        swiped = true;
+        if (input.nav == Direction::down && next_suggestion() != nullptr)
+        {
+            feedback.play(audio::Cue::focus);
+            play_next();
+            chrome_.hide();
+            shorts_swipe_s_ = clock_;
+            shorts_swipe_down_ = true;
+            return;
+        }
+        if (input.nav == Direction::up && !played_.empty())
+        {
+            feedback.play(audio::Cue::focus);
+            const std::string previous = played_.back();
+            played_.pop_back();
+            yt::log::line("player: previous Short -> %s", previous.c_str());
+            request_video(previous);
+            chrome_.hide();
+            shorts_swipe_s_ = clock_;
+            shorts_swipe_down_ = false;
+            return;
+        }
+        feedback.play(audio::Cue::error);
+    }
+    if (!in_related_ && !swiped)
     {
         const PlayerChrome::Command command = chrome_.handle(input, feedback, &back_used);
         switch (command)
@@ -1011,6 +1074,16 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         case PlayerChrome::Command::toggle_stats:
             context_.settings.dev_stats = !context_.settings.dev_stats;
             context_.settings_changed = true;
+            break;
+        case PlayerChrome::Command::toggle_audio_only:
+            context_.settings.audio_only = !context_.settings.audio_only;
+            context_.settings_changed = true;
+            context_.toasts.push(
+                ui::StatusKind::info, context_.settings.audio_only ? "Audio only" : "Video back on",
+                context_.settings.audio_only ? "The smallest picture is fetched to save the network"
+                                             : "The picture returns at your quality",
+                3.0f);
+            reopen();
             break;
         case PlayerChrome::Command::lock_controls:
             // The app swallows the controller from here (App::gate_input).
@@ -1779,6 +1852,14 @@ void PlayerScreen::apply_pick()
             speed_ = kSpeeds[pick];
             if (player_ != nullptr)
                 player_->set_speed(speed_);
+            const std::string &channel = video_view().info.channel_id;
+            if (context_.settings.channel_speed && !channel.empty())
+            {
+                // The default speed forgets the channel's.
+                const bool is_default = speed_ == context_.settings.speed();
+                context_.resume.remember_channel_speed(channel, is_default ? 0.0 : speed_);
+                channel_speed_on_ = !is_default;
+            }
         }
         break;
     }
@@ -1791,6 +1872,11 @@ void PlayerScreen::apply_pick()
         {
             quality_override_ = height;
             itag_override_ = itag;
+            if (context_.settings.remember_quality && context_.settings.picked_quality != height)
+            {
+                context_.settings.picked_quality = height; // 0: Auto again
+                context_.settings_changed = true;
+            }
             reopen();
         }
         break;
@@ -2127,6 +2213,28 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
         canvas.list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
                                  gfx::Color::rgb(0x000000));
     }
+    if (context.settings.audio_only && player_ != nullptr)
+    {
+        // Audio only: the video's cover, dimmed, over the tiny stream.
+        canvas.list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
+                                 gfx::Color::rgb(0x000000));
+        const std::string &id = playing_id_.empty() ? requested_id_ : playing_id_;
+        const std::uint32_t cover =
+            id.empty() ? 0u
+                       : context.thumbs.texture("https://i.ytimg.com/vi/" + id + "/hqdefault.jpg");
+        const float w = 960.0f;
+        const float h = 540.0f;
+        const gfx::Rect box{(gfx::kVirtualWidth - w) * 0.5f, 200.0f, w, h};
+        if (cover != 0)
+            canvas.list.image(cover, box, gfx::kFullUv, gfx::Color::rgb(0xffffff, 0.85f), 18.0f);
+        else
+            canvas.list.rounded_rect(box, 18.0f, gfx::Color::rgb(0x202020));
+        ui::text(canvas.list, context.fonts.semibold, "Audio only", gfx::kVirtualWidth * 0.5f,
+                 790.0f, 30.0f, gfx::Color::rgb(0xffffff), gfx::Align::center);
+        ui::text(canvas.list, context.fonts.regular, "Turn it off in the player's buttons",
+                 gfx::kVirtualWidth * 0.5f, 830.0f, 22.0f, gfx::Color::rgb(0x999999),
+                 gfx::Align::center);
+    }
 
     if (view.state == yt::Load::failed && player_ == nullptr)
     {
@@ -2253,6 +2361,83 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
                      gfx::Color::rgb(0xe8e8e8));
             y += 27.0f;
         }
+    }
+
+    // A live stream's chat: the newest messages at the right, bottom up.
+    if (live_chat_.found() && !in_related_)
+    {
+        const std::vector<yt::ChatMessage> messages = live_chat_.messages();
+        const float width = 460.0f;
+        const float x = gfx::kVirtualWidth - width - 40.0f;
+        const float bottom = chrome_.shown() ? 760.0f : 1010.0f;
+        const float size = 20.0f;
+        const float line = 26.0f;
+        // Lines from the newest up, until the panel is full.
+        struct Row
+        {
+            std::string author;
+            std::vector<std::string> lines;
+        };
+        std::vector<Row> rows;
+        float height = 0.0f;
+        const float limit = bottom - 140.0f;
+        for (auto it = messages.rbegin(); it != messages.rend(); ++it)
+        {
+            Row row{it->author, context.fonts.regular.font->wrap(it->text, size, width - 40.0f)};
+            if (row.lines.size() > 3)
+                row.lines.resize(3);
+            const float need = line * static_cast<float>(row.lines.size() + 1) + 8.0f;
+            if (height + need > limit)
+                break;
+            height += need;
+            rows.push_back(std::move(row));
+        }
+        if (!rows.empty())
+        {
+            canvas.list.rounded_rect({x, bottom - height - 20.0f, width, height + 28.0f}, 14.0f,
+                                     gfx::Color::rgb(0x000000, 0.55f));
+            float y = bottom - height;
+            for (auto it = rows.rbegin(); it != rows.rend(); ++it)
+            {
+                y += line - 4.0f;
+                ui::text(canvas.list, context.fonts.semibold, it->author, x + 20.0f, y, 18.0f,
+                         gfx::Color::rgb(0xaaaaaa));
+                for (const std::string &text : it->lines)
+                {
+                    y += line;
+                    ui::text(canvas.list, context.fonts.regular, text, x + 20.0f, y, size,
+                             gfx::Color::rgb(0xffffff));
+                }
+                y += 12.0f;
+            }
+        }
+    }
+
+    // Shorts: the title and channel beside the tall picture, and the swipe
+    // hint, while the controls are away.
+    if (shorts_view() && !chrome_.shown() && !in_related_)
+    {
+        const float x = gfx::kVirtualWidth * 0.5f +
+                        static_cast<float>(texture_width_) * gfx::kVirtualHeight /
+                            static_cast<float>(texture_height_) * 0.5f +
+                        48.0f;
+        if (x < gfx::kVirtualWidth - 360.0f)
+        {
+            ui::paragraph(canvas.list, context.fonts.semibold, view.info.title, x, 760.0f, 30.0f,
+                          gfx::kVirtualWidth - x - 80.0f, 38.0f, gfx::Color::rgb(0xffffff), 3);
+            ui::text(canvas.list, context.fonts.regular, view.info.author, x, 900.0f, 24.0f,
+                     gfx::Color::rgb(0xbbbbbb));
+            ui::text(canvas.list, context.fonts.regular, "Up: previous   Down: next   X: controls",
+                     x, 960.0f, 20.0f, gfx::Color::rgb(0x888888));
+        }
+    }
+    if (clock_ - shorts_swipe_s_ < 0.35f)
+    {
+        // The swipe: a band sweeping the way the feed moved.
+        const float t = (clock_ - shorts_swipe_s_) / 0.35f;
+        const float y = shorts_swipe_down_ ? -gfx::kVirtualHeight * t : gfx::kVirtualHeight * t;
+        canvas.list.rounded_rect({0.0f, y, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
+                                 gfx::Color::rgb(0x000000, 0.9f));
     }
 
     // The controls, and the suggestions row under them when it is open.

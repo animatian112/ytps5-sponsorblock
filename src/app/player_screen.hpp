@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "yt/live_chat.hpp"
+
 #include "app/context.hpp"
 #include "app/player_chrome.hpp"
 #include "app/screen.hpp"
@@ -127,9 +129,18 @@ class PlayerScreen final : public Screen
     std::string history_toast_for_;   // the video whose history result was shown
 
     // Choices made in the player's menus; they last until the app closes.
-    int quality_override_ = 0; // a height cap; 0 follows Settings
-    int itag_override_ = 0;    // one format picked in "Video formats" (this video)
-    std::string audio_track_;  // an audioTrack.id; empty plays the original
+    int quality_override_ = 0;      // a height cap; 0 follows Settings
+    bool channel_speed_on_ = false; // speed_ came from the channel's kept speed
+    yt::LiveChat live_chat_;        // the chat of the live stream playing
+    // Shorts: the last swipe (for the slide-in) and its direction.
+    float shorts_swipe_s_ = -10.0f;
+    bool shorts_swipe_down_ = true;
+    bool shorts_view() const
+    {
+        return texture_width_ > 0 && texture_height_ > texture_width_;
+    }
+    int itag_override_ = 0;   // one format picked in "Video formats" (this video)
+    std::string audio_track_; // an audioTrack.id; empty plays the original
     double speed_ = 1.0;
     // Shuffle: the random pick from the section that plays next, chosen once
     // per video so the Next button and the end agree; the played ones are

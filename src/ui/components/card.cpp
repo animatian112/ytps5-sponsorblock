@@ -371,6 +371,19 @@ void draw_card(Canvas &canvas, const ComponentStyle &style, const CardLook &look
         paint.label(item.badge, pill.cx(), pill.cy() + size * 0.35f, size,
                     Painter::on(theme.accent), gfx::Align::center);
     }
+    if (!item.quality.empty())
+    {
+        const float size = look.badge_size * 0.9f;
+        const float width = paint.label_width(item.quality, size) + size * 1.2f;
+        const float height = size + 12.0f;
+        const bool right = look.badge_corner == CardCorner::bottom_left ||
+                           look.badge_corner == CardCorner::top_left;
+        const Rect pill{right ? picture.x + picture.w - edge - width : picture.x + edge,
+                        picture.y + picture.h - edge - height - bar_room, width, height};
+        list.rounded_rect(pill, chip_radius(theme, pill), gfx::Color::rgb(0x000000, 0.72f));
+        paint.label(item.quality, pill.cx(), pill.cy() + size * 0.35f, size,
+                    gfx::Color::rgb(0xffffff), gfx::Align::center);
+    }
     if (checked > 0.01f)
     {
         // The check pops: it overshoots its size once and settles.

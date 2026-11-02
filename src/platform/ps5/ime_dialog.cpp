@@ -113,7 +113,8 @@ int load_module(const char *name)
         const int handle = load_start(path.c_str(), 0, nullptr, 0, nullptr, &started);
         if (handle >= 0)
         {
-            yt::log::line("ime: %s loaded (0x%08x)", path.c_str(), static_cast<unsigned>(handle));
+            yt::log::line("ime: %s loaded (0x%08x, start 0x%08x)", path.c_str(),
+                          static_cast<unsigned>(handle), static_cast<unsigned>(started));
             return handle;
         }
     }
@@ -228,13 +229,93 @@ std::string nid_of(const char *name)
     return out; // 11 characters
 }
 
-void *dlsym_one(int handle, const std::string &name)
+void *dlsym_one(int handle, const std::string &name, int *code = nullptr)
 {
     void *address = nullptr;
     volatile DlsymFn const dlsym_fn = &sceKernelDlsym;
-    if (handle < 0 || dlsym_fn == nullptr || dlsym_fn(handle, name.c_str(), &address) != 0)
+    if (handle < 0 || dlsym_fn == nullptr)
         return nullptr;
-    return address;
+    const int result = dlsym_fn(handle, name.c_str(), &address);
+    if (code != nullptr)
+        *code = result;
+    return result == 0 ? address : nullptr;
+}
+
+// Whether the lookup works at all here: the same call on libraries the app
+// already uses (the pad, the kernel), with the codes it answers, and every
+// loaded module by name. Logged once.
+void probe_lookup()
+{
+    static bool done = false;
+    if (done)
+        return;
+    done = true;
+    volatile LoadStartFn const load_start = &sceKernelLoadStartModule;
+    struct Known
+    {
+        const char *file;
+        const char *function;
+    };
+    const Known known[] = {{"libScePad.sprx", "scePadOpen"},
+                           {"libSceUserService.sprx", "sceUserServiceGetInitialUser"},
+                           {"libkernel.sprx", "sceKernelUsleep"}};
+    for (const Known &k : known)
+    {
+        int handle = -1;
+        if (load_start != nullptr)
+            for (const char *dir : {"/system/common/lib/", "/system/priv/lib/", ""})
+            {
+                int started = 0;
+                handle = load_start((std::string(dir) + k.file).c_str(), 0, nullptr, 0, nullptr,
+                                    &started);
+                if (handle >= 0)
+                    break;
+            }
+        int code = 0;
+        const void *address = handle >= 0 ? dlsym_one(handle, k.function, &code) : nullptr;
+        yt::log::line("ime: probe %s handle 0x%08x %s -> 0x%08x %s", k.file,
+                      static_cast<unsigned>(handle), k.function, static_cast<unsigned>(code),
+                      address != nullptr ? "found" : "missing");
+    }
+    using ListFn = int (*)(int *, std::size_t, std::size_t *);
+    using InfoFn = int (*)(int, void *);
+    volatile ListFn const list = &sceKernelGetModuleList;
+    volatile InfoFn const info = &sceKernelGetModuleInfo;
+    if (list == nullptr || info == nullptr)
+    {
+        yt::log::line("ime: module list not available (list %d info %d)", list != nullptr,
+                      info != nullptr);
+        return;
+    }
+    int handles[512];
+    std::size_t count = 0;
+    const int listed = list(handles, 512, &count);
+    yt::log::line("ime: module list -> 0x%08x, %u modules", static_cast<unsigned>(listed),
+                  static_cast<unsigned>(count));
+    std::string names;
+    for (std::size_t i = 0; listed == 0 && i < count && i < 512; ++i)
+    {
+        alignas(8) unsigned char buffer[0x200] = {};
+        const std::uint64_t size = 0x160;
+        std::memcpy(buffer, &size, sizeof size);
+        const int got = info(handles[i], buffer);
+        char item[96];
+        if (got == 0)
+            std::snprintf(item, sizeof item, " %.48s=0x%x",
+                          reinterpret_cast<const char *>(buffer + 8),
+                          static_cast<unsigned>(handles[i]));
+        else
+            std::snprintf(item, sizeof item, " ?0x%x(0x%08x)", static_cast<unsigned>(handles[i]),
+                          static_cast<unsigned>(got));
+        names += item;
+        if (names.size() > 400)
+        {
+            yt::log::line("ime: modules%s", names.c_str());
+            names.clear();
+        }
+    }
+    if (!names.empty())
+        yt::log::line("ime: modules%s", names.c_str());
 }
 
 // The handles of the loaded modules whose name holds `part`.
@@ -279,11 +360,12 @@ void *symbol(int handle, const char *name)
          modules_named(std::strstr(name, "Common") != nullptr ? "CommonDialog" : "ImeDialog"))
         if (other != handle)
             handles.push_back(other);
+    int code = 0;
     for (const int candidate : handles)
     {
         for (const std::string &key : {std::string(name), nid})
         {
-            if (void *address = dlsym_one(candidate, key))
+            if (void *address = dlsym_one(candidate, key, &code))
             {
                 yt::log::line("ime: %s found as %s in 0x%08x", name, key.c_str(),
                               static_cast<unsigned>(candidate));
@@ -291,7 +373,8 @@ void *symbol(int handle, const char *name)
             }
         }
     }
-    yt::log::line("ime: %s (%s) not found", name, nid.c_str());
+    yt::log::line("ime: %s (%s) not found (0x%08x)", name, nid.c_str(),
+                  static_cast<unsigned>(code));
     return nullptr;
 }
 
@@ -367,6 +450,7 @@ bool ImeDialog::load(std::string *error)
         return false;
     }
     load_failed_ = true; // until it works
+    probe_lookup();
     {
         // The imports the loader bound (null when it did not).
         volatile InitFn const init = reinterpret_cast<InitFn>(&sceImeDialogInit);

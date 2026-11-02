@@ -1385,8 +1385,104 @@ void App::handle_global(const InputFrame &input, float dt)
     }
 }
 
+bool App::welcome_active() const
+{
+    return !settings_.welcomed && current_ != kLoginScreen && current_ != kPlayerScreen;
+}
+
+// The welcome's rows: sign in (while signed out), the decoding choice, start.
+void App::handle_welcome(const InputFrame &input)
+{
+    const bool signed_in = service_.signed_in();
+    const int first = signed_in ? 1 : 0;
+    welcome_focus_ = std::clamp(welcome_focus_, first, 2);
+    if (input.nav == Direction::up && welcome_focus_ > first)
+    {
+        --welcome_focus_;
+        feedback_.play(audio::Cue::focus);
+    }
+    else if (input.nav == Direction::down && welcome_focus_ < 2)
+    {
+        ++welcome_focus_;
+        feedback_.play(audio::Cue::focus);
+    }
+    const bool flip =
+        (welcome_focus_ == 1 && (input.nav == Direction::left || input.nav == Direction::right ||
+                                 input.is_pressed(Action::confirm)));
+    if (flip)
+    {
+        settings_.decode_mode = settings_.decode_mode == yt::DecodeMode::software
+                                    ? yt::DecodeMode::auto_detect
+                                    : yt::DecodeMode::software;
+        settings_changed_ = true;
+        feedback_.play(audio::Cue::toggle);
+        return;
+    }
+    const bool done = input.is_pressed(Action::back) ||
+                      (input.is_pressed(Action::confirm) && welcome_focus_ != 1);
+    if (!done)
+        return;
+    settings_.welcomed = true;
+    settings_changed_ = true;
+    feedback_.play(audio::Cue::select);
+    if (welcome_focus_ == 0 && !signed_in && input.is_pressed(Action::confirm))
+    {
+        service_.request_sign_in();
+        login_return_ = current_;
+        show(kLoginScreen);
+    }
+}
+
+void App::draw_welcome(ui::Canvas &canvas) const
+{
+    if (!welcome_active())
+        return;
+    gfx::DrawList &list = canvas.list;
+    list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
+                      gfx::Color::rgb(0x000000, 0.82f));
+    const gfx::Rect box{560.0f, 240.0f, 800.0f, 600.0f};
+    list.rounded_rect(box, 24.0f, gfx::Color::rgb(0x1c1c1c));
+    ui::text(list, fonts_.semibold, "Welcome to TubeBlock", box.cx(), box.y + 80.0f, 42.0f,
+             gfx::Color::rgb(0xffffff), gfx::Align::center);
+    ui::paragraph(list, fonts_.regular,
+                  "No ads, SponsorBlock skips and DeArrow titles. A few choices to start; all of "
+                  "them stay in Settings.",
+                  box.cx(), box.y + 150.0f, 24.0f, box.w - 120.0f, 32.0f, gfx::Color::rgb(0xaaaaaa),
+                  3, gfx::Align::center);
+    const bool signed_in = service_.signed_in();
+    const bool hardware = settings_.decode_mode != yt::DecodeMode::software;
+    const char *labels[3] = {signed_in ? "Signed in" : "Sign in with your phone",
+                             hardware ? "Decoding: Auto (console decoder above 1080p, experimental)"
+                                      : "Decoding: Software (smooth up to 1080p)",
+                             "Start watching"};
+    float y = box.y + 250.0f;
+    for (int i = 0; i < 3; ++i)
+    {
+        const bool focused = welcome_focus_ == i;
+        const bool dim = i == 0 && signed_in;
+        const gfx::Rect row{box.x + 60.0f, y, box.w - 120.0f, 76.0f};
+        list.rounded_rect(row, 14.0f,
+                          focused ? gfx::Color::rgb(0xffffff) : gfx::Color::rgb(0x2a2a2a));
+        ui::text(list, fonts_.semibold, labels[i], row.cx(), row.cy() + 9.0f, 25.0f,
+                 focused ? gfx::Color::rgb(0x0f0f0f)
+                 : dim   ? gfx::Color::rgb(0x777777)
+                         : gfx::Color::rgb(0xffffff),
+                 gfx::Align::center);
+        y += 96.0f;
+    }
+    ui::text(list, fonts_.regular, "Cross: choose   Left/Right: change decoding   Circle: skip",
+             box.cx(), box.y + box.h - 30.0f, 20.0f, gfx::Color::rgb(0x777777), gfx::Align::center);
+}
+
 const InputFrame &App::gate_input(const InputFrame &input, float dt)
 {
+    if (welcome_active())
+    {
+        handle_welcome(input);
+        locked_input_ = InputFrame{};
+        locked_input_.connected = input.connected;
+        return locked_input_;
+    }
     if (!context_.controls_locked)
         return input;
     if (current_ != kPlayerScreen)
@@ -1422,9 +1518,9 @@ const InputFrame &App::gate_input(const InputFrame &input, float dt)
 
 void App::update(const InputFrame &raw_input, float dt)
 {
+    feedback_.clear();
     const InputFrame &input = gate_input(raw_input, dt);
     clock_ += dt;
-    feedback_.clear();
     context_.settings_changed = false;
     // Idle time for the screen dimming: any press or stick move resets it.
     idle_s_ = input.nav != Direction::none || input.pressed != 0 ? 0.0f : idle_s_ + dt;
@@ -2128,6 +2224,7 @@ void App::draw_chrome(Frame &frame)
     updates_.draw(overlay);
     card_menu_.draw(overlay, fonts_);
     draw_prompt(overlay);
+    draw_welcome(overlay);
     toasts_.draw(overlay);
 }
 

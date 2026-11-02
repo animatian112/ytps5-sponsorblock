@@ -39,6 +39,46 @@
 #include <string>
 #include <vector>
 
+extern "C" int sceKernelAvailableFlexibleMemorySize(std::size_t *size);
+
+namespace
+{
+
+// The flexible memory left to the title, checked every 10 s: yt.log says
+// when it runs low (a crash after "memory: low" names the cause).
+void check_memory(float dt)
+{
+    static float since = 10.0f;
+    static std::size_t lowest = static_cast<std::size_t>(-1);
+    static bool warned = false;
+    since += dt;
+    if (since < 10.0f)
+        return;
+    since = 0.0f;
+    using AvailableFn = int (*)(std::size_t *);
+    volatile AvailableFn const available = &sceKernelAvailableFlexibleMemorySize;
+    std::size_t size = 0;
+    if (available == nullptr || available(&size) != 0)
+        return;
+    const std::size_t mb = size >> 20;
+    if (lowest == static_cast<std::size_t>(-1))
+        yt::log::line("memory: %zu MB flexible memory free at start", mb);
+    if (mb < lowest)
+        lowest = mb;
+    if (mb < 64 && !warned)
+    {
+        warned = true;
+        yt::log::line("memory: low, %zu MB flexible memory free", mb);
+    }
+    else if (mb >= 128 && warned)
+    {
+        warned = false;
+        yt::log::line("memory: recovered, %zu MB free (lowest %zu MB)", mb, lowest);
+    }
+}
+
+} // namespace
+
 namespace hui::ps5
 {
 // src/platform/ps5/videodec_probe.cpp: how many decoder imports the loader
@@ -327,6 +367,7 @@ int main()
         application.telemetry().push(dt * 1000.0f);
         application.telemetry().uptime += dt;
         application.update(input, dt);
+        check_memory(dt);
         if (application.take_settings_changed())
         {
             const Settings &settings = application.settings();

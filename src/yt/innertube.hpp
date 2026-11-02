@@ -95,6 +95,13 @@ class InnerTube
     // The search filters (search_params()) every new search carries.
     void set_search_params(const std::string &params);
 
+    // Live chat (the WEB client, signed out): the chat's first continuation
+    // from a live video's watch page, then a page of messages and the next
+    // continuation with the wait YouTube asks for before it.
+    bool live_chat_start(const std::string &video_id, std::string *continuation);
+    bool live_chat(const std::string &continuation, std::vector<ChatMessage> *messages,
+                   std::string *next, int *wait_ms);
+
     // HTTP status of the last call; 401 means the token has to be refreshed.
     long last_status() const;
     const std::string &last_error() const;
@@ -112,6 +119,12 @@ class InnerTube
 // from channelRenderer objects: channelId, avatar thumbnail, title, subscriber
 // line) next to the videos; the walker skips ad renderers as before.
 bool parse_feed_page(std::string_view json, FeedPage *page);
+// The live chat's first continuation in a WEB watch page ("" without one).
+std::string parse_live_chat_start(std::string_view json);
+// One get_live_chat answer: its new messages, the next continuation and the
+// wait before asking again.
+bool parse_live_chat(std::string_view json, std::vector<ChatMessage> *messages, std::string *next,
+                     int *wait_ms);
 bool parse_video_info(std::string_view json, VideoInfo *info);
 
 // The TVHTML5 clientVersion the signed-in requests use (the history pings

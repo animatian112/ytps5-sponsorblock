@@ -46,6 +46,7 @@ src/third_party/quickjs/qjs_libunicode.c
 src/yt/http.cpp
 src/yt/image.cpp
 src/yt/innertube.cpp
+src/yt/live_chat.cpp
 src/yt/qr.cpp
 src/yt/log.cpp
 src/yt/service.cpp

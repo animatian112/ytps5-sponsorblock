@@ -765,6 +765,66 @@ void scan_card_menu(yyjson_val *value, const std::string &label, FeedItem *item,
     }
 }
 
+// The picture badges a card carries ("4K", "8K", "HDR", "VR180"), found as a
+// badge's label anywhere under the card: search results put them in
+// metadataBadgeRenderer, the newer cards in badgeViewModel, the TV's tiles in
+// a metadata line. Joined with a space, "4K HDR".
+void find_quality(yyjson_val *node, int depth, bool *k4, bool *k8, bool *hdr, bool *vr)
+{
+    if (node == nullptr || depth > 14)
+        return;
+    if (yyjson_is_arr(node))
+    {
+        const std::size_t count = yyjson_arr_size(node);
+        for (std::size_t i = 0; i < count && i < 64; ++i)
+            find_quality(yyjson_arr_get(node, i), depth + 1, k4, k8, hdr, vr);
+        return;
+    }
+    if (!yyjson_is_obj(node))
+        return;
+    yyjson_obj_iter iter;
+    yyjson_obj_iter_init(node, &iter);
+    yyjson_val *key = nullptr;
+    while ((key = yyjson_obj_iter_next(&iter)) != nullptr)
+    {
+        const char *name = yyjson_get_str(key);
+        yyjson_val *value = yyjson_obj_iter_get_val(key);
+        if (name == nullptr)
+            continue;
+        if (std::strcmp(name, "title") == 0 || std::strcmp(name, "navigationEndpoint") == 0 ||
+            std::strcmp(name, "menu") == 0 || std::strcmp(name, "thumbnail") == 0)
+            continue; // a title of "4K" is no badge
+        if (yyjson_is_str(value) &&
+            (std::strcmp(name, "label") == 0 || std::strcmp(name, "badgeText") == 0 ||
+             std::strcmp(name, "simpleText") == 0 || std::strcmp(name, "text") == 0))
+        {
+            const char *text = yyjson_get_str(value);
+            if (std::strcmp(text, "4K") == 0)
+                *k4 = true;
+            else if (std::strcmp(text, "8K") == 0)
+                *k8 = true;
+            else if (std::strcmp(text, "HDR") == 0)
+                *hdr = true;
+            else if (std::strcmp(text, "VR180") == 0 || std::strcmp(text, "360\xc2\xb0") == 0)
+                *vr = true;
+            continue;
+        }
+        find_quality(value, depth + 1, k4, k8, hdr, vr);
+    }
+}
+
+std::string quality_badges(yyjson_val *card)
+{
+    bool k4 = false, k8 = false, hdr = false, vr = false;
+    find_quality(card, 0, &k4, &k8, &hdr, &vr);
+    std::string out = k8 ? "8K" : k4 ? "4K" : "";
+    if (hdr)
+        out += out.empty() ? "HDR" : " HDR";
+    if (vr && out.empty())
+        out = "VR";
+    return out;
+}
+
 // A lockupViewModel video: contentId (11-char video id), title, thumbnail,
 // duration badge and author line. Playlists, channels and Shorts are skipped.
 void collect_lockup(yyjson_val *obj, FeedPage *page)
@@ -814,6 +874,7 @@ void collect_lockup(yyjson_val *obj, FeedPage *page)
         lockup_length(yyjson_obj_get(content_image, "thumbnailViewModel"), &item.live, &item.badge);
     item.shelf = page->current_shelf;
     scan_card_menu(lockup, {}, &item, 0);
+    item.quality = quality_badges(obj);
     page->items.push_back(std::move(item));
 }
 
@@ -913,6 +974,7 @@ void collect_tile(yyjson_val *tile, FeedPage *page)
     }
     item.watched = watched_share(overlays);
     scan_card_menu(tile, {}, &item, 0);
+    item.quality = quality_badges(tile);
     page->items.push_back(std::move(item));
 }
 
@@ -957,6 +1019,7 @@ void collect_item(yyjson_val *obj, FeedPage *page)
     item.shelf = page->current_shelf;
     item.watched = watched_share(yyjson_obj_get(obj, "thumbnailOverlays"));
     scan_card_menu(obj, {}, &item, 0);
+    item.quality = quality_badges(obj);
     page->items.push_back(std::move(item));
 }
 
@@ -1964,6 +2027,98 @@ std::string labelled_token(yyjson_val *value, const char *word, const std::strin
 }
 
 } // namespace
+
+std::string parse_live_chat_start(std::string_view json)
+{
+    yyjson_doc *doc = yyjson_read(json.data(), json.size(), 0);
+    if (doc == nullptr)
+        return {};
+    yyjson_val *chat = yyjson_ptr_get(yyjson_doc_get_root(doc),
+                                      "/contents/twoColumnWatchNextResults/conversationBar/"
+                                      "liveChatRenderer");
+    std::string out;
+    yyjson_val *continuations = yyjson_obj_get(chat, "continuations");
+    for (std::size_t i = 0; i < yyjson_arr_size(continuations) && out.empty(); ++i)
+    {
+        yyjson_val *entry = yyjson_arr_get(continuations, i);
+        for (const char *kind :
+             {"reloadContinuationData", "invalidationContinuationData", "timedContinuationData"})
+            if (out.empty())
+                out = string_field(yyjson_obj_get(entry, kind), "continuation");
+    }
+    yyjson_doc_free(doc);
+    return out;
+}
+
+bool parse_live_chat(std::string_view json, std::vector<ChatMessage> *messages, std::string *next,
+                     int *wait_ms)
+{
+    messages->clear();
+    next->clear();
+    *wait_ms = 5000;
+    yyjson_doc *doc = yyjson_read(json.data(), json.size(), 0);
+    if (doc == nullptr)
+        return false;
+    yyjson_val *chat =
+        yyjson_ptr_get(yyjson_doc_get_root(doc), "/continuationContents/liveChatContinuation");
+    if (chat == nullptr)
+    {
+        yyjson_doc_free(doc);
+        return false;
+    }
+    yyjson_val *continuations = yyjson_obj_get(chat, "continuations");
+    for (std::size_t i = 0; i < yyjson_arr_size(continuations) && next->empty(); ++i)
+    {
+        yyjson_val *entry = yyjson_arr_get(continuations, i);
+        for (const char *kind :
+             {"invalidationContinuationData", "timedContinuationData", "reloadContinuationData"})
+        {
+            yyjson_val *data = yyjson_obj_get(entry, kind);
+            if (data != nullptr && next->empty())
+            {
+                *next = string_field(data, "continuation");
+                yyjson_val *timeout = yyjson_obj_get(data, "timeoutMs");
+                if (yyjson_is_num(timeout))
+                    *wait_ms = static_cast<int>(yyjson_get_num(timeout));
+            }
+        }
+    }
+    yyjson_val *actions = yyjson_obj_get(chat, "actions");
+    for (std::size_t i = 0; i < yyjson_arr_size(actions); ++i)
+    {
+        yyjson_val *item = yyjson_ptr_get(yyjson_arr_get(actions, i), "/addChatItemAction/item");
+        yyjson_val *text = yyjson_obj_get(item, "liveChatTextMessageRenderer");
+        if (text == nullptr)
+            text = yyjson_obj_get(item, "liveChatPaidMessageRenderer");
+        if (text == nullptr)
+            continue;
+        ChatMessage message;
+        message.author = text_of(yyjson_obj_get(text, "authorName"));
+        yyjson_val *runs = yyjson_ptr_get(text, "/message/runs");
+        for (std::size_t r = 0; r < yyjson_arr_size(runs); ++r)
+        {
+            yyjson_val *run = yyjson_arr_get(runs, r);
+            if (yyjson_val *piece = yyjson_obj_get(run, "text"); yyjson_is_str(piece))
+                message.text += yyjson_get_str(piece);
+            else if (yyjson_val *emoji = yyjson_obj_get(run, "emoji"))
+            {
+                // A Unicode emoji's id is the emoji itself; a channel's own
+                // is a long id, shown by its shortcut (":wave:").
+                const std::string id = string_field(emoji, "emojiId");
+                if (!id.empty() && id.size() <= 32 && static_cast<unsigned char>(id[0]) >= 0x80)
+                    message.text += id;
+                else if (yyjson_val *shortcut =
+                             yyjson_arr_get(yyjson_obj_get(emoji, "shortcuts"), 0);
+                         yyjson_is_str(shortcut))
+                    message.text += yyjson_get_str(shortcut);
+            }
+        }
+        if (!message.text.empty())
+            messages->push_back(std::move(message));
+    }
+    yyjson_doc_free(doc);
+    return true;
+}
 
 bool parse_feed_page(std::string_view json, FeedPage *page)
 {
@@ -3817,6 +3972,25 @@ bool InnerTube::channel_tab(const std::string &channel_id, const std::string &pa
     if (!parsed)
         page->error = impl_->error;
     return parsed;
+}
+
+bool InnerTube::live_chat_start(const std::string &video_id, std::string *continuation)
+{
+    continuation->clear();
+    Impl::Attempt attempt =
+        impl_->post_once("next", field_string("videoId", video_id), kWebClient, true);
+    if (attempt.http_ok)
+        *continuation = parse_live_chat_start(attempt.body);
+    impl_->log_line("next", video_id + " live chat", attempt, continuation->empty() ? 0 : 1);
+    return !continuation->empty();
+}
+
+bool InnerTube::live_chat(const std::string &continuation, std::vector<ChatMessage> *messages,
+                          std::string *next, int *wait_ms)
+{
+    Impl::Attempt attempt = impl_->post_once(
+        "live_chat/get_live_chat", field_string("continuation", continuation), kWebClient, true);
+    return attempt.http_ok && parse_live_chat(attempt.body, messages, next, wait_ms);
 }
 
 bool InnerTube::channel_tab_web(const std::string &channel_id, const std::string &params,

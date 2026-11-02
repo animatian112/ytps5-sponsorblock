@@ -248,7 +248,9 @@ std::size_t Pad::read(std::span<PadSample> out)
         {
             if (extra[i].connected == 0 && extra[i].buttons == 0)
                 continue;
-            remote_buttons_ = extra[i].buttons;
+            // Bit 31 says the system holds the input (its menu or a
+            // dialog is up); it is no button.
+            remote_buttons_ = extra[i].buttons & 0x7fffffffu;
             remote_connected_ = extra[i].connected != 0;
             const std::uint32_t fresh = remote_buttons_ & ~remote_seen_;
             if (fresh != 0)

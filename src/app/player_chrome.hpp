@@ -54,6 +54,7 @@ class PlayerChrome
         open_dim,
         toggle_stats,
         lock_controls, // the controller does nothing until Circle is held
+        toggle_audio_only,
     };
     enum class Panel
     {
@@ -191,6 +192,10 @@ class PlayerChrome
     {
         stats_on_ = on;
     }
+    void set_audio_only(bool on)
+    {
+        audio_only_ = on;
+    }
     int picked() const
     {
         return picked_;
@@ -246,6 +251,7 @@ class PlayerChrome
         comments,
         sleep,
         dim,
+        audio_only,
         lock,
         stats,
     };
@@ -316,6 +322,7 @@ class PlayerChrome
     Panel panel_ = Panel::none;
     bool sleep_on_ = false;
     bool stats_on_ = false;
+    bool audio_only_ = false;
     std::string panel_title_;
     std::vector<std::string> panel_options_;
     int panel_selected_ = -1;

@@ -634,3 +634,51 @@ TEST(InnerTube, ReadsUploadDates)
     ASSERT_TRUE(yt::parse_video_info(player, &info)) << info.error;
     EXPECT_EQ(info.publish_date.substr(0, 10), "2024-05-01");
 }
+
+TEST(InnerTubeFeed, ReadsTheQualityBadgesButNotATitle)
+{
+    // A search result's "4K" and "HDR" badges become the card's quality; a
+    // video merely titled "4K" carries none.
+    const std::string body = R"({"contents":{"twoColumnSearchResultsRenderer":{"primaryContents":
+      {"sectionListRenderer":{"contents":[{"itemSectionRenderer":{"contents":[
+        {"videoRenderer":{"videoId":"QUALITY4K01","title":{"runs":[{"text":"Mountains"}]},
+          "lengthText":{"simpleText":"3:00"},
+          "badges":[{"metadataBadgeRenderer":{"style":"BADGE_STYLE_TYPE_SIMPLE","label":"4K"}},
+                    {"metadataBadgeRenderer":{"style":"BADGE_STYLE_TYPE_SIMPLE","label":"HDR"}}]}},
+        {"videoRenderer":{"videoId":"QUALITYNONE","title":{"simpleText":"4K"},
+          "lengthText":{"simpleText":"1:00"}}}]}}]}}}}})";
+    yt::FeedPage page;
+    ASSERT_TRUE(yt::parse_feed_page(body, &page)) << page.error;
+    ASSERT_EQ(page.items.size(), 2u);
+    EXPECT_EQ(page.items[0].quality, "4K HDR");
+    EXPECT_EQ(page.items[1].quality, "");
+}
+
+TEST(InnerTubeLiveChat, ReadsTheStartTheMessagesAndThePace)
+{
+    const std::string watch = R"({"contents":{"twoColumnWatchNextResults":{"conversationBar":
+      {"liveChatRenderer":{"continuations":[{"reloadContinuationData":{"continuation":"START1"}}]}}}}})";
+    EXPECT_EQ(yt::parse_live_chat_start(watch), "START1");
+    EXPECT_EQ(yt::parse_live_chat_start(R"({"contents":{}})"), "");
+
+    const std::string page = R"({"continuationContents":{"liveChatContinuation":{
+      "continuations":[{"invalidationContinuationData":{"continuation":"NEXT2","timeoutMs":3000}}],
+      "actions":[
+        {"addChatItemAction":{"item":{"liveChatTextMessageRenderer":{
+          "authorName":{"simpleText":"Ann"},
+          "message":{"runs":[{"text":"hello "},{"emoji":{"emojiId":"❤️","shortcuts":[":heart:"]}}]}}}}},
+        {"addChatItemAction":{"item":{"liveChatTextMessageRenderer":{
+          "authorName":{"simpleText":"Bo"},
+          "message":{"runs":[{"emoji":{"emojiId":"UCabc/xyz","shortcuts":[":wave:"]}}]}}}}},
+        {"addChatItemAction":{"item":{"liveChatViewerEngagementMessageRenderer":{}}}}]}}})";
+    std::vector<yt::ChatMessage> messages;
+    std::string next;
+    int wait = 0;
+    ASSERT_TRUE(yt::parse_live_chat(page, &messages, &next, &wait));
+    EXPECT_EQ(next, "NEXT2");
+    EXPECT_EQ(wait, 3000);
+    ASSERT_EQ(messages.size(), 2u);
+    EXPECT_EQ(messages[0].author, "Ann");
+    EXPECT_EQ(messages[0].text, "hello ❤️");
+    EXPECT_EQ(messages[1].text, ":wave:");
+}

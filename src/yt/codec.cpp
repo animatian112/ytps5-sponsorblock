@@ -114,6 +114,31 @@ const Format *select_video_format(const std::vector<Format> &formats, const Code
     // only when none does the best ciphered format under the caps take over -
     // a refused ciphered URL still beats no stream, and the caller retries
     // past it. The lowest over-ceiling plain format stays the last resort.
+    if (choice.audio_only)
+    {
+        // Audio only: the lowest picture there is (plain URL first, AVC before
+        // VP9 before AV1 at one height), so decoding and download cost little.
+        const Format *lowest = nullptr;
+        for (const Format &format : formats)
+        {
+            if (!is_video_codec(format.codec) || format.url.empty() || format.height <= 0)
+                continue;
+            if (choice.decode == DecodeMode::hardware && format.codec == Codec::av1)
+                continue;
+            if (lowest == nullptr || (lowest->ciphered && !format.ciphered) ||
+                (lowest->ciphered == format.ciphered &&
+                 (format.height < lowest->height ||
+                  (format.height == lowest->height &&
+                   codec_rank(format.codec) > codec_rank(lowest->codec)))))
+                lowest = &format;
+        }
+        if (lowest != nullptr)
+        {
+            log::line("video: selection %s (audio only)",
+                      describe_selection(lowest, choice).c_str());
+            return lowest;
+        }
+    }
     if (choice.exact_itag > 0)
     {
         // One format picked from the full list: exactly that one.

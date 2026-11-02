@@ -27,6 +27,12 @@ class ResumeStore
     // Records where a video was left (length 0: unknown) and saves the file.
     void remember(const std::string &video_id, double position_s, double length_s);
 
+    // The speed picked for a channel's videos (0: none kept), from
+    // channel_speeds.txt beside the positions.
+    double channel_speed(const std::string &channel_id) const;
+    // Keeps (speed > 0) or forgets (0) a channel's speed and saves the file.
+    void remember_channel_speed(const std::string &channel_id, double speed);
+
     // The file format, for the tests.
     static std::vector<std::pair<std::string, double>> parse(const std::string &text);
     static std::string format(const std::vector<std::pair<std::string, double>> &entries);
@@ -34,6 +40,8 @@ class ResumeStore
   private:
     std::string path_;
     std::vector<std::pair<std::string, double>> entries_; // newest first
+    std::string speeds_path_;
+    std::vector<std::pair<std::string, double>> speeds_; // channel id, speed
 };
 
 } // namespace hui::app

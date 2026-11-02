@@ -163,6 +163,7 @@ std::vector<PlayerChrome::Button> PlayerChrome::bottom_buttons() const
     out.push_back(Button::comments);
     out.push_back(Button::sleep);
     out.push_back(Button::dim);
+    out.push_back(Button::audio_only);
     out.push_back(Button::lock);
     out.push_back(Button::stats);
     return out;
@@ -217,6 +218,8 @@ std::string PlayerChrome::tooltip(Button button) const
         return stats_on_ ? "Hide stats for nerds" : "Stats for nerds";
     case Button::lock:
         return "Lock controls (hold Circle to unlock)";
+    case Button::audio_only:
+        return audio_only_ ? "Audio only (on)" : "Audio only";
     case Button::mode:
     {
         static const char *const kModes[] = {"Play next", "Repeat the video", "Pause at the end",
@@ -233,7 +236,7 @@ bool PlayerChrome::lit(Button button) const
            (button == Button::dislike && disliked_) ||
            (button == Button::subscribe && subscribed_) ||
            (button == Button::captions && captions_on_) || (button == Button::sleep && sleep_on_) ||
-           (button == Button::stats && stats_on_);
+           (button == Button::stats && stats_on_) || (button == Button::audio_only && audio_only_);
 }
 
 void PlayerChrome::show()
@@ -332,6 +335,8 @@ PlayerChrome::Command PlayerChrome::press(Button button)
         return Command::toggle_stats;
     case Button::lock:
         return Command::lock_controls;
+    case Button::audio_only:
+        return Command::toggle_audio_only;
     }
     return Command::none;
 }
@@ -625,6 +630,7 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
     case Button::sleep:
     case Button::dim:
     case Button::lock:
+    case Button::audio_only:
         break; // drawn below
     case Button::mode:
     {
@@ -757,6 +763,11 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
             list.line(cx - 11.0f, cy + 3.0f + i * 8.0f, cx - 21.0f, cy + i * 10.0f, 3.0f, ink);
             list.line(cx + 11.0f, cy + 3.0f + i * 8.0f, cx + 21.0f, cy + i * 10.0f, 3.0f, ink);
         }
+        break;
+    case Button::audio_only: // headphones: the band over two cups
+        list.arc(cx, cy + 2.0f, 18.0f, 3.5f, 4.71238898f, 3.14159265f, ink);
+        list.rounded_rect({cx - 20.0f, cy + 2.0f, 9.0f, 16.0f}, 3.0f, ink);
+        list.rounded_rect({cx + 11.0f, cy + 2.0f, 9.0f, 16.0f}, 3.0f, ink);
         break;
     case Button::lock: // a padlock
         list.ring(cx, cy - 8.0f, 10.0f, 3.5f, ink);
