@@ -1385,100 +1385,148 @@ void App::handle_global(const InputFrame &input, float dt)
     }
 }
 
-bool App::welcome_active() const
+// Settings > General > Start screen: with no account saved, the QR sign-in
+// (Circle carries on without one); with accounts, "Who's watching?".
+void App::decide_start()
 {
-    return !settings_.welcomed && current_ != kLoginScreen && current_ != kPlayerScreen;
-}
-
-// The welcome's rows: sign in (while signed out), the decoding choice, start.
-void App::handle_welcome(const InputFrame &input)
-{
-    const bool signed_in = service_.signed_in();
-    const int first = signed_in ? 1 : 0;
-    welcome_focus_ = std::clamp(welcome_focus_, first, 2);
-    if (input.nav == Direction::up && welcome_focus_ > first)
-    {
-        --welcome_focus_;
-        feedback_.play(audio::Cue::focus);
-    }
-    else if (input.nav == Direction::down && welcome_focus_ < 2)
-    {
-        ++welcome_focus_;
-        feedback_.play(audio::Cue::focus);
-    }
-    const bool flip =
-        (welcome_focus_ == 1 && (input.nav == Direction::left || input.nav == Direction::right ||
-                                 input.is_pressed(Action::confirm)));
-    if (flip)
-    {
-        settings_.decode_mode = settings_.decode_mode == yt::DecodeMode::software
-                                    ? yt::DecodeMode::auto_detect
-                                    : yt::DecodeMode::software;
-        settings_changed_ = true;
-        feedback_.play(audio::Cue::toggle);
+    if (start_decided_ || touring_ || clock_ < 1.0f)
         return;
-    }
-    const bool done = input.is_pressed(Action::back) ||
-                      (input.is_pressed(Action::confirm) && welcome_focus_ != 1);
-    if (!done)
+    start_decided_ = true;
+    if (!settings_.start_screen)
         return;
-    settings_.welcomed = true;
-    settings_changed_ = true;
-    feedback_.play(audio::Cue::select);
-    if (welcome_focus_ == 0 && !signed_in && input.is_pressed(Action::confirm))
+    const auto accounts = service_.saved_accounts();
+    if (accounts.empty() && !service_.signed_in())
     {
         service_.request_sign_in();
         login_return_ = current_;
         show(kLoginScreen);
+        return;
+    }
+    if (!accounts.empty())
+    {
+        picker_open_ = true;
+        picker_focus_ = 0;
+        for (std::size_t i = 0; i < accounts.size(); ++i)
+            if (accounts[i].active)
+                picker_focus_ = static_cast<int>(i);
     }
 }
 
-void App::draw_welcome(ui::Canvas &canvas) const
+// The picker's tiles: each saved account, then "Add account".
+void App::handle_picker(const InputFrame &input)
 {
-    if (!welcome_active())
+    const auto accounts = service_.saved_accounts();
+    const int count = static_cast<int>(accounts.size()) + 1;
+    picker_focus_ = std::clamp(picker_focus_, 0, count - 1);
+    if (input.nav == Direction::left && picker_focus_ > 0)
+    {
+        --picker_focus_;
+        feedback_.play(audio::Cue::focus);
+    }
+    else if (input.nav == Direction::right && picker_focus_ < count - 1)
+    {
+        ++picker_focus_;
+        feedback_.play(audio::Cue::focus);
+    }
+    if (input.is_pressed(Action::back))
+    {
+        picker_open_ = false; // the account already signed in
+        feedback_.play(audio::Cue::back);
+        return;
+    }
+    if (!input.is_pressed(Action::confirm))
+        return;
+    picker_open_ = false;
+    feedback_.play(audio::Cue::select);
+    if (picker_focus_ < static_cast<int>(accounts.size()))
+    {
+        const auto &account = accounts[static_cast<std::size_t>(picker_focus_)];
+        if (!account.active)
+        {
+            service_.switch_account(picker_focus_);
+            toasts_.push(ui::StatusKind::info, "Switching account", account.name, 2.0f);
+        }
+        return;
+    }
+    if (service_.signed_in())
+        service_.add_account();
+    else
+        service_.request_sign_in();
+    login_return_ = current_;
+    show(kLoginScreen);
+}
+
+void App::draw_picker(ui::Canvas &canvas) const
+{
+    if (!picker_open_)
         return;
     gfx::DrawList &list = canvas.list;
     list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
-                      gfx::Color::rgb(0x000000, 0.82f));
-    const gfx::Rect box{560.0f, 240.0f, 800.0f, 600.0f};
-    list.rounded_rect(box, 24.0f, gfx::Color::rgb(0x1c1c1c));
-    ui::text(list, fonts_.semibold, "Welcome to TubeBlock", box.cx(), box.y + 80.0f, 42.0f,
+                      gfx::Color::rgb(0x0f0f0f));
+    ui::text(list, fonts_.semibold, "Who's watching?", gfx::kVirtualWidth * 0.5f, 330.0f, 56.0f,
              gfx::Color::rgb(0xffffff), gfx::Align::center);
-    ui::paragraph(list, fonts_.regular,
-                  "No ads, SponsorBlock skips and DeArrow titles. A few choices to start; all of "
-                  "them stay in Settings.",
-                  box.cx(), box.y + 150.0f, 24.0f, box.w - 120.0f, 32.0f, gfx::Color::rgb(0xaaaaaa),
-                  3, gfx::Align::center);
-    const bool signed_in = service_.signed_in();
-    const bool hardware = settings_.decode_mode != yt::DecodeMode::software;
-    const char *labels[3] = {signed_in ? "Signed in" : "Sign in with your phone",
-                             hardware ? "Decoding: Auto (console decoder above 1080p, experimental)"
-                                      : "Decoding: Software (smooth up to 1080p)",
-                             "Start watching"};
-    float y = box.y + 250.0f;
-    for (int i = 0; i < 3; ++i)
+    const auto accounts = service_.saved_accounts();
+    const int count = static_cast<int>(accounts.size()) + 1;
+    constexpr float kTile = 200.0f;
+    constexpr float kGap = 90.0f;
+    const float total = static_cast<float>(count) * kTile + static_cast<float>(count - 1) * kGap;
+    float x = (gfx::kVirtualWidth - total) * 0.5f;
+    const float y = 430.0f;
+    for (int i = 0; i < count; ++i)
     {
-        const bool focused = welcome_focus_ == i;
-        const bool dim = i == 0 && signed_in;
-        const gfx::Rect row{box.x + 60.0f, y, box.w - 120.0f, 76.0f};
-        list.rounded_rect(row, 14.0f,
-                          focused ? gfx::Color::rgb(0xffffff) : gfx::Color::rgb(0x2a2a2a));
-        ui::text(list, fonts_.semibold, labels[i], row.cx(), row.cy() + 9.0f, 25.0f,
-                 focused ? gfx::Color::rgb(0x0f0f0f)
-                 : dim   ? gfx::Color::rgb(0x777777)
-                         : gfx::Color::rgb(0xffffff),
-                 gfx::Align::center);
-        y += 96.0f;
+        const bool focused = picker_focus_ == i;
+        const float cx = x + kTile * 0.5f;
+        const float cy = y + kTile * 0.5f;
+        const float grow = focused ? 1.12f : 1.0f;
+        const float r = kTile * 0.5f * grow;
+        if (focused)
+            list.circle(cx, cy, r + 8.0f, gfx::Color::rgb(0xffffff));
+        std::string label;
+        if (i < static_cast<int>(accounts.size()))
+        {
+            const auto &account = accounts[static_cast<std::size_t>(i)];
+            label = account.name.empty() ? "Account" : account.name;
+            const std::uint32_t photo =
+                account.photo.empty() || thumbs_ == nullptr ? 0u : thumbs_->texture(account.photo);
+            if (photo != 0)
+                list.image(photo, {cx - r, cy - r, r * 2.0f, r * 2.0f}, gfx::kFullUv,
+                           gfx::Color::rgb(0xffffff), r);
+            else
+            {
+                list.circle(cx, cy, r, gfx::Color::rgb(0x3ea6ff));
+                const std::string initial = label.substr(0, 1);
+                ui::text(list, fonts_.semibold, initial, cx, cy + 30.0f, 80.0f,
+                         gfx::Color::rgb(0x0f0f0f), gfx::Align::center);
+            }
+        }
+        else
+        {
+            label = "Add account";
+            list.circle(cx, cy, r, gfx::Color::rgb(0x272727));
+            list.rounded_rect({cx - 36.0f, cy - 5.0f, 72.0f, 10.0f}, 5.0f,
+                              gfx::Color::rgb(0xffffff));
+            list.rounded_rect({cx - 5.0f, cy - 36.0f, 10.0f, 72.0f}, 5.0f,
+                              gfx::Color::rgb(0xffffff));
+        }
+        ui::text(
+            list, fonts_.regular,
+            fonts_.regular.font != nullptr ? fonts_.regular.font->fit(label, 28.0f, kTile + 60.0f)
+                                           : label,
+            cx, y + kTile + 70.0f, 28.0f,
+            focused ? gfx::Color::rgb(0xffffff) : gfx::Color::rgb(0xaaaaaa), gfx::Align::center);
+        x += kTile + kGap;
     }
-    ui::text(list, fonts_.regular, "Cross: choose   Left/Right: change decoding   Circle: skip",
-             box.cx(), box.y + box.h - 30.0f, 20.0f, gfx::Color::rgb(0x777777), gfx::Align::center);
+    ui::text(list, fonts_.regular, "Cross: choose   Circle: keep the current account",
+             gfx::kVirtualWidth * 0.5f, 940.0f, 22.0f, gfx::Color::rgb(0x777777),
+             gfx::Align::center);
 }
 
 const InputFrame &App::gate_input(const InputFrame &input, float dt)
 {
-    if (welcome_active())
+    decide_start();
+    if (picker_open_)
     {
-        handle_welcome(input);
+        handle_picker(input);
         locked_input_ = InputFrame{};
         locked_input_.connected = input.connected;
         return locked_input_;
@@ -2224,7 +2272,7 @@ void App::draw_chrome(Frame &frame)
     updates_.draw(overlay);
     card_menu_.draw(overlay, fonts_);
     draw_prompt(overlay);
-    draw_welcome(overlay);
+    draw_picker(overlay);
     toasts_.draw(overlay);
 }
 

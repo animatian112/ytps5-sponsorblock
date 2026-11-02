@@ -178,11 +178,13 @@ class App
     // locked (Circle held 2 s unlocks).
     const InputFrame &gate_input(const InputFrame &input, float dt);
     InputFrame locked_input_;
-    // The first-start welcome: its focused row.
-    int welcome_focus_ = 0;
-    bool welcome_active() const;
-    void handle_welcome(const InputFrame &input);
-    void draw_welcome(ui::Canvas &canvas) const;
+    // The start screen (YouTube TV's): decided once, a moment after start.
+    bool start_decided_ = false;
+    bool picker_open_ = false; // "Who's watching?"
+    int picker_focus_ = 0;
+    void decide_start();
+    void handle_picker(const InputFrame &input);
+    void draw_picker(ui::Canvas &canvas) const;
     float unlock_hold_s_ = 0.0f;
     float locked_hint_s_ = 0.0f;
     std::vector<yt::FeedItem> current_section(const std::string &video_id,

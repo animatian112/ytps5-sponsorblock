@@ -554,6 +554,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         options.quality = settings.show_quality;
         options.tooltips = settings.show_tooltips;
         options.ok_behavior = settings.ok_behavior;
+        options.hidden_buttons = settings.hidden_buttons;
         chrome_.set_options(options);
     }
 

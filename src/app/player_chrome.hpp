@@ -131,6 +131,7 @@ class PlayerChrome
         bool quality = true;     // "1080p" at the right of the top row
         bool tooltips = true;    // the focused button's name
         int ok_behavior = 0;     // Cross while hidden: 0 controls, 1 pause, 2 both
+        int hidden_buttons = 0;  // Settings::hidden_buttons
     };
     void set_options(const Options &options)
     {

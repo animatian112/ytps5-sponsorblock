@@ -102,7 +102,8 @@ constexpr Extra kExtras[] = {
     {89, &Settings::picked_quality, nullptr, 0, 4320},
     {90, nullptr, &Settings::channel_speed, 0, 1},
     {91, nullptr, &Settings::live_chat, 0, 1},
-    {92, nullptr, &Settings::welcomed, 0, 1},
+    {93, nullptr, &Settings::start_screen, 0, 1},
+    {94, &Settings::hidden_buttons, nullptr, 0, 0x7fff},
 };
 // 60 + i: Settings::sb_act[i].
 constexpr std::uint8_t kSbActionKey = 60;

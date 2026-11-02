@@ -64,20 +64,32 @@ struct Settings
     int picked_quality = 0;       // that quality's height; 0 follows Max resolution
     bool channel_speed = true;    // a speed picked for a video is kept for its channel
     bool live_chat = true;        // a live stream shows its chat beside the picture
-    bool welcomed = false;        // the first-start welcome was seen
-    int seek_seconds = 10;        // left/right on the seek bar and L1/R1
-    int ui_hide_seconds = 4;      // controls hide after this long (0: never)
-    int playback_mode = 0;        // at the end: 0 next, 1 repeat, 2 pause, 3 close, 4 shuffle
-    bool show_clock = true;       // the clock in the controls
-    bool show_remaining = true;   // "Remaining: 4:21" in the controls
-    bool show_quality = true;     // "1080p" in the controls
-    bool show_tooltips = true;    // the name of the focused button
-    bool suggestions = true;      // the suggestions row under the controls
-    bool loop_shorts = false;     // a Short starts again instead of moving on
-    bool resume = true;           // continue where a video was left
-    bool resume_short = false;    // ... also videos under 5 minutes
-    bool prefer_avc = false;      // AVC before VP9/AV1 (1080p at most)
-    int ok_behavior = 0;          // Cross while hidden: 0 controls, 1 pause, 2 both
+    bool start_screen = true;     // at start: who's watching, or the QR sign-in without accounts
+    // The player's lower buttons, a bit per kPlayerButtonNames entry that is
+    // hidden (default: Screen dimming and Stats for nerds).
+    int hidden_buttons = (1 << 11) | (1 << 14);
+    static constexpr int kPlayerButtonCount = 15;
+    static constexpr const char *kPlayerButtonNames[kPlayerButtonCount] = {
+        "Quality and speed", "Channel",          "Like",        "Dislike",       "Subscribe",
+        "Captions",          "Save to playlist", "Audio track", "Video info",    "Comments",
+        "Sleep timer",       "Screen dimming",   "Audio only",  "Lock controls", "Stats for nerds"};
+    bool button_shown(int index) const
+    {
+        return ((hidden_buttons >> index) & 1) == 0;
+    }
+    int seek_seconds = 10;      // left/right on the seek bar and L1/R1
+    int ui_hide_seconds = 4;    // controls hide after this long (0: never)
+    int playback_mode = 0;      // at the end: 0 next, 1 repeat, 2 pause, 3 close, 4 shuffle
+    bool show_clock = true;     // the clock in the controls
+    bool show_remaining = true; // "Remaining: 4:21" in the controls
+    bool show_quality = true;   // "1080p" in the controls
+    bool show_tooltips = true;  // the name of the focused button
+    bool suggestions = true;    // the suggestions row under the controls
+    bool loop_shorts = false;   // a Short starts again instead of moving on
+    bool resume = true;         // continue where a video was left
+    bool resume_short = false;  // ... also videos under 5 minutes
+    bool prefer_avc = false;    // AVC before VP9/AV1 (1080p at most)
+    int ok_behavior = 0;        // Cross while hidden: 0 controls, 1 pause, 2 both
     // Subtitles
     int subtitle_language = 0; // index into kSubtitleLanguages (0: off)
     int subtitle_size = 1;     // 0 small, 1 medium, 2 large

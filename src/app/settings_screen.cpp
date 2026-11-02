@@ -117,6 +117,9 @@ enum : int
     kDevHardwareNote,
     kDevClearSearches,
     kDevReset,
+    kButtonsAll,
+    kButtonsFew,
+    kButtonsNone,
     kRemoteCode,
     kRemoteStatus,
     kInstallUpdate,
@@ -337,6 +340,15 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
               "Darkens the video; at 0% only the sound plays on");
     add_flag(player, "Exit from the player: double back", &S::player_double_back,
              "Circle twice to leave a video, so a stray press does not end it");
+    player.add_header("Player buttons");
+    player.add_action(kButtonsAll, "Show every button").description =
+        "All the buttons under the seek bar";
+    player.add_action(kButtonsFew, "Just a few").description =
+        "Quality, captions, info and comments";
+    player.add_action(kButtonsNone, "Hide them all").description =
+        "Only the play controls above the seek bar";
+    for (int i = 0; i < S::kPlayerButtonCount; ++i)
+        add_button_toggle(player, i);
     player.add_header("Video formats");
     player.add_toggle(kCodecAvc, "AVC (H.264)", context_.settings.codec_avc);
     player.add_toggle(kCodecVp9, "VP9", context_.settings.codec_vp9);
@@ -422,6 +434,9 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     general.add_action(kRestoreSettings, "Restore settings").description =
         "Load the settings from the backup (applies at the next start)";
     general.add_header("Hide content");
+    add_flag(
+        general, "Start screen", &S::start_screen,
+        "At start: \"Who's watching?\" with your accounts, or the sign-in QR code without one");
     add_flag(general, "Hide Shorts from Home", &S::hide_shorts_home);
     add_flag(general, "Hide Shorts from Subscriptions", &S::hide_shorts_subscriptions);
     add_flag(general, "Hide Shorts from History", &S::hide_shorts_history);
@@ -612,6 +627,25 @@ void SettingsScreen::add_raw_steps(ui::Form &form, const char *label, int *value
     bindings_.push_back(std::move(binding));
 }
 
+void SettingsScreen::add_button_toggle(ui::Form &form, int button)
+{
+    Binding binding;
+    binding.id = next_binding_id_++;
+    binding.button = button;
+    form.add_toggle(binding.id, Settings::kPlayerButtonNames[button],
+                    context_.settings.button_shown(button));
+    bindings_.push_back(std::move(binding));
+}
+
+void SettingsScreen::set_buttons(int hidden)
+{
+    context_.settings.hidden_buttons = hidden;
+    context_.settings_changed = true;
+    for (const Binding &binding : bindings_)
+        if (binding.button >= 0)
+            form().set_toggle(binding.id, context_.settings.button_shown(binding.button));
+}
+
 void SettingsScreen::add_section(ui::Form &form, int section)
 {
     Binding binding;
@@ -629,7 +663,15 @@ bool SettingsScreen::apply_binding(int id)
         if (binding.id != id)
             continue;
         Settings &settings = context_.settings;
-        if (binding.section >= 0)
+        if (binding.button >= 0)
+        {
+            const int bit = 1 << binding.button;
+            if (form().toggle_value(id))
+                settings.hidden_buttons &= ~bit;
+            else
+                settings.hidden_buttons |= bit;
+        }
+        else if (binding.section >= 0)
         {
             const std::uint32_t bit = 1u << binding.section;
             if (form().toggle_value(id))
@@ -994,6 +1036,19 @@ void SettingsScreen::activate(int id)
     {
         context_.service.clear_feed_cache();
         context_.toasts.push(ui::StatusKind::info, "Saved feeds cleared", {}, 2.0f);
+        return;
+    }
+    if (id == kButtonsAll || id == kButtonsFew || id == kButtonsNone)
+    {
+        // "Just a few": quality (0), captions (5), info (8), comments (9).
+        constexpr int kAll = (1 << Settings::kPlayerButtonCount) - 1;
+        constexpr int kFew = kAll & ~((1 << 0) | (1 << 5) | (1 << 8) | (1 << 9));
+        set_buttons(id == kButtonsAll ? 0 : id == kButtonsFew ? kFew : kAll);
+        context_.toasts.push(ui::StatusKind::info, "Player buttons",
+                             id == kButtonsAll   ? "Every button shown"
+                             : id == kButtonsFew ? "Just a few shown"
+                                                 : "All hidden",
+                             2.0f);
         return;
     }
     if (id == kDevClearSearches)

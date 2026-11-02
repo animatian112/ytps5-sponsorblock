@@ -4,6 +4,8 @@
 
 #include "app/player_chrome.hpp"
 
+#include "core/settings.hpp"
+
 #include "app/icons.hpp"
 
 #include <algorithm>
@@ -145,27 +147,32 @@ std::vector<PlayerChrome::Button> PlayerChrome::top_buttons() const
 
 std::vector<PlayerChrome::Button> PlayerChrome::bottom_buttons() const
 {
-    std::vector<Button> out{Button::quality};
-    if (has_channel_)
-        out.push_back(Button::channel);
-    if (signed_in_)
+    // In Settings::kPlayerButtonNames order; Settings > Player > Player
+    // buttons hides any of them.
+    const struct
     {
-        out.push_back(Button::like);
-        out.push_back(Button::dislike);
-        out.push_back(Button::subscribe);
-    }
-    out.push_back(Button::captions);
-    if (signed_in_)
-        out.push_back(Button::save);
-    if (audio_tracks_)
-        out.push_back(Button::audio);
-    out.push_back(Button::info);
-    out.push_back(Button::comments);
-    out.push_back(Button::sleep);
-    out.push_back(Button::dim);
-    out.push_back(Button::audio_only);
-    out.push_back(Button::lock);
-    out.push_back(Button::stats);
+        Button button;
+        bool available;
+    } all[] = {{Button::quality, true},
+               {Button::channel, has_channel_},
+               {Button::like, signed_in_},
+               {Button::dislike, signed_in_},
+               {Button::subscribe, signed_in_},
+               {Button::captions, true},
+               {Button::save, signed_in_},
+               {Button::audio, audio_tracks_},
+               {Button::info, true},
+               {Button::comments, true},
+               {Button::sleep, true},
+               {Button::dim, true},
+               {Button::audio_only, true},
+               {Button::lock, true},
+               {Button::stats, true}};
+    static_assert(sizeof(all) / sizeof(all[0]) == Settings::kPlayerButtonCount);
+    std::vector<Button> out;
+    for (int i = 0; i < Settings::kPlayerButtonCount; ++i)
+        if (all[i].available && ((options_.hidden_buttons >> i) & 1) == 0)
+            out.push_back(all[i].button);
     return out;
 }
 
@@ -459,8 +466,10 @@ PlayerChrome::Command PlayerChrome::handle(const InputFrame &input, ui::Feedback
         if (input.nav == Direction::up || input.nav == Direction::down)
         {
             const bool down = input.nav == Direction::down;
-            zone_ = down ? Zone::bottom : Zone::top;
             const std::vector<Button> row = down ? bottom_buttons() : top_buttons();
+            if (down && row.empty())
+                return Command::suggestions; // every lower button hidden
+            zone_ = down ? Zone::bottom : Zone::top;
             focus_ = row.empty() ? Button::play : row.front();
             feedback.play(audio::Cue::focus);
             return Command::none;
@@ -843,7 +852,8 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
     std::string tip;
     float tip_x = 0.0f;
     float tip_y = 0.0f;
-    const auto draw_row = [&](const std::vector<Button> &row, float cy, Zone zone)
+    const auto draw_row =
+        [&](const std::vector<Button> &row, float cy, Zone zone, float pitch = kButtonPitch)
     {
         float cx = kLeft + 24.0f;
         for (const Button button : row)
@@ -863,7 +873,7 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
             }
             const gfx::Color ink = button == Button::skip || lit(button) ? kRed : kInk;
             draw_icon(list, fonts, button, cx, cy, ink);
-            cx += kButtonPitch;
+            cx += pitch;
         }
     };
     draw_row(top_buttons(), kTopRowY - rise, Zone::top);
@@ -948,10 +958,27 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
         }
     }
 
-    draw_row(bottom_buttons(), kBottomRowY - rise, Zone::bottom);
-
     // Remaining time, then position / length, at the right of the bottom row.
     const double left = duration_ > shown_position ? duration_ - shown_position : 0.0;
+    {
+        // The buttons stop short of the times: more than fit draw closer.
+        const std::vector<Button> row = bottom_buttons();
+        float times = 0.0f;
+        if (fonts.regular.font != nullptr)
+        {
+            times = fonts.regular.measure(
+                clock_text(shown_position) + " / " + clock_text(duration_), 30.0f);
+            if (options_.remaining)
+                times =
+                    std::max(times, fonts.regular.measure("Remaining: " + clock_text(left), 30.0f));
+        }
+        const float last = kRight - times - 40.0f - kButtonRadius; // the last centre
+        const float first = kLeft + 24.0f;
+        float pitch = kButtonPitch;
+        if (row.size() > 1 && first + pitch * static_cast<float>(row.size() - 1) > last)
+            pitch = std::max(64.0f, (last - first) / static_cast<float>(row.size() - 1));
+        draw_row(row, kBottomRowY - rise, Zone::bottom, pitch);
+    }
     if (options_.remaining)
         ui::text(list, fonts.regular, "Remaining: " + clock_text(left), kRight,
                  kBottomRowY - 8.0f - rise, 30.0f, kInk, gfx::Align::right);

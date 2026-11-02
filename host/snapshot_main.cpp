@@ -391,8 +391,8 @@ int main(int argc, char **argv)
     hui::app::init_icons(renderer.batch(), assets + "/icons");
     hui::app::init_emoji(renderer.batch(), assets + "/emoji/twemoji.pack");
     auto settings = hui::app::App::load_settings(data_root);
-    // SNAPSHOT_WELCOME=1 pictures the first-start welcome over the screens.
-    settings.welcomed = std::getenv("SNAPSHOT_WELCOME") == nullptr;
+    // No start screen in the tour (SNAPSHOT_WHO=1 pictures "Who's watching?").
+    settings.start_screen = std::getenv("SNAPSHOT_WHO") != nullptr;
     hui::app::App app(fonts, settings, data_root, renderer.batch(), service);
     app.set_version("host");
     app.begin_tour(only);

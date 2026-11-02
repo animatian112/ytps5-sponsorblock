@@ -30,7 +30,7 @@ class LoginScreen final : public Screen
     }
     const char *hint() const override
     {
-        return "Circle cancel   Options quit";
+        return "Circle: continue without signing in   Square: new code";
     }
     void enter() override;
     void update(const InputFrame &input, float dt, ui::Feedback &feedback) override;
