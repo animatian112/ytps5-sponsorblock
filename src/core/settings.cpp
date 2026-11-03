@@ -96,7 +96,6 @@ constexpr Extra kExtras[] = {
     {83, &Settings::ui_layout, nullptr, 0, 1},
     {84, nullptr, &Settings::dev_gpu_convert, 0, 1},
     {85, &Settings::dev_hw_depth, nullptr, 1, 2},
-    {86, nullptr, &Settings::system_keyboard, 0, 1},
     {87, nullptr, &Settings::audio_only, 0, 1},
     {88, nullptr, &Settings::remember_quality, 0, 1},
     {89, &Settings::picked_quality, nullptr, 0, 4320},

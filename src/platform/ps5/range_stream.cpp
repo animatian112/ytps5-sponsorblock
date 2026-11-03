@@ -31,10 +31,19 @@ namespace hui::ps5
 namespace
 {
 
-constexpr std::size_t kRingBytes = 3u << 20; // per stream: the app heap is shared with the frames
+// Read-ahead per stream. 3 MiB held about one second of a 4K stream, so any
+// slow request emptied it and the frame thread waited on the network (the
+// stutter). The heap has room: video keeps 32 MiB (8+ s of 4K), sound 4 MiB.
+constexpr std::size_t kVideoRingBytes = 32u << 20;
+constexpr std::size_t kAudioRingBytes = 4u << 20;
 constexpr std::int64_t kFirstChunk = 256 << 10; // a quick first answer
-constexpr std::int64_t kChunk = 1 << 20;        // well under yt-dlp's 10 MiB cap
-constexpr int kForbiddenRetries = 3;            // a 403 can be the ad wait ending late
+// Each request costs a round trip: 1 MiB ones capped a 4K stream near its
+// own bitrate. 4 MiB is still well under yt-dlp's 10 MiB cap.
+constexpr std::int64_t kVideoChunk = 4 << 20;
+constexpr std::int64_t kAudioChunk = 1 << 20;
+// How often the reader's throughput and fill go to yt.log while playing.
+constexpr auto kRateLogEvery = std::chrono::seconds(15);
+constexpr int kForbiddenRetries = 3; // a 403 can be the ad wait ending late
 constexpr int kTransientRetries = 6;
 constexpr std::size_t kWorkerStack = 1u << 20; // console threads need an explicit stack
 constexpr const char *kUserAgent =
@@ -68,7 +77,11 @@ struct RangeStream::State
     bool stop = false;
     std::uint64_t generation = 0;
     // The ring holds the file bytes [position, position + count).
-    std::vector<std::uint8_t> ring = std::vector<std::uint8_t>(kRingBytes);
+    std::vector<std::uint8_t> ring; // sized by the constructor (video or sound)
+    std::int64_t chunk = kAudioChunk;
+    // For the rate line: bytes fetched and reads that found the ring empty.
+    std::uint64_t fetched = 0;
+    int starved = 0;
     std::size_t head = 0;
     std::size_t count = 0;
     std::int64_t position = 0;
@@ -235,8 +248,10 @@ void *worker(void *argument)
     (void)curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, on_header);
     (void)curl_easy_setopt(easy, CURLOPT_XFERINFOFUNCTION, on_progress);
     (void)curl_easy_setopt(easy, CURLOPT_NOPROGRESS, 0L);
+    (void)curl_easy_setopt(easy, CURLOPT_BUFFERSIZE, 256L << 10); // fewer, larger writes
 
     std::int64_t chunk = kFirstChunk;
+    auto rate_since = std::chrono::steady_clock::now();
     int forbidden = 0;
     int transient = 0;
     bool logged_first = false;
@@ -347,11 +362,23 @@ void *worker(void *argument)
         if (status == 200 && state.size < 0 && result == CURLE_OK)
             state.size = from + static_cast<std::int64_t>(transfer.received);
 
+        state.fetched += transfer.received;
+        if (const auto now = std::chrono::steady_clock::now(); now - rate_since >= kRateLogEvery)
+        {
+            const double seconds = std::chrono::duration<double>(now - rate_since).count();
+            yt::log::line("range: %s %.1f MB/s, %.1f of %zu MB ahead, ran dry %d times",
+                          state.label.c_str(), static_cast<double>(state.fetched) / seconds / 1e6,
+                          static_cast<double>(state.count) / 1e6, state.ring.size() >> 20,
+                          state.starved);
+            rate_since = now;
+            state.fetched = 0;
+            state.starved = 0;
+        }
         if (transfer.received > 0)
         {
             forbidden = 0;
             transient = 0;
-            chunk = kChunk;
+            chunk = state.chunk;
             continue; // a short or cut transfer resumes where it stopped
         }
         if (result != CURLE_OK || status >= 400)
@@ -381,6 +408,9 @@ RangeStream::RangeStream(std::string url, const char *label, Interrupt interrupt
 {
     state_->url = std::move(url);
     state_->label = label != nullptr ? label : "stream";
+    const bool video = state_->label == "video";
+    state_->ring.resize(video ? kVideoRingBytes : kAudioRingBytes);
+    state_->chunk = video ? kVideoChunk : kAudioChunk;
     state_->size = clen_of(state_->url);
 }
 
@@ -441,6 +471,7 @@ int RangeStream::read(std::uint8_t *buffer, int size)
         return 0;
     State &state = *state_;
     std::unique_lock<std::mutex> lock(state.mutex);
+    bool waiting = false;
     for (;;)
     {
         if (state.count > 0)
@@ -460,6 +491,11 @@ int RangeStream::read(std::uint8_t *buffer, int size)
             return AVERROR_EOF;
         if (interrupt_ != nullptr && interrupt_(opaque_) != 0)
             return AVERROR_EXIT;
+        if (!waiting)
+        {
+            waiting = true;
+            ++state.starved; // the player caught up with the network
+        }
         poll_pause(lock);
     }
 }
