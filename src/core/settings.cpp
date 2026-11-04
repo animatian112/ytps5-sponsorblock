@@ -179,6 +179,10 @@ bool decode_settings(std::string_view data, Settings *settings)
     if (s.max_height != 720 && s.max_height != 1080 && s.max_height != 1440 &&
         s.max_height != 2160 && s.max_height != 4320)
         s.max_height = 1080;
+    // AV1: this build has no decoder that keeps up (none in hardware, and the
+    // software one gave no picture in 2 s, a stall before every fallback), so
+    // it is off for good.
+    s.codec_av1 = false;
     if (!s.codec_avc && !s.codec_vp9 && !s.codec_av1)
         s.codec_avc = true;
     s.video_volume = std::clamp<int>(r.get<std::uint8_t>(), 0, 10);

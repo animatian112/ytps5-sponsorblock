@@ -188,7 +188,8 @@ const char *decode_mode_description(yt::DecodeMode mode)
     switch (mode)
     {
     case yt::DecodeMode::software:
-        return "Software: ffmpeg on the CPU (every codec)";
+        return "Software: the CPU up to 1080p; a 1440p or 4K pick still plays on the console's "
+               "decoder chip (VP9), which the CPU can't match";
     case yt::DecodeMode::hardware:
         return "Hardware (experimental): VP9 on the console's decoder chip, for 1440p and 4K. "
                "Falls back to software if it fails; AVC, AV1 and HDR stay software";
@@ -352,7 +353,6 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     player.add_header("Video formats");
     player.add_toggle(kCodecAvc, "AVC (H.264)", context_.settings.codec_avc);
     player.add_toggle(kCodecVp9, "VP9", context_.settings.codec_vp9);
-    player.add_toggle(kCodecAv1, "AV1", context_.settings.codec_av1);
     add_flag(player, "Prefer AVC over VP9", &S::prefer_avc,
              "Steadier on the CPU decoder; 1080p at most");
 

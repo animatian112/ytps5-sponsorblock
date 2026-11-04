@@ -132,6 +132,7 @@ TEST(Settings, BrokenDataIsRejectedAndOutOfRangeValuesAreClamped)
 TEST(Settings, TheLastCodecCannotBeSwitchedOff)
 {
     Settings settings;
+    settings.codec_av1 = true; // off by default now; the rule is the same for any three
     // Two codecs are still on, so the first two switches are allowed.
     EXPECT_TRUE(settings.set_codec("AVC", false));
     EXPECT_FALSE(settings.codec_avc);

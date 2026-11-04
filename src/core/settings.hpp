@@ -32,8 +32,8 @@ struct Settings
     // the adaptive format and the video volume (0..10).
     bool codec_avc = true;
     bool codec_vp9 = true;
-    bool codec_av1 = true;
-    int max_height = 1080; // 720, 1080, 1440 or 2160
+    bool codec_av1 = false; // never on: no decoder keeps up (settings.cpp)
+    int max_height = 1080;  // 720, 1080, 1440 or 2160
     int video_volume = 10;
     // Which decoder plays the selected stream (see yt::DecodeMode). Stored as a
     // byte, like the codec switches; an older save without it loads as the

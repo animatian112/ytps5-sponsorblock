@@ -2006,13 +2006,12 @@ void FfmpegPlayer::clear_video_pool()
 
 bool FfmpegPlayer::wants_hardware() const
 {
-    // Hardware on request, and on Auto above 1080p: there the CPU cannot keep
-    // up (a 4K VP9 stream runs it out of memory and frames), while the
-    // console's decoder plays it.
+    // Hardware on request, and above 1080p in every mode: there the CPU cannot
+    // keep up (a 4K VP9 stream runs it out of memory - Software showed no
+    // picture at all at 4K), while the console's decoder plays it.
     if (decode_mode_ == DecodeMode::hardware)
         return true;
-    return decode_mode_ == DecodeMode::auto_detect && video_.stream != nullptr &&
-           video_.stream->codecpar->height > 1080;
+    return video_.stream != nullptr && video_.stream->codecpar->height > 1080;
 }
 
 bool FfmpegPlayer::start_hardware()

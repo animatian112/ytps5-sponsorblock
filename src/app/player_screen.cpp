@@ -1670,16 +1670,19 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
             if (std::find(menu_itags_.begin(), menu_itags_.end(), format->itag) !=
                 menu_itags_.end())
                 continue;
+            if (format->codec == yt::Codec::av1)
+                continue; // no decoder here keeps up with AV1 (settings.cpp)
             char line[96];
             std::snprintf(line, sizeof(line), "%dp, %dfps, %.2fMbps, %s%s", format->height,
                           static_cast<int>(format->fps + 0.5),
                           static_cast<double>(format->bitrate) / 1e6,
                           yt::codec_label(format->codec), format->hdr ? ", HDR" : "");
             // What the console's processor can hardly decode in time.
-            const bool heavy = (format->codec == yt::Codec::av1 && format->height > 720) ||
-                               (format->height > 1080 && format->fps > 31.0) ||
-                               format->height > 1440;
-            options.emplace_back(std::string(line) + (heavy ? "  (may lag)" : ""));
+            // Above 1080p the console's decoder takes over (VP9): still
+            // experimental, so those picks keep a note.
+            const bool heavy = format->height > 1080;
+            options.emplace_back(std::string(line) +
+                                 (heavy ? "  (console decoder, experimental)" : ""));
             menu_heights_.push_back(format->height);
             menu_itags_.push_back(format->itag);
             if (format->itag == itag_override_)
