@@ -31,6 +31,8 @@ struct Environment
     std::string sandboxes = "/mnt/sandbox";
     // Where the console keeps its own copies of an app's sce_sys ("/user"); empty: none.
     std::string registered = "/user";
+    // ProsperoStore's install receipts ("<TITLEID>.json"); empty: leave them alone.
+    std::string store_receipts = "/data/prosperostore/receipts";
     // Free bytes on the filesystem that holds path.
     std::function<bool(const std::string &path, std::uint64_t &bytes)> space;
     std::function<void(unsigned milliseconds)> sleep;

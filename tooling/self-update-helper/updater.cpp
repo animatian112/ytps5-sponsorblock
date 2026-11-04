@@ -20,6 +20,8 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
+#include <cctype>
 #include <dirent.h>
 #include <fcntl.h>
 #include <memory>
@@ -496,6 +498,95 @@ bool swap_entries(const std::string &target, const std::string &staged, const st
     return false;
 }
 
+// The value of "key" in a flat JSON object written without escapes in it
+// (ProsperoStore's receipt): where it starts and how long it is.
+bool field_span(const std::string &body, const std::string &key, std::size_t &at, std::size_t &length)
+{
+    const std::size_t name = body.find("\"" + key + "\"");
+    if (name == std::string::npos)
+        return false;
+    std::size_t i = name + key.size() + 2;
+    while (i < body.size() && (body[i] == ' ' || body[i] == ':'))
+        ++i;
+    if (i >= body.size() || body[i] != '"')
+        return false;
+    const std::size_t close = body.find('"', i + 1);
+    if (close == std::string::npos || body.find('\\', i + 1) < close)
+        return false;
+    at = i + 1;
+    length = close - at;
+    return true;
+}
+
+bool set_field(std::string &body, const std::string &key, const std::string &value)
+{
+    std::size_t at = 0, length = 0;
+    if (!field_span(body, key, at, length))
+        return false;
+    body.replace(at, length, value);
+    return true;
+}
+
+// ProsperoStore manages an app while its receipt names the installed version;
+// after this update it would call the app "installed outside ProsperoStore"
+// and stop offering its updates. A receipt for exactly the copy just replaced
+// (its folder, at the version that was running or older) moves to the new one, so
+// the store and this updater keep working side by side.
+void hand_back_to_store(const Environment &environment, const std::string &title,
+                        const std::string &target, const std::string &installed,
+                        const std::string &available, const std::string &digest,
+                        Session &session)
+{
+    if (environment.store_receipts.empty())
+        return;
+    const std::string path = environment.store_receipts + "/" + title + ".json";
+    std::string body;
+    if (kind(path) != Kind::file || !read_small(path, 16 * 1024, body))
+        return; // not installed by the store
+    std::size_t at = 0, length = 0;
+    const std::string parent = target.substr(0, target.find_last_of('/'));
+    // The receipt may also name an older version: this updater moved the
+    // copy on before the receipt was kept in step (1.0.196 and earlier).
+    if (!field_span(body, "location", at, length) || body.compare(at, length, parent) != 0 ||
+        !field_span(body, "contentVersion", at, length) ||
+        !content_version(body.substr(at, length)) || newer(body.substr(at, length), installed))
+    {
+        session.log("the ProsperoStore receipt is for another copy; left alone");
+        return;
+    }
+    const std::time_t seconds = std::time(nullptr);
+    std::tm parts{};
+    gmtime_r(&seconds, &parts);
+    char now[40]{};
+    std::snprintf(now, sizeof(now), "%04d-%02d-%02dT%02d:%02d:%02dZ", parts.tm_year + 1900,
+                  parts.tm_mon + 1, parts.tm_mday, parts.tm_hour, parts.tm_min, parts.tm_sec);
+    std::string lower = digest;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (!set_field(body, "contentVersion", available) || !set_field(body, "releaseTag", available) ||
+        !set_field(body, "sha256", lower) || !set_field(body, "installedAt", now))
+    {
+        session.log("the ProsperoStore receipt has an unknown form; left alone");
+        return;
+    }
+    const std::string temporary = path + ".tmp";
+    FILE *file = std::fopen(temporary.c_str(), "wb");
+    bool ok = file != nullptr && std::fwrite(body.data(), 1, body.size(), file) == body.size();
+    if (file != nullptr)
+        ok = std::fflush(file) == 0 && fsync(fileno(file)) == 0 && ok;
+    if (file != nullptr)
+        ok = std::fclose(file) == 0 && ok;
+    ok = ok && std::rename(temporary.c_str(), path.c_str()) == 0;
+    if (!ok)
+    {
+        (void)unlink(temporary.c_str());
+        session.log("the ProsperoStore receipt could not be updated");
+        return;
+    }
+    (void)sync_directory(environment.store_receipts);
+    session.log("ProsperoStore keeps managing " + title + " at " + available);
+}
+
 int run(const Environment &environment, const Io &io)
 {
     const auto shared = std::make_shared<Session>(environment, io);
@@ -689,6 +780,7 @@ int run(const Environment &environment, const Io &io)
         return 1;
     }
     refresh_registered(environment, title, target);
+    hand_back_to_store(environment, title, target, installed, available, digest, session);
     clean();
     session.log("updated " + title + " to " + available);
     if (environment.notify)
