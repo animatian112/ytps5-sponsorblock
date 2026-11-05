@@ -108,6 +108,16 @@ void line(const char *format, ...)
     std::fflush(file()); // a crash must not lose the last line
 }
 
+void emergency(const char *text)
+{
+    if (file() == nullptr)
+        return;
+    std::fputs("[ytv] ", file());
+    std::fputs(text, file());
+    std::fputs("\n", file());
+    std::fflush(file());
+}
+
 std::size_t recent(std::string *lines, std::size_t max)
 {
     if (lines == nullptr || max == 0)

@@ -37,6 +37,11 @@
 #include <string>
 #include <vector>
 
+#include <csignal>
+#include <cstdint>
+#include <signal.h>
+#include <ucontext.h>
+
 extern "C" int sceKernelAvailableFlexibleMemorySize(std::size_t *size);
 
 namespace
@@ -73,6 +78,65 @@ void check_memory(float dt)
         warned = false;
         yt::log::line("memory: recovered, %zu MB free (lowest %zu MB)", mb, lowest);
     }
+}
+
+// A crash says where it happened in yt.log: the signal, the faulting address,
+// the instruction (rip) and the return addresses found on the stack, each also
+// as an offset from install_crash_log(), so a build's symbols name the
+// function (llvm-addr2line -f -e build/llvm-pie.elf <offset + its address>).
+void install_crash_log();
+
+void on_crash(int signal_number, siginfo_t *info, void *context)
+{
+    const auto *uc = static_cast<const ucontext_t *>(context);
+    const std::uintptr_t anchor = reinterpret_cast<std::uintptr_t>(&install_crash_log);
+    const std::uintptr_t rip = static_cast<std::uintptr_t>(uc->uc_mcontext.mc_rip);
+    const std::uintptr_t rsp = static_cast<std::uintptr_t>(uc->uc_mcontext.mc_rsp);
+    char text[512];
+    std::snprintf(text, sizeof(text),
+                  "crash: signal %d code %d at 0x%lx; rip anchor%+ld (0x%lx), anchor=0x%lx",
+                  signal_number, info != nullptr ? info->si_code : 0,
+                  info != nullptr ? reinterpret_cast<unsigned long>(info->si_addr) : 0ul,
+                  static_cast<long>(rip - anchor), static_cast<unsigned long>(rip),
+                  static_cast<unsigned long>(anchor));
+    yt::log::emergency(text);
+    // Return addresses: stack words that point into the app's code (within
+    // 64 MiB of the anchor; the text is 41 MiB).
+    std::string calls = "crash: stack";
+    const auto *word = reinterpret_cast<const std::uintptr_t *>(rsp & ~std::uintptr_t{7});
+    int found = 0;
+    for (int i = 0; i < 1024 && found < 24; ++i)
+    {
+        const std::uintptr_t value = word[i];
+        const long offset = static_cast<long>(value - anchor);
+        if (offset > -(64l << 20) && offset < (64l << 20) && value != 0)
+        {
+            char item[32];
+            std::snprintf(item, sizeof(item), " %+ld", offset);
+            calls += item;
+            ++found;
+        }
+    }
+    yt::log::emergency(calls.c_str());
+    // Let the system end the app as it would have.
+    struct sigaction plain
+    {
+    };
+    plain.sa_handler = SIG_DFL;
+    sigaction(signal_number, &plain, nullptr);
+    raise(signal_number);
+}
+
+void install_crash_log()
+{
+    struct sigaction action
+    {
+    };
+    action.sa_sigaction = on_crash;
+    action.sa_flags = SA_SIGINFO | SA_RESETHAND;
+    sigemptyset(&action.sa_mask);
+    for (const int signal_number : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT})
+        sigaction(signal_number, &action, nullptr);
 }
 
 } // namespace
@@ -225,6 +289,7 @@ int main()
     save::ensure_directory(kDevRoot);
     yt::log::open("/download0/hui/dev/yt.log");
     sys::log("[YTV] storage dir=%d", storage ? 1 : 0);
+    install_crash_log();
     yt::log::line("app: start version=%s build=%s",
                   read_content_version("/app0/sce_sys/param.json").c_str(), yt::log::build_stamp());
 

@@ -292,6 +292,15 @@ jobs:
           compression-level: 0
           retention-days: 14
 
+      # The unstripped app, for naming the functions in a yt.log "crash:" line.
+      - name: Upload debug symbols
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.label.outputs.artifact }}-symbols
+          path: build/llvm-pie.elf
+          if-no-files-found: warn
+          retention-days: 90
+
   release:
     name: GitHub release
     if: needs.build.outputs.release == 'true'

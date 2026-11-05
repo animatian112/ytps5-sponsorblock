@@ -24,6 +24,9 @@ void close();
 
 // One timestamped line. Safe from the frame thread and the worker thread.
 void line(const char *format, ...) __attribute__((format(printf, 1, 2)));
+// One line written at once and without the lock: for a crash handler, which
+// may have interrupted a thread holding it.
+void emergency(const char *text);
 
 bool enabled();
 
