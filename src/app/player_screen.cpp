@@ -1149,10 +1149,11 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         case PlayerChrome::Command::none:
             break;
         }
-        // L2 / R2: the previous / next chapter.
-        if (input.is_pressed(Action::jump_prev))
+        // L2 / R2: the previous / next chapter, when Settings > Player >
+        // Triggers jump chapters is on (off by default: easy to hit).
+        if (settings.trigger_chapters && input.is_pressed(Action::jump_prev))
             jump_chapter(-1);
-        if (input.is_pressed(Action::jump_next))
+        if (settings.trigger_chapters && input.is_pressed(Action::jump_next))
             jump_chapter(1);
         if (input.is_pressed(Action::page_prev) && player_ != nullptr)
         {

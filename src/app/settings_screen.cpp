@@ -307,6 +307,8 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
              "Plays the sound with a still picture: the smallest video stream is fetched");
     add_flag(player, "Remember speed", &S::remember_speed,
              "A speed picked in the player stays for the next video");
+    add_flag(player, "Triggers jump chapters", &S::trigger_chapters,
+             "L2 / R2 go to the previous / next chapter (off: they do nothing while watching)");
     add_flag(player, "Live chat", &S::live_chat,
              "A live stream shows its chat on the right (Top chat)");
     add_flag(player, "Speed per channel", &S::channel_speed,

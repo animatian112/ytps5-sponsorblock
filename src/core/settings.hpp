@@ -57,14 +57,15 @@ struct Settings
     // ---- SmartTube's settings (save version 5, stored as key/value pairs so
     // later additions need no new version) ----
     // Player
-    int speed_index = 3;          // default speed, index into kSpeeds (1x)
-    bool remember_speed = true;   // keep a changed speed for the next video
-    bool audio_only = false;      // the sound only: the smallest picture is fetched, a cover shown
-    bool remember_quality = true; // a quality picked in the player stays for the next videos
-    int picked_quality = 0;       // that quality's height; 0 follows Max resolution
-    bool channel_speed = true;    // a speed picked for a video is kept for its channel
-    bool live_chat = true;        // a live stream shows its chat beside the picture
-    bool start_screen = true;     // at start: who's watching, or the QR sign-in without accounts
+    int speed_index = 3;           // default speed, index into kSpeeds (1x)
+    bool remember_speed = true;    // keep a changed speed for the next video
+    bool audio_only = false;       // the sound only: the smallest picture is fetched, a cover shown
+    bool remember_quality = true;  // a quality picked in the player stays for the next videos
+    int picked_quality = 0;        // that quality's height; 0 follows Max resolution
+    bool channel_speed = true;     // a speed picked for a video is kept for its channel
+    bool live_chat = true;         // a live stream shows its chat beside the picture
+    bool trigger_chapters = false; // L2 / R2 jump chapters in the player (easy to hit by accident)
+    bool start_screen = true;      // at start: who's watching, or the QR sign-in without accounts
     // The player's lower buttons, a bit per kPlayerButtonNames entry that is
     // hidden (default: Screen dimming and Stats for nerds).
     int hidden_buttons = (1 << 11) | (1 << 14);
