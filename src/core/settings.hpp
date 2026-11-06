@@ -120,7 +120,7 @@ struct Settings
     bool keyboard_auto = true;  // the keyboard opens with the search
     bool search_history = true; // keep the last searches as suggestions
     // The on-screen keyboard's languages, a bit per keyboard_languages() entry
-    // (app/keyboard_languages.hpp; bit 0 English, bit 1 Russian), and the
+    // (app/keyboard_languages.hpp; bit 0 English, 1 Russian, 2 Thai), and the
     // entry it was last left on, where it opens next time.
     int keyboard_languages = 1;
     int keyboard_language = 0;

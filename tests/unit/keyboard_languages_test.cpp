@@ -27,6 +27,8 @@ using hui::ui::KeyKind;
 
 constexpr int kEnglish = 1;
 constexpr int kEnglishAndRussian = 3;
+constexpr int kEnglishAndThai = 5;
+constexpr int kAll = 7;
 
 int count_kind(const KeyboardLayout &layout, KeyKind kind)
 {
@@ -180,6 +182,72 @@ TEST_F(KeyboardLanguages, SyncOpensOnTheLastLanguageAndRemembersASwitch)
     EXPECT_EQ(keys_.layouts().size(), 2u);
     EXPECT_EQ(keys_.layout(), 0);
     EXPECT_EQ(keys_.language(), "EN");
+}
+
+TEST_F(KeyboardLanguages, ThaiIsKedmaneeWithItsOwnShiftLayer)
+{
+    const std::vector<KeyboardLayout> layouts = keyboard_layouts(kEnglishAndThai);
+    ASSERT_EQ(layouts.size(), 3u);
+    const KeyboardLayout &thai = layouts[1];
+    EXPECT_EQ(thai.language, "TH");
+    EXPECT_EQ(thai.columns, 13);
+    ASSERT_EQ(thai.rows.size(), 5u);
+    // 12 + backspace, 13, 11, shift + 10, then symbols, globe, space, Done.
+    EXPECT_EQ(thai.rows[0].size(), 13u);
+    EXPECT_EQ(thai.rows[0].back().kind, KeyKind::backspace);
+    EXPECT_EQ(thai.rows[1].size(), 13u);
+    EXPECT_EQ(thai.rows[2].size(), 11u);
+    EXPECT_EQ(thai.rows[3].size(), 11u);
+    EXPECT_EQ(thai.rows[3][0].kind, KeyKind::shift);
+    EXPECT_EQ(count_kind(thai, KeyKind::language), 1);
+    for (const auto &row : thai.rows)
+    {
+        int span = 0;
+        for (const auto &key : row)
+        {
+            span += key.span;
+            if (key.kind == KeyKind::character)
+                EXPECT_FALSE(key.shifted.empty()) << key.text << " has a shifted character";
+        }
+        EXPECT_LE(span, thai.columns);
+    }
+    // Where a Thai typist expects them: ก on D, ่ on J, ฟ on A, ๑ over 2.
+    EXPECT_EQ(thai.rows[2][2].text, "ก");
+    EXPECT_EQ(thai.rows[2][6].text, "่");
+    EXPECT_EQ(thai.rows[2][0].text, "ฟ");
+    EXPECT_EQ(thai.rows[2][0].shifted, "ฤ");
+    EXPECT_EQ(thai.rows[0][1].shifted, "๑");
+    EXPECT_EQ(thai.rows[1][1].shifted, "\"");
+}
+
+TEST_F(KeyboardLanguages, L3WalksThroughEveryLanguage)
+{
+    keys_.set_layouts(keyboard_layouts(kAll));
+    keys_.set_layout(0);
+    ASSERT_EQ(keys_.layouts().size(), 4u);
+    std::vector<std::string> seen{keys_.language()};
+    for (int i = 0; i < 3; ++i)
+    {
+        send(press(Action::l3));
+        seen.push_back(keys_.language());
+    }
+    EXPECT_EQ(seen, (std::vector<std::string>{"EN", "RU", "TH", "EN"}));
+
+    // Thai types its letter, and with shift the other one on that key.
+    send(press(Action::l3));
+    send(press(Action::l3));
+    ASSERT_EQ(keys_.language(), "TH");
+    keys_.set_focus(2, 2);
+    send(press(Action::confirm));
+    send(press(Action::jump_prev));
+    send(press(Action::confirm));
+    EXPECT_EQ(text_, "กฏ");
+
+    // A key that types a mark draws (on its dotted circle).
+    keys_.set_focus(2, 6);
+    hui::ui::Canvas canvas = this->canvas();
+    keys_.draw(canvas);
+    expect_drawn("Thai keyboard");
 }
 
 TEST(KeyboardLanguageSettings, SurviveTheSaveFile)

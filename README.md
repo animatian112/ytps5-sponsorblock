@@ -58,7 +58,7 @@ On a channel page, Left/Right switches between the tabs the channel offers.
 
 ### Keyboard languages
 
-The on-screen keyboard types English by default. Turn on more languages in Settings > Search > Keyboard languages (currently English and Russian). With more than one on, the keyboard gets a globe key: it, or L3, switches to the next language, and the keyboard opens in the language you used last. To add a language, see `src/app/keyboard_languages.hpp`.
+The on-screen keyboard types English by default. Turn on more languages in Settings > Search > Keyboard languages (currently English, Russian and Thai). With more than one on, the keyboard gets a globe key: it, or L3, switches to the next language, and the keyboard opens in the language you used last. To add a language, see `src/app/keyboard_languages.hpp`.
 
 ## Signing in
 

@@ -6,6 +6,7 @@
 
 #include "core/settings.hpp"
 
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -36,6 +37,39 @@ void add_shift_row(KeyboardLayout &layout, std::string_view characters)
     for (KeyboardKey &key : keys.rows.back())
         row.push_back(std::move(key));
     layout.add_row(std::move(row));
+}
+
+// The UTF-8 characters of a string, one string each.
+std::vector<std::string> characters(std::string_view text)
+{
+    std::vector<std::string> out;
+    for (std::size_t at = 0; at < text.size();)
+    {
+        std::size_t next = at + 1;
+        while (next < text.size() && (static_cast<unsigned char>(text[next]) & 0xc0) == 0x80)
+            ++next;
+        out.emplace_back(text.substr(at, next - at));
+        at = next;
+    }
+    return out;
+}
+
+// Keys for a script whose shift layer is not capitals: plain[i] types what
+// it shows, shifted[i] what it types with shift.
+std::vector<KeyboardKey> paired_keys(std::string_view plain, std::string_view shifted)
+{
+    const std::vector<std::string> lower = characters(plain);
+    const std::vector<std::string> upper = characters(shifted);
+    std::vector<KeyboardKey> keys;
+    for (std::size_t i = 0; i < lower.size(); ++i)
+    {
+        KeyboardKey key;
+        key.text = lower[i];
+        if (i < upper.size())
+            key.shifted = upper[i];
+        keys.push_back(std::move(key));
+    }
+    return keys;
 }
 
 // The bottom row of every language: symbols, the globe (with more than one
@@ -85,10 +119,32 @@ KeyboardLayout russian(bool with_globe)
     return layout;
 }
 
+// Kedmanee (TIS 820-2538), the Thai typewriter layout, key for key: the
+// number row and the three letter rows, each key with its shifted character.
+// 13 columns, as on the typewriter; Arabic digits are on the symbols.
+KeyboardLayout thai(bool with_globe)
+{
+    KeyboardLayout layout;
+    layout.name = "กขค";
+    layout.language = "TH";
+    layout.columns = 13;
+    layout.add_row(paired_keys("ๅ/-ภถุึคตจขช", "+๑๒๓๔ู฿๕๖๗๘๙"));
+    layout.rows.back().push_back(wide(KeyKind::backspace, 1));
+    layout.add_row(paired_keys("ๆไำพะัีรนยบลฃ", "๐\"ฎฑธํ๊ณฯญฐ,ฅ"));
+    layout.add_row(paired_keys("ฟหกดเ้่าสวง", "ฤฆฏโฌ็๋ษศซ."));
+    std::vector<KeyboardKey> shift_row{wide(KeyKind::shift, 1)};
+    for (KeyboardKey &key : paired_keys("ผปแอิืทมใฝ", "()ฉฮฺ์?ฒฬฦ"))
+        shift_row.push_back(std::move(key));
+    layout.add_row(std::move(shift_row));
+    add_bottom_row(layout, with_globe);
+    return layout;
+}
+
 // Settings::keyboard_languages has a bit per entry, in this order: append only.
 constexpr KeyboardLanguage kLanguages[] = {
     {"English", "EN", english},
     {"Russian", "RU", russian},
+    {"Thai", "TH", thai},
 };
 
 } // namespace

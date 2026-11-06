@@ -106,6 +106,14 @@ std::uint32_t capital(std::uint32_t code)
     return code;
 }
 
+// A mark that sits on the letter before it: the combining accents and the
+// Thai vowels and tone marks above and below a consonant.
+bool combining(std::uint32_t code)
+{
+    return (code >= 0x0300 && code <= 0x036F) || code == 0x0E31 ||
+           (code >= 0x0E34 && code <= 0x0E3A) || (code >= 0x0E47 && code <= 0x0E4E);
+}
+
 KeyboardKey wide(KeyKind kind, int span)
 {
     KeyboardKey key;
@@ -1069,6 +1077,16 @@ void Keyboard::draw_cap(Canvas &canvas, Painter &paint, const KeyboardKey &key, 
         {
             if (alpha <= 0.01f || value.empty())
                 return;
+            // A mark alone has nothing to sit on: it is shown on a dotted
+            // circle, as phone keyboards do.
+            std::string with_base;
+            std::size_t first = 0;
+            if (combining(next_code_point(value, &first)))
+            {
+                with_base = "\u25CC";
+                with_base += value;
+                value = with_base;
+            }
             // A key that types a word (".com") sets it as large as fits.
             const float wide = cap_width(canvas, paint, value, style.label_size);
             const float room = std::max(rect.w - 12.0f, 8.0f);
