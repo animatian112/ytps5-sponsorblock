@@ -340,6 +340,15 @@ int main()
         sys::log("[YTV] fatal: renderer init failed");
         sys::park();
     }
+    // Thai, which the faces above lack: every face falls back on it. Without
+    // the file only the Thai letters are missing.
+    gfx::Font thai;
+    ui::FontRef thai_ref;
+    if (load_font(renderer, "noto-sans-thai.huifont", &thai, &thai_ref))
+    {
+        for (gfx::Font *face : {&regular, &semibold, &display_font, &mono})
+            face->add_fallback(&thai, thai_ref.texture);
+    }
 
     ps5::Pad pad;
     pad.open();

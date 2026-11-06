@@ -22,7 +22,8 @@ enum class KeyKind : std::uint8_t
     space,
     shift,
     backspace,
-    layout, // switches to the next layout
+    layout,   // switches to the next layout (between letters and symbols, see below)
+    language, // switches to the next layout that has a language
     done,
 };
 
@@ -37,13 +38,21 @@ struct KeyboardKey
 
 // A layout is data: rows of keys on a grid of `columns`. A row that covers
 // fewer columns than the grid is centred.
+//
+// A layout with a `language` is the letters of that language. When a keyboard
+// holds such layouts, the language key moves between them, and the layout key
+// goes from the letters to the first layout without a language (the symbols)
+// and from there back to the language it came from. Without any, the layout
+// key simply cycles through every layout.
 struct KeyboardLayout
 {
-    std::string name; // shown on the key that switches to it ("abc", "#+=")
+    std::string name;     // shown on the key that switches to it ("abc", "#+=")
+    std::string language; // shown on the language key that switches to it ("EN"); empty: none
     int columns = 10;
     std::vector<std::vector<KeyboardKey>> rows;
 
-    // One key per ASCII character; letters get their capital as `shifted`.
+    // One key per UTF-8 character; Latin, Greek and Cyrillic letters get
+    // their capital as `shifted`.
     KeyboardLayout &add_row(std::string_view characters);
     KeyboardLayout &add_row(std::vector<KeyboardKey> keys);
 
@@ -69,9 +78,11 @@ struct KeyboardBindings
     Action space = Action::count;
     Action shift = Action::count;
     Action layout = Action::count;
+    Action language = Action::count;
     Action done = Action::count;
 
-    // Square deletes, Triangle is space, L2 is shift, R2 switches to symbols.
+    // Square deletes, Triangle is space, L2 is shift, R2 switches to symbols,
+    // L3 switches the language.
     static KeyboardBindings standard()
     {
         KeyboardBindings bindings;
@@ -79,6 +90,7 @@ struct KeyboardBindings
         bindings.space = Action::north;
         bindings.shift = Action::jump_prev;
         bindings.layout = Action::jump_next;
+        bindings.language = Action::l3;
         return bindings;
     }
 };
@@ -171,6 +183,11 @@ class Keyboard
     }
     // Silent; the focus stays as near as the new layout allows.
     void set_layout(int index);
+    // The language of the letters shown, or of the letters the symbols were
+    // reached from; empty when no layout has a language.
+    const std::string &language() const;
+    // Silent: shows the letters of `language`. False when no layout has it.
+    bool set_language(std::string_view language);
     KeyboardShift shift() const
     {
         return shift_;
@@ -237,6 +254,7 @@ class Keyboard
     Event done(Feedback &feedback);
     void toggle_shift(Feedback &feedback);
     void cycle_layout(Feedback &feedback);
+    void cycle_language(Feedback &feedback);
     // Presses the key that types `utf8` as if the player had: the highlight
     // glides there and the key dips. Shift and the layout follow as needed.
     // "\b" is backspace and "\n" is done. For tutorials, demos and tests.
@@ -270,6 +288,10 @@ class Keyboard
     float key_centre(int row, int key) const;
     int key_under(int row, float column) const;
     bool find_kind(KeyKind kind, int *row, int *key) const;
+    // Where the layout key and the language key lead from the current layout.
+    int next_layout() const;
+    int next_language() const;
+    void switch_to(int index, KeyKind key_kind, Feedback &feedback);
     float key_radius(const Painter &paint, const gfx::Rect &r) const;
     bool shifted() const
     {
@@ -287,6 +309,7 @@ class Keyboard
 
     std::vector<KeyboardLayout> layouts_;
     int layout_ = 0;
+    int letters_ = -1; // the last layout with a language shown; -1: none
     gfx::Rect bounds_{0.0f, 0.0f, 800.0f, 360.0f};
     int row_ = 0;
     int key_ = 0;

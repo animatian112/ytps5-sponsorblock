@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // usage: bake_font <font.ttf> <out.huifont> [pixel_size=56] [sdf_range=8] [atlas=1024]
-//                  [glyphs=basic|european] [fallback.ttf|otf] [fallback_scale=1]
+//                  [glyphs=basic|european|thai] [fallback.ttf|otf] [fallback_scale=1]
 // A letter the font lacks is taken from the fallback face when one is given
 // (scaled by fallback_scale so its letters stand as tall as the main face's):
 // how Google Sans, which has no Cyrillic or Greek, gets them from Inter.
@@ -90,6 +90,21 @@ std::vector<int> codepoints(bool european)
     return result;
 }
 
+// thai is a face for other fonts to fall back on (gfx::Font::add_fallback):
+// the Thai block only (U+0E01 to U+0E5B; four code points in it are not
+// assigned) and the dotted circle a keycap shows a vowel or tone mark on.
+std::vector<int> thai_codepoints()
+{
+    std::vector<int> result;
+    for (int c = 0x0E01; c <= 0x0E5B; ++c)
+    {
+        if (c < 0x0E3B || c > 0x0E3E)
+            result.push_back(c);
+    }
+    result.push_back(0x25CC);
+    return result;
+}
+
 template <typename T> void put(std::vector<unsigned char> &out, const T &value)
 {
     const auto *bytes = reinterpret_cast<const unsigned char *>(&value);
@@ -102,13 +117,14 @@ int main(int argc, char **argv)
 {
     if (argc < 3)
     {
-        std::fprintf(stderr, "usage: %s font.ttf out.huifont [pixel_size] [sdf_range] [atlas] [basic|european]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s font.ttf out.huifont [pixel_size] [sdf_range] [atlas] [basic|european|thai]\n", argv[0]);
         return 2;
     }
     const float pixel_size = argc > 3 ? std::strtof(argv[3], nullptr) : 56.0f;
     const int range = argc > 4 ? std::atoi(argv[4]) : 8;
     const int atlas_size = argc > 5 ? std::atoi(argv[5]) : 1024;
     const bool european = argc > 6 && std::strcmp(argv[6], "european") == 0;
+    const bool thai = argc > 6 && std::strcmp(argv[6], "thai") == 0;
     const char *fallback_path = argc > 7 ? argv[7] : nullptr;
     const float fallback_scale = argc > 8 ? std::strtof(argv[8], nullptr) : 1.0f;
 
@@ -144,7 +160,7 @@ int main(int argc, char **argv)
     int from_fallback = 0;
 
     std::vector<Baked> glyphs;
-    for (int codepoint : codepoints(european))
+    for (int codepoint : thai ? thai_codepoints() : codepoints(european))
     {
         const stbtt_fontinfo *face = &font;
         float face_scale = scale;

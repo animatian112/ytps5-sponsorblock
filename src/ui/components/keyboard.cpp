@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <utility>
 
 namespace hui::ui
@@ -32,6 +33,85 @@ int characters(std::string_view text)
     for (char c : text)
         count += (static_cast<unsigned char>(c) & 0xc0) == 0x80 ? 0 : 1;
     return count;
+}
+
+// The code point that starts at text[*at]; *at moves past it. A broken
+// sequence reads as its first byte.
+std::uint32_t next_code_point(std::string_view text, std::size_t *at)
+{
+    const unsigned char lead = static_cast<unsigned char>(text[*at]);
+    const std::size_t extra = lead >= 0xf0 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
+    std::uint32_t value = extra == 3 ? lead & 0x07u : extra == 2 ? lead & 0x0fu : lead & 0x1fu;
+    if (extra == 0 || *at + extra >= text.size())
+    {
+        ++*at;
+        return lead;
+    }
+    for (std::size_t i = 1; i <= extra; ++i)
+    {
+        const unsigned char byte = static_cast<unsigned char>(text[*at + i]);
+        if ((byte & 0xc0) != 0x80)
+        {
+            ++*at;
+            return lead;
+        }
+        value = (value << 6) | (byte & 0x3fu);
+    }
+    *at += extra + 1;
+    return value;
+}
+
+std::string utf8(std::uint32_t code)
+{
+    std::string out;
+    if (code < 0x80)
+    {
+        out += static_cast<char>(code);
+    }
+    else if (code < 0x800)
+    {
+        out += static_cast<char>(0xc0 | (code >> 6));
+        out += static_cast<char>(0x80 | (code & 0x3f));
+    }
+    else if (code < 0x10000)
+    {
+        out += static_cast<char>(0xe0 | (code >> 12));
+        out += static_cast<char>(0x80 | ((code >> 6) & 0x3f));
+        out += static_cast<char>(0x80 | (code & 0x3f));
+    }
+    else
+    {
+        out += static_cast<char>(0xf0 | (code >> 18));
+        out += static_cast<char>(0x80 | ((code >> 12) & 0x3f));
+        out += static_cast<char>(0x80 | ((code >> 6) & 0x3f));
+        out += static_cast<char>(0x80 | (code & 0x3f));
+    }
+    return out;
+}
+
+// The capital of a small letter in the scripts the fonts cover (Latin,
+// Latin-1, Greek, Cyrillic); anything else is its own capital.
+std::uint32_t capital(std::uint32_t code)
+{
+    if (code >= 'a' && code <= 'z')
+        return code - 0x20;
+    if (code >= 0xe0 && code <= 0xfe && code != 0xf7) // à .. þ, not ÷
+        return code - 0x20;
+    if (code >= 0x3b1 && code <= 0x3c9 && code != 0x3c2) // α .. ω, not the final ς
+        return code - 0x20;
+    if (code >= 0x430 && code <= 0x44f) // а .. я
+        return code - 0x20;
+    if (code >= 0x450 && code <= 0x45f) // ѐ .. џ (ё, є, і, ї, ў ...)
+        return code - 0x50;
+    return code;
+}
+
+// A mark that sits on the letter before it: the combining accents and the
+// Thai vowels and tone marks above and below a consonant.
+bool combining(std::uint32_t code)
+{
+    return (code >= 0x0300 && code <= 0x036F) || code == 0x0E31 ||
+           (code >= 0x0E34 && code <= 0x0E3A) || (code >= 0x0E47 && code <= 0x0E4E);
 }
 
 KeyboardKey wide(KeyKind kind, int span)
@@ -169,6 +249,25 @@ void draw_icon(gfx::DrawList &list, KeyKind kind, float cx, float cy, float s, C
         list.line(cx - s * 0.42f, cy + s * 0.02f, cx - s * 0.12f, cy + s * 0.3f, pen, ink);
         list.line(cx - s * 0.12f, cy + s * 0.3f, cx + s * 0.44f, cy - s * 0.3f, pen, ink);
         break;
+    case KeyKind::language:
+    {
+        // A globe: the rim, the equator and a lens-shaped meridian, in a
+        // finer stroke than the other symbols so the small circle stays open.
+        const float stroke = std::max(2.0f, s * 0.085f);
+        const float r = s * 0.5f - stroke * 0.5f; // the rim's centre line
+        list.ring(cx, cy, r + stroke * 0.5f, stroke, ink);
+        list.line(cx - r, cy, cx + r, cy, stroke, ink);
+        // The meridian: two arcs through both poles, each bulging w to one
+        // side, cut from a circle of radius `big` centred `d` across.
+        const float w = r * 0.42f;
+        const float d = (r * r - w * w) / (2.0f * w);
+        const float big = d + w;
+        const float pole = std::atan2(d, r); // from 12 o'clock, clockwise
+        const float sweep = 3.14159265f - 2.0f * pole;
+        list.arc(cx - d, cy, big + stroke * 0.5f, stroke, pole, sweep, ink);
+        list.arc(cx + d, cy, big + stroke * 0.5f, stroke, 3.14159265f + pole, sweep, ink);
+        break;
+    }
     default:
         break;
     }
@@ -181,12 +280,14 @@ void draw_icon(gfx::DrawList &list, KeyKind kind, float cx, float cy, float s, C
 KeyboardLayout &KeyboardLayout::add_row(std::string_view characters)
 {
     std::vector<KeyboardKey> row;
-    for (char c : characters)
+    std::size_t at = 0;
+    while (at < characters.size())
     {
+        const std::uint32_t code = next_code_point(characters, &at);
         KeyboardKey key;
-        key.text = std::string(1, c);
-        if (c >= 'a' && c <= 'z')
-            key.shifted = std::string(1, static_cast<char>(c - 'a' + 'A'));
+        key.text = utf8(code);
+        if (const std::uint32_t upper = capital(code); upper != code)
+            key.shifted = utf8(upper);
         row.push_back(std::move(key));
     }
     rows.push_back(std::move(row));
@@ -267,6 +368,14 @@ void Keyboard::set_layouts(std::vector<KeyboardLayout> layouts)
     }
     std::erase_if(layouts_, [](const KeyboardLayout &layout) { return layout.rows.empty(); });
     layout_ = std::clamp(layout_, 0, std::max(static_cast<int>(layouts_.size()) - 1, 0));
+    // The letters the symbols lead back to: the ones shown, or the first.
+    letters_ = -1;
+    for (int i = 0; i < static_cast<int>(layouts_.size()); ++i)
+    {
+        if (!layouts_[static_cast<std::size_t>(i)].language.empty() &&
+            (letters_ < 0 || i == layout_))
+            letters_ = i;
+    }
     layout_age_ = 0.0f;
     relocate();
     retarget(true);
@@ -280,9 +389,76 @@ void Keyboard::set_layout(int index)
     if (next == layout_)
         return;
     layout_ = next;
+    if (!current().language.empty())
+        letters_ = layout_;
     layout_age_ = 0.0f;
     relocate();
     retarget(false);
+}
+
+const std::string &Keyboard::language() const
+{
+    static const std::string kNone;
+    if (letters_ < 0 || letters_ >= static_cast<int>(layouts_.size()))
+        return kNone;
+    return layouts_[static_cast<std::size_t>(letters_)].language;
+}
+
+bool Keyboard::set_language(std::string_view language)
+{
+    if (language.empty())
+        return false;
+    for (int i = 0; i < static_cast<int>(layouts_.size()); ++i)
+    {
+        if (layouts_[static_cast<std::size_t>(i)].language == language)
+        {
+            set_layout(i);
+            letters_ = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+int Keyboard::next_layout() const
+{
+    const int count = static_cast<int>(layouts_.size());
+    if (count == 0)
+        return 0;
+    // No languages: every layout in turn.
+    if (letters_ < 0)
+        return (layout_ + 1) % count;
+    if (!current().language.empty())
+    {
+        // From the letters to the first layout that is not letters.
+        for (int step = 1; step < count; ++step)
+        {
+            const int index = (layout_ + step) % count;
+            if (layouts_[static_cast<std::size_t>(index)].language.empty())
+                return index;
+        }
+        return layout_;
+    }
+    // From the symbols on to a further page of symbols, else back to the
+    // letters they came from.
+    const int after = layout_ + 1;
+    if (after < count && layouts_[static_cast<std::size_t>(after)].language.empty())
+        return after;
+    return letters_;
+}
+
+int Keyboard::next_language() const
+{
+    const int count = static_cast<int>(layouts_.size());
+    if (letters_ < 0)
+        return layout_;
+    for (int step = 1; step < count; ++step)
+    {
+        const int index = (letters_ + step) % count;
+        if (!layouts_[static_cast<std::size_t>(index)].language.empty())
+            return index;
+    }
+    return letters_;
 }
 
 void Keyboard::set_length(int length)
@@ -665,17 +841,29 @@ void Keyboard::cycle_layout(Feedback &feedback)
 {
     if (empty())
         return;
-    if (layouts_.size() < 2)
+    switch_to(next_layout(), KeyKind::layout, feedback);
+}
+
+void Keyboard::cycle_language(Feedback &feedback)
+{
+    if (empty())
+        return;
+    switch_to(next_language(), KeyKind::language, feedback);
+}
+
+void Keyboard::switch_to(int index, KeyKind key_kind, Feedback &feedback)
+{
+    if (index == layout_)
     {
         refuse(feedback, style, InputFrame{}, highlight_.refusal(), bounds_.cx());
         return;
     }
-    const bool on_key = focused().kind == KeyKind::layout;
-    set_layout((layout_ + 1) % static_cast<int>(layouts_.size()));
+    const bool on_key = focused().kind == key_kind;
+    set_layout(index);
     shift_ = KeyboardShift::off;
     int row = 0;
     int key = 0;
-    if (find_kind(KeyKind::layout, &row, &key))
+    if (find_kind(key_kind, &row, &key))
     {
         // The player who pressed the switch key finds it under the focus
         // again, wherever the new layout keeps it.
@@ -712,6 +900,9 @@ Event Keyboard::activate(int row, int key, Feedback &feedback)
         return erase(false, feedback);
     case KeyKind::layout:
         cycle_layout(feedback);
+        return Event::none;
+    case KeyKind::language:
+        cycle_language(feedback);
         return Event::none;
     case KeyKind::done:
         return done(feedback);
@@ -809,6 +1000,8 @@ Event Keyboard::handle(const InputFrame &input, Feedback &feedback)
         toggle_shift(feedback);
     if (pressed(bound.layout))
         cycle_layout(feedback);
+    if (pressed(bound.language))
+        cycle_language(feedback);
     if (pressed(bound.space))
         result = space(feedback);
 
@@ -884,6 +1077,16 @@ void Keyboard::draw_cap(Canvas &canvas, Painter &paint, const KeyboardKey &key, 
         {
             if (alpha <= 0.01f || value.empty())
                 return;
+            // A mark alone has nothing to sit on: it is shown on a dotted
+            // circle, as phone keyboards do.
+            std::string with_base;
+            std::size_t first = 0;
+            if (combining(next_code_point(value, &first)))
+            {
+                with_base = "\u25CC";
+                with_base += value;
+                value = with_base;
+            }
             // A key that types a word (".com") sets it as large as fits.
             const float wide = cap_width(canvas, paint, value, style.label_size);
             const float room = std::max(rect.w - 12.0f, 8.0f);
@@ -930,24 +1133,29 @@ void Keyboard::draw_cap(Canvas &canvas, Painter &paint, const KeyboardKey &key, 
         bound = style.bindings.done;
         word = style.done_label;
         break;
+    case KeyKind::language:
+        bound = style.bindings.language;
+        // A globe and the language it leads to; the word matters more.
+        word = layouts_[static_cast<std::size_t>(next_language())].language;
+        break;
     default:
         bound = style.bindings.layout;
         // It names where it leads.
-        word = layouts_[static_cast<std::size_t>((layout_ + 1) % static_cast<int>(layouts_.size()))]
-                   .name;
+        word = layouts_[static_cast<std::size_t>(next_layout())].name;
         symbol = false;
         break;
     }
+    const bool word_first = key.kind == KeyKind::language;
     if (!key.label.empty())
         word = key.label;
-    if (symbol && !style.wide_labels && key.label.empty())
+    if (symbol && !word_first && !style.wide_labels && key.label.empty())
         word.clear();
 
     const float room = std::max(rect.w - 16.0f, 8.0f);
     float glyph_w = style.binding_glyphs && bound != Action::count
                         ? action_glyph_width(bound, style.glyph_size)
                         : 0.0f;
-    const float symbol_w = symbol ? style.icon_size * 1.2f : 0.0f;
+    float symbol_w = symbol ? style.icon_size * 1.2f : 0.0f;
     float word_size = style.wide_label_size;
     float word_w = word.empty() ? 0.0f : paint.label_width(word, word_size);
     const auto total = [&]()
@@ -964,6 +1172,11 @@ void Keyboard::draw_cap(Canvas &canvas, Painter &paint, const KeyboardKey &key, 
         }
         return sum + kPartGap * static_cast<float>(std::max(parts - 1, 0));
     };
+    if (symbol && word_first && !word.empty() && total() > room)
+    {
+        symbol = false;
+        symbol_w = 0.0f;
+    }
     if (symbol && total() > room)
         word_w = 0.0f;
     if (total() > room)

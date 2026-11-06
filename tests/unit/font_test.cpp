@@ -210,4 +210,33 @@ TEST(Font, BreaksAWordWiderThanTheLine)
     EXPECT_EQ(narrow.back(), "e");
 }
 
+TEST(Font, ThaiComesFromItsOwnFaceWithMarksOverTheLetter)
+{
+    Font thai;
+    std::string data;
+    ASSERT_TRUE(hui::save::read_file(HUI_SOURCE_DIR "/assets/fonts/noto-sans-thai.huifont", &data))
+        << "make fonts";
+    ASSERT_TRUE(thai.load(data)) << thai.error();
+    // The Thai block and the dotted circle a keycap shows a mark on.
+    for (const std::uint32_t c : {0x0E01u, 0x0E2Eu, 0x0E31u, 0x0E48u, 0x0E50u, 0x0E5Bu, 0x25CCu})
+        EXPECT_TRUE(thai.has_glyph(c)) << std::hex << c;
+
+    Font font = inter(); // a copy: fallbacks belong to one font
+    const std::string hello = "\xE0\xB8\xAA\xE0\xB8\xA7\xE0\xB8\xB1\xE0\xB8\xAA\xE0\xB8\x94"
+                              "\xE0\xB8\xB5"; // สวัสดี
+    EXPECT_FLOAT_EQ(font.measure(hello, 30), font.measure("??????", 30)) << "no Thai of its own";
+    font.add_fallback(&thai, 9);
+    EXPECT_NE(font.measure(hello, 30), font.measure("??????", 30));
+
+    // ั (U+0E31) takes no room and sits over the letter before it.
+    const std::string wa = "\xE0\xB8\xA7\xE0\xB8\xB1"; // วั
+    EXPECT_FLOAT_EQ(font.measure(wa, 40), font.measure("\xE0\xB8\xA7", 40));
+    std::vector<GlyphQuad> quads;
+    font.layout(wa, 0.0f, 100.0f, 40.0f, Align::left, quads);
+    ASSERT_EQ(quads.size(), 2u);
+    EXPECT_EQ(quads[1].texture, 9u);
+    EXPECT_LT(quads[1].x0, quads[0].x1) << "the mark overlaps its letter";
+    EXPECT_LT(quads[1].y1, quads[0].y1) << "and is drawn above it";
+}
+
 } // namespace
