@@ -34,6 +34,15 @@ namespace
 constexpr int kRailMyVideos = -1;
 constexpr int kRailBlocked = -2;
 constexpr int kRailPinBase = -100;
+
+// Characters, not bytes: what the name prompt's keyboard counts.
+int utf8_length(const std::string &text)
+{
+    int count = 0;
+    for (const char c : text)
+        count += (static_cast<unsigned char>(c) & 0xC0) == 0x80 ? 0 : 1;
+    return count;
+}
 } // namespace
 
 namespace
@@ -139,13 +148,14 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     // The name prompt's keyboard (Add to new playlist).
     prompt_keys_.style.theme = youtube_theme();
     prompt_keys_.style.bindings = ui::KeyboardBindings::standard();
-    prompt_keys_.set_layouts({ui::KeyboardLayout::letters(), ui::KeyboardLayout::numeric()});
+    // The letters of each language in Settings > Search, then the symbols.
+    prompt_languages_.sync(prompt_keys_, settings_);
     prompt_keys_.set_bounds({560.0f, 470.0f, 1080.0f, 520.0f});
     prompt_keys_.on_text = [this](std::string_view text)
     {
         if (prompt_text_.size() < 120)
             prompt_text_ += text;
-        prompt_keys_.set_length(static_cast<int>(prompt_text_.size()));
+        prompt_keys_.set_length(utf8_length(prompt_text_));
     };
     prompt_keys_.on_backspace = [this]
     {
@@ -157,7 +167,7 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
             if ((last & 0xC0) != 0x80)
                 break;
         }
-        prompt_keys_.set_length(static_cast<int>(prompt_text_.size()));
+        prompt_keys_.set_length(utf8_length(prompt_text_));
     };
     prompt_keys_.on_done = [this]
     {
@@ -1109,6 +1119,7 @@ void App::open_name_prompt(const std::string &video_id)
     prompt_video_ = video_id;
     prompt_text_.clear();
     prompt_active_ = true;
+    prompt_languages_.sync(prompt_keys_, settings_);
     prompt_keys_.set_length(0);
     prompt_keys_.enter();
     prompt_keys_.set_active(true);
@@ -1739,6 +1750,9 @@ void App::update(const InputFrame &raw_input, float dt)
         if (prompt_keys_.handle(input, feedback_) == ui::Event::cancelled ||
             input.is_pressed(Action::back))
             prompt_active_ = false;
+        // The globe key's language is where the keyboards open next time.
+        if (prompt_languages_.sync(prompt_keys_, settings_))
+            settings_changed_ = true;
         prompt_keys_.update(dt);
         screen_input = InputFrame{};
         screen_input.connected = input.connected;

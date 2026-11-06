@@ -92,6 +92,7 @@ class SettingsScreen final : public Screen
         std::vector<int> values;
         int section = -1;   // Settings::hidden_sections bit; the toggle reads "shown"
         int button = -1;    // Settings::hidden_buttons bit; the toggle reads "shown"
+        int language = -1;  // Settings::keyboard_languages bit; the toggle reads "on"
         int *raw = nullptr; // an array element (Settings::sb_act[i])
     };
     void add_raw_steps(ui::Form &form, const char *label, int *value, std::vector<int> values,
@@ -103,6 +104,7 @@ class SettingsScreen final : public Screen
                    const char *description = nullptr);
     void add_section(ui::Form &form, int section);
     void add_button_toggle(ui::Form &form, int button);
+    void add_language_toggle(ui::Form &form, int language);
     void set_buttons(int hidden); // a preset: the toggles follow
     // True when the id was one of the bound options (and is now applied).
     bool apply_binding(int id);
