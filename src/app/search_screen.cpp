@@ -97,7 +97,8 @@ SearchScreen::SearchScreen(Context &context) : context_(context)
 
     // The PlayStation's own keyboard: a full-width dark band at the bottom,
     // grey keys, the focused one white with dark text, Done a lighter key; Square
-    // deletes, Triangle types a space, L2 shifts, R2 switches to symbols.
+    // deletes, Triangle types a space, L2 shifts, R2 switches to symbols, L3
+    // (and the globe key) to the next language.
     static const ui::Theme kPs5Keys = []
     {
         ui::Theme theme = youtube_theme();
@@ -119,33 +120,8 @@ SearchScreen::SearchScreen(Context &context) : context_(context)
     keys_.style.gap = 10.0f;
     keys_.style.label_size = 32.0f;
     keys_.style.bindings = ui::KeyboardBindings::standard();
-    {
-        using ui::KeyboardKey;
-        using ui::KeyKind;
-        ui::KeyboardLayout letters;
-        letters.name = "abc";
-        letters.columns = 11;
-        letters.add_row("1234567890");
-        letters.rows.back().push_back({KeyKind::backspace, {}, {}, 1, {}});
-        letters.add_row("qwertyuiop-");
-        letters.add_row("asdfghjkl'&");
-        letters.rows[2][9].shifted = "\"";
-        letters.add_row(std::vector<KeyboardKey>{{KeyKind::shift, {}, {}, 1, {}}});
-        for (const char ch : std::string("zxcvbnm,.?"))
-        {
-            KeyboardKey key;
-            key.text = std::string(1, ch);
-            if (ch >= 'a' && ch <= 'z')
-                key.shifted = std::string(1, static_cast<char>(ch - 'a' + 'A'));
-            letters.rows.back().push_back(std::move(key));
-        }
-        letters.add_row(std::vector<KeyboardKey>{{KeyKind::layout, {}, {}, 2, "@#:"},
-                                                 {KeyKind::space, {}, {}, 6, {}},
-                                                 {KeyKind::done, {}, {}, 3, {}}});
-        ui::KeyboardLayout symbols = ui::KeyboardLayout::symbols();
-        symbols.name = "@#:";
-        keys_.set_layouts({letters, symbols});
-    }
+    // The letters of each language in Settings > Search, then the symbols.
+    keyboard_languages_.sync(keys_, context_.settings);
     keys_.set_bounds({300.0f, 640.0f, 1320.0f, 410.0f});
     // Up from the top row leaves for the suggestion row above it.
     keys_.style.exits.up = true;
@@ -207,6 +183,8 @@ void SearchScreen::enter()
     results_.set_active(false);
     channels_.set_active(false);
     tabs_.set_focused(false);
+    // Settings > Search > Keyboard languages may have changed meanwhile.
+    keyboard_languages_.sync(keys_, context_.settings);
     // Settings > Search > Show keyboard automatically.
     if (context_.settings.keyboard_auto)
     {
@@ -855,6 +833,10 @@ void SearchScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     channels_.set_active(live && spot_ == Spot::channels);
     tabs_.set_focused(live && spot_ == Spot::tabs);
 
+    // Settings > Search > Keyboard languages may have changed, and the globe
+    // key's language is where the keyboard opens next time.
+    if (keyboard_languages_.sync(keys_, context_.settings))
+        context_.settings_changed = true;
     field_.update(dt);
     keys_.update(dt);
     results_.update(dt, context_);
