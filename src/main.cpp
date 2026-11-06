@@ -37,6 +37,11 @@
 #include <string>
 #include <vector>
 
+#include <cstdarg>
+#include <pthread.h>
+#include <pthread_np.h>
+#include <unistd.h>
+#include <algorithm>
 #include <csignal>
 #include <cstdint>
 #include <signal.h>
@@ -88,11 +93,17 @@ void install_crash_log();
 
 void on_crash(int signal_number, siginfo_t *info, void *context)
 {
+    // A crash inside this handler (a bad stack word, a broken heap) ends the
+    // app at once rather than looping.
+    static volatile sig_atomic_t entered = 0;
+    if (entered != 0)
+        _exit(128 + signal_number);
+    entered = 1;
     const auto *uc = static_cast<const ucontext_t *>(context);
     const std::uintptr_t anchor = reinterpret_cast<std::uintptr_t>(&install_crash_log);
     const std::uintptr_t rip = static_cast<std::uintptr_t>(uc->uc_mcontext.mc_rip);
     const std::uintptr_t rsp = static_cast<std::uintptr_t>(uc->uc_mcontext.mc_rsp);
-    char text[512];
+    char text[640];
     std::snprintf(text, sizeof(text),
                   "crash: signal %d code %d at 0x%lx; rip anchor%+ld (0x%lx), anchor=0x%lx",
                   signal_number, info != nullptr ? info->si_code : 0,
@@ -101,23 +112,33 @@ void on_crash(int signal_number, siginfo_t *info, void *context)
                   static_cast<unsigned long>(anchor));
     yt::log::emergency(text);
     // Return addresses: stack words that point into the app's code (within
-    // 64 MiB of the anchor; the text is 41 MiB).
-    std::string calls = "crash: stack";
-    const auto *word = reinterpret_cast<const std::uintptr_t *>(rsp & ~std::uintptr_t{7});
-    int found = 0;
-    for (int i = 0; i < 1024 && found < 24; ++i)
+    // 64 MiB of the anchor; the text is 41 MiB), read only inside this
+    // thread's stack and without the heap.
+    std::uintptr_t top = rsp + 16 * 1024;
+    pthread_attr_t attributes;
+    if (pthread_attr_init(&attributes) == 0)
     {
-        const std::uintptr_t value = word[i];
+        void *base = nullptr;
+        std::size_t size = 0;
+        if (pthread_attr_get_np(pthread_self(), &attributes) == 0 &&
+            pthread_attr_getstack(&attributes, &base, &size) == 0 && base != nullptr)
+            top = std::min(reinterpret_cast<std::uintptr_t>(base) + size, rsp + 64 * 1024);
+        pthread_attr_destroy(&attributes);
+    }
+    std::size_t used = static_cast<std::size_t>(std::snprintf(text, sizeof(text), "crash: stack"));
+    int found = 0;
+    for (std::uintptr_t at = rsp & ~std::uintptr_t{7}; at + 8 <= top && found < 32; at += 8)
+    {
+        const std::uintptr_t value = *reinterpret_cast<const std::uintptr_t *>(at);
         const long offset = static_cast<long>(value - anchor);
-        if (offset > -(64l << 20) && offset < (64l << 20) && value != 0)
+        if (value != 0 && offset > -(64l << 20) && offset < (64l << 20) && used + 16 < sizeof(text))
         {
-            char item[32];
-            std::snprintf(item, sizeof(item), " %+ld", offset);
-            calls += item;
+            used += static_cast<std::size_t>(
+                std::snprintf(text + used, sizeof(text) - used, " %+ld", offset));
             ++found;
         }
     }
-    yt::log::emergency(calls.c_str());
+    yt::log::emergency(text);
     // Let the system end the app as it would have.
     struct sigaction plain
     {
@@ -553,3 +574,20 @@ int main()
         }
     }
 }
+
+// libc++ ends the app through this when the code would have thrown (it is
+// built without exceptions): a substr past the end, a vector's at(), a failed
+// allocation. Its message is the best clue to such a crash, so it goes to
+// yt.log first.
+_LIBCPP_BEGIN_NAMESPACE_STD
+[[noreturn]] void __libcpp_verbose_abort(const char *format, ...)
+{
+    char text[512] = "crash: ";
+    va_list arguments;
+    va_start(arguments, format);
+    std::vsnprintf(text + 7, sizeof(text) - 7, format, arguments);
+    va_end(arguments);
+    yt::log::emergency(text);
+    std::abort();
+}
+_LIBCPP_END_NAMESPACE_STD

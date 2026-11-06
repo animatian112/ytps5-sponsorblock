@@ -28,6 +28,7 @@
 
 extern "C"
 {
+#include <cstdarg>
 #include <libavcodec/avcodec.h>
 #include <libavcodec/bsf.h>
 #include <libavfilter/avfilter.h>
@@ -37,6 +38,7 @@ extern "C"
 #include <libavutil/channel_layout.h>
 #include <libavutil/dict.h>
 #include <libavutil/error.h>
+#include <libavutil/log.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixfmt.h>
@@ -3651,10 +3653,44 @@ void FfmpegPlayer::release()
     last_budget_log_ = std::chrono::steady_clock::time_point{};
 }
 
+// ffmpeg's own errors went to stderr, which nobody sees: one of its
+// assertions ends the app with abort() and nothing in yt.log. Errors and
+// worse now go there too (at most 60 a session, a failed assertion always).
+void ffmpeg_log(void *context, int level, const char *format, va_list arguments)
+{
+    if (level > AV_LOG_ERROR)
+        return;
+    static std::atomic<int> written{0};
+    if (level > AV_LOG_FATAL && written.fetch_add(1) >= 60)
+        return;
+    char text[512];
+    std::vsnprintf(text, sizeof(text), format, arguments);
+    std::size_t length = std::strlen(text);
+    while (length > 0 && (text[length - 1] == '\n' || text[length - 1] == '\r'))
+        text[--length] = '\0';
+    const AVClass *kind = context != nullptr ? *static_cast<AVClass **>(context) : nullptr;
+    const char *name =
+        kind != nullptr && kind->item_name != nullptr ? kind->item_name(context) : "ffmpeg";
+    if (level <= AV_LOG_FATAL)
+    {
+        char line[640];
+        std::snprintf(line, sizeof(line), "crash: ffmpeg %s: %s", name, text);
+        log::emergency(line); // an abort() may follow at once
+        return;
+    }
+    log::line("ffmpeg says (%s): %s", name, text);
+}
+
 } // namespace
 
 std::unique_ptr<Player> make_player()
 {
+    static const bool logging = []
+    {
+        av_log_set_callback(ffmpeg_log);
+        return true;
+    }();
+    (void)logging;
     return std::unique_ptr<Player>(new FfmpegPlayer());
 }
 
