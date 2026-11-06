@@ -15,6 +15,8 @@
 #include <cstdarg>
 #include <cstdio>
 #include <mutex>
+
+#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -64,6 +66,17 @@ void open(const char *path)
         std::fclose(existing);
     }
     file() = std::fopen(path, size > kMaxBytes ? "w" : "a");
+}
+
+void capture_stderr()
+{
+    std::lock_guard<std::mutex> lock(mutex());
+    if (file() == nullptr)
+        return;
+    std::fflush(file());
+    std::fflush(stderr);
+    (void)dup2(fileno(file()), 2);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
 }
 
 void close()

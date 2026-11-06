@@ -39,7 +39,7 @@
 
 #include <cstdarg>
 #include <pthread.h>
-#include <pthread_np.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #include <algorithm>
 #include <csignal>
@@ -114,16 +114,17 @@ void on_crash(int signal_number, siginfo_t *info, void *context)
     // Return addresses: stack words that point into the app's code (within
     // 64 MiB of the anchor; the text is 41 MiB), read only inside this
     // thread's stack and without the heap.
-    std::uintptr_t top = rsp + 16 * 1024;
-    pthread_attr_t attributes;
-    if (pthread_attr_init(&attributes) == 0)
+    // Up to 32 KiB above the stack pointer, page by page while the page is
+    // mapped (mincore asks the kernel: no heap, no locks - the 1.0.201
+    // handler died asking pthreads for the stack's bounds).
+    std::uintptr_t top = rsp & ~std::uintptr_t{4095};
+    const std::uintptr_t limit = rsp + 32 * 1024;
+    while (top < limit)
     {
-        void *base = nullptr;
-        std::size_t size = 0;
-        if (pthread_attr_get_np(pthread_self(), &attributes) == 0 &&
-            pthread_attr_getstack(&attributes, &base, &size) == 0 && base != nullptr)
-            top = std::min(reinterpret_cast<std::uintptr_t>(base) + size, rsp + 64 * 1024);
-        pthread_attr_destroy(&attributes);
+        char resident = 0;
+        if (mincore(reinterpret_cast<void *>(top), 4096, &resident) != 0)
+            break;
+        top += 4096;
     }
     std::size_t used = static_cast<std::size_t>(std::snprintf(text, sizeof(text), "crash: stack"));
     int found = 0;
@@ -311,6 +312,7 @@ int main()
     yt::log::open("/download0/hui/dev/yt.log");
     sys::log("[YTV] storage dir=%d", storage ? 1 : 0);
     install_crash_log();
+    yt::log::capture_stderr();
     yt::log::line("app: start version=%s build=%s",
                   read_content_version("/app0/sce_sys/param.json").c_str(), yt::log::build_stamp());
 

@@ -148,6 +148,12 @@ constexpr std::size_t kVideoMinQueueDepth = 4;
 // The pool table itself is fixed: the queue never exceeds kVideoQueueDepth
 // pictures and only the picture on screen and the one being converted live
 // outside it, so kVideoQueueDepth + kVideoPoolHeadroom slots always suffice.
+// swscale's vector code writes whole blocks past the end of a row when the
+// row is not a multiple of its block (1080 wide RGBA is 4320 bytes): on the
+// last row that ran past the picture's buffer and broke the heap - the
+// crash a second into every square "Topic" song. Every picture buffer has
+// this much spare room after it.
+constexpr std::size_t kScaleSlack = 4096;
 constexpr std::size_t kVideoPoolSlots = kVideoQueueDepth + kVideoPoolHeadroom;
 // A video frame this far behind the audio clock is stale: converting and
 // queueing it cannot catch up, so it is dropped.
@@ -748,7 +754,7 @@ class HardwareWorker
             }
         }
         if (bytes == nullptr)
-            bytes.reset(new (std::nothrow) std::uint8_t[size]);
+            bytes.reset(new (std::nothrow) std::uint8_t[size + kScaleSlack]);
         if (bytes == nullptr)
             return; // out of memory: this picture is dropped (shown stays false)
 
@@ -871,7 +877,7 @@ class HardwareWorker
                 }
             }
         }
-        return std::unique_ptr<std::uint8_t[]>(new (std::nothrow) std::uint8_t[size]);
+        return std::unique_ptr<std::uint8_t[]>(new (std::nothrow) std::uint8_t[size + kScaleSlack]);
     }
 
     hui::ps5::HardwareDecoder *decoder_;
@@ -2878,7 +2884,8 @@ int FfmpegPlayer::acquire_video_buffer(std::size_t size)
         {
             // nothrow new: an allocation that throws would std::terminate this
             // -fno-exceptions build, so a failed slot drops the picture instead.
-            std::unique_ptr<std::uint8_t[]> fresh(new (std::nothrow) std::uint8_t[size]);
+            std::unique_ptr<std::uint8_t[]> fresh(new (std::nothrow)
+                                                      std::uint8_t[size + kScaleSlack]);
             if (fresh == nullptr)
             {
                 video_free_buffers_[video_free_count_++] = index;
@@ -2900,7 +2907,7 @@ int FfmpegPlayer::acquire_video_buffer(std::size_t size)
         return -1;
     }
     VideoBuffer &slot = video_buffers_[video_buffer_count_];
-    slot.bytes.reset(new (std::nothrow) std::uint8_t[size]);
+    slot.bytes.reset(new (std::nothrow) std::uint8_t[size + kScaleSlack]);
     if (slot.bytes == nullptr)
     {
         lower_queue_depth();

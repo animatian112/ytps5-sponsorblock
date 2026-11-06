@@ -27,6 +27,9 @@ void line(const char *format, ...) __attribute__((format(printf, 1, 2)));
 // One line written at once and without the lock: for a crash handler, which
 // may have interrupted a thread holding it.
 void emergency(const char *text);
+// What the system libraries print before ending the app (a heap check, an
+// assertion) goes to stderr, a console nobody sees: this sends it to yt.log.
+void capture_stderr();
 
 bool enabled();
 
