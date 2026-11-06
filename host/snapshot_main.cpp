@@ -279,6 +279,14 @@ int main(int argc, char **argv)
                    &fonts.display) ||
         !load_font(renderer, assets + "/fonts/dejavu-sans-mono.huifont", &mono, &fonts.mono))
         return 1;
+    // Thai, as on the console (src/main.cpp).
+    hui::gfx::Font thai;
+    hui::ui::FontRef thai_ref;
+    if (load_font(renderer, assets + "/fonts/noto-sans-thai.huifont", &thai, &thai_ref))
+    {
+        for (hui::gfx::Font *face : {&regular, &semibold, &display, &mono})
+            face->add_fallback(&thai, thai_ref.texture);
+    }
 
     const std::string data_root = output + "/.data";
     hui::save::ensure_directory(output);
