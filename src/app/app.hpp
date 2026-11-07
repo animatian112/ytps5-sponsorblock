@@ -8,6 +8,7 @@
 #include "app/card_menu.hpp"
 #include "app/frame.hpp"
 #include "app/glow.hpp"
+#include "app/keyboard_languages.hpp"
 #include "app/screen.hpp"
 #include "app/screens.hpp"
 #include "app/telemetry.hpp"
@@ -231,6 +232,7 @@ class App
     std::vector<yt::ChannelItem> pins_;
     // "Add to new playlist": the name typed on the on-screen keyboard.
     ui::Keyboard prompt_keys_;
+    KeyboardLanguageSync prompt_languages_;
     bool prompt_active_ = false;
     std::string prompt_text_;
     std::string prompt_video_;

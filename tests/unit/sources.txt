@@ -67,3 +67,4 @@ src/yt/tuning.cpp
 src/yt/lounge.cpp
 src/yt/lounge_chunks.cpp
 src/app/resume_store.cpp
+src/app/keyboard_languages.cpp

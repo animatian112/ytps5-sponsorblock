@@ -7,6 +7,7 @@
 #include "yt/lounge.hpp"
 
 #include "app/icons.hpp"
+#include "app/keyboard_languages.hpp"
 
 #include "app/theme.hpp"
 #include "yt/http.hpp"
@@ -452,6 +453,9 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     ui::Form &search = add_tile("Search", Icon::search);
     add_flag(search, "Show keyboard automatically", &S::keyboard_auto,
              "The keyboard opens as soon as Search does");
+    search.add_header("Keyboard languages (L3 or the globe key switches)");
+    for (int i = 0; i < static_cast<int>(keyboard_languages().size()); ++i)
+        add_language_toggle(search, i);
     search.add_header("Filters (Triangle on the Search page)");
     add_steps(search, "Sort by", &S::search_sort, {0, 1, 2, 3},
               {"Relevance", "Upload date", "View count", "Rating"});
@@ -636,6 +640,16 @@ void SettingsScreen::add_button_toggle(ui::Form &form, int button)
     bindings_.push_back(std::move(binding));
 }
 
+void SettingsScreen::add_language_toggle(ui::Form &form, int language)
+{
+    Binding binding;
+    binding.id = next_binding_id_++;
+    binding.language = language;
+    form.add_toggle(binding.id, keyboard_languages()[static_cast<std::size_t>(language)].name,
+                    ((context_.settings.keyboard_languages >> language) & 1) != 0);
+    bindings_.push_back(std::move(binding));
+}
+
 void SettingsScreen::set_buttons(int hidden)
 {
     context_.settings.hidden_buttons = hidden;
@@ -669,6 +683,16 @@ bool SettingsScreen::apply_binding(int id)
                 settings.hidden_buttons &= ~bit;
             else
                 settings.hidden_buttons |= bit;
+        }
+        else if (binding.language >= 0)
+        {
+            const int bit = 1 << binding.language;
+            if (form().toggle_value(id))
+                settings.keyboard_languages |= bit;
+            else if ((settings.keyboard_languages & ~bit) != 0)
+                settings.keyboard_languages &= ~bit;
+            else
+                form().set_toggle(id, true); // the keyboard keeps one language
         }
         else if (binding.section >= 0)
         {

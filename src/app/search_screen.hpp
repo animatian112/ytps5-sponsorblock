@@ -9,6 +9,7 @@
 
 #include "app/context.hpp"
 #include "app/feed_view.hpp"
+#include "app/keyboard_languages.hpp"
 #include "app/screen.hpp"
 
 #include "ui/components.hpp"
@@ -97,6 +98,7 @@ class SearchScreen final : public Screen
     Context &context_;
     ui::SearchField field_;
     ui::Keyboard keys_;
+    KeyboardLanguageSync keyboard_languages_;
     FeedView results_;
     ui::Carousel channels_; // the channel row of the current answer
     ui::TabBar tabs_;       // the tabs of the open channel page
