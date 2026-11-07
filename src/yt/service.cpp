@@ -39,6 +39,26 @@ namespace yt
 namespace
 {
 
+// A URL query value: everything but the unreserved characters percent-encoded.
+std::string url_component(const std::string &text)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    std::string out;
+    for (const unsigned char c : text)
+    {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '-' || c == '_' || c == '.' || c == '~')
+            out += static_cast<char>(c);
+        else
+        {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 15];
+        }
+    }
+    return out;
+}
+
 constexpr std::size_t kWorkerStack = 1u << 20; // 1 MiB
 constexpr int kLoginPollMs = 200;
 constexpr std::size_t kMaxAccounts = 3; // accounts remembered for switching
@@ -1704,7 +1724,56 @@ struct Service::Impl
                                     ? separate->second
                                     : video_url;
                 }
-                if (video_format->ciphered || (audio_format != nullptr && audio_format->ciphered))
+                // The TV client's ciphered answers (an age-restricted video
+                // for a signed-in account) name no player JS: the TV player's
+                // own signature function, run by the JS solver, signs them.
+                const bool solver_signs =
+                    info.client.rfind("TVHTML5", 0) == 0 || info.player_js_url.empty();
+                if (solver_signs &&
+                    (video_format->ciphered || (audio_format != nullptr && audio_format->ciphered)))
+                {
+                    set_stage(generation, "Player code");
+                    std::string sig_error;
+                    const auto sign = [&](const Format &format) -> std::string
+                    {
+                        const std::string signature =
+                            js_solver->solve_sig(format.cipher_s, &sig_error);
+                        if (signature.empty())
+                            return {};
+                        std::string url = format.url;
+                        url += url.find('?') == std::string::npos ? '?' : '&';
+                        url +=
+                            format.cipher_sp.empty() ? std::string("signature") : format.cipher_sp;
+                        url += '=';
+                        url += url_component(signature);
+                        return url;
+                    };
+                    if (!ensure_js_solver(info, &sig_error))
+                    {
+                        log::line("video: try %s signature: %s", info.client.c_str(),
+                                  sig_error.c_str());
+                        add_attempt(generation, info.client + " signature: " + sig_error);
+                        break;
+                    }
+                    if (video_format->ciphered)
+                        video_url = sign(*video_format);
+                    if (video_url.empty())
+                    {
+                        log::line("video: try %s signature: %s", info.client.c_str(),
+                                  sig_error.c_str());
+                        add_attempt(generation, info.client + " signature: " + sig_error);
+                        break;
+                    }
+                    if (audio_format != nullptr && audio_format->ciphered)
+                    {
+                        audio_url = sign(*audio_format);
+                        if (audio_url.empty())
+                            log::line("video: audio signature failed: %s", sig_error.c_str());
+                    }
+                    log::line("video: %s signed by the player's own code", info.client.c_str());
+                }
+                else if (video_format->ciphered ||
+                         (audio_format != nullptr && audio_format->ciphered))
                 {
                     std::string cipher_error;
                     if (!ensure_descrambler(info, &cipher_error))

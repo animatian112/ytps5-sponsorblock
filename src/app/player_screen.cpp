@@ -2106,24 +2106,27 @@ void PlayerScreen::update_captions()
     if (caption_language_.empty() && !captions_chosen_ && language > 0 &&
         language < Settings::kSubtitleLanguageCount)
         caption_language_ = Settings::kSubtitleLanguages[language][0];
-    // A new video: turn the chosen language on again when it has it.
-    if (!caption_language_.empty() && !playing_id_.empty() && captions_for_ != playing_id_ &&
-        view.state == yt::Load::ready && !view.info.captions.empty())
+    // A new video: the last one's captions go (a video without any kept
+    // showing them), then the chosen language comes on again when it has it.
+    if (!playing_id_.empty() && captions_for_ != playing_id_ && view.state == yt::Load::ready)
     {
         captions_for_ = playing_id_;
         caption_url_.clear();
         captions_.clear();
-        const yt::CaptionTrack *best = nullptr;
-        for (const yt::CaptionTrack &track : view.info.captions)
+        if (!caption_language_.empty())
         {
-            if (track.language == caption_language_ &&
-                (best == nullptr || (best->automatic && !track.automatic)))
-                best = &track;
-        }
-        if (best != nullptr)
-        {
-            caption_url_ = best->url;
-            captions_.load(best->url);
+            const yt::CaptionTrack *best = nullptr;
+            for (const yt::CaptionTrack &track : view.info.captions)
+            {
+                if (track.language == caption_language_ &&
+                    (best == nullptr || (best->automatic && !track.automatic)))
+                    best = &track;
+            }
+            if (best != nullptr)
+            {
+                caption_url_ = best->url;
+                captions_.load(best->url);
+            }
         }
     }
     caption_text_.clear();
