@@ -1,0 +1,7 @@
+GNU FriBidi 1.0.16 (Unicode 16.0.0), LGPL-2.1-or-later.
+https://github.com/fribidi/fribidi/releases/tag/v1.0.16
+Source commit: 68162babff4f39c4e2dc164a5e825af93bda9983
+Copied core library sources, headers and generated Unicode tables from the release tarball.
+Charset converters and deprecated APIs are not compiled. Upstream sources are unchanged.
+config.h and fribidi-config.h are local C11 build configuration (32-bit int).
+Compile these C files with -DHAVE_CONFIG_H and this directory on the include path.

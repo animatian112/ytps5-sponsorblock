@@ -38,6 +38,10 @@ done < "$root/tests/unit/sources.txt"
 
 objects=()
 for source in "${sources[@]}"; do
+    vendor_flags=()
+    if [[ $source == "$root/src/third_party/fribidi/"* ]]; then
+        vendor_flags=(-DHAVE_CONFIG_H -I"$root/src/third_party/fribidi")
+    fi
     relative=${source#"$root/"}
     relative=${relative#"$gtest/"}
     object="$build/obj/${relative//\//_}.o"
@@ -49,7 +53,7 @@ for source in "${sources[@]}"; do
     elif [[ $source == *.c ]]; then
         # Vendored C builds without -Werror.
         ninja_inputs=("$source" "$cc")
-        ninja_edge CC "$object" "${compiler_cache[@]}" "$cc" -std=c11 -O2 -w \
+        ninja_edge CC "$object" "${compiler_cache[@]}" "$cc" -std=c11 -O2 -w "${vendor_flags[@]}" \
             "${sanitizers[@]}" -I"$root/src" -MD -MF "$object.d" -c "$source" -o "$object"
     else
         ninja_edge CXX "$object" "${compiler_cache[@]}" "$cxx" "${flags[@]}" -pthread \

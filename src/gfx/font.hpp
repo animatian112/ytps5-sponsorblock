@@ -72,7 +72,7 @@ class Font
 
     // Breaks text into lines no wider than max_width, at word boundaries; a
     // word wider than a line (a long address, text in a script that writes no
-    // spaces) breaks between code points.
+    // spaces) breaks between display units, preserving emoji and combining marks.
     std::vector<std::string> wrap(std::string_view text, float size, float max_width) const;
 
     // Another face for the code points this one lacks: a font for other
@@ -105,6 +105,8 @@ class Font
     bool has_glyph(std::uint32_t codepoint) const;
 
   private:
+    float measure_visual(std::string_view text, float size, float tracking) const;
+
     struct Fallback
     {
         const Font *face;

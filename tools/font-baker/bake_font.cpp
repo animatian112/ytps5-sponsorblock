@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // usage: bake_font <font.ttf> <out.huifont> [pixel_size=56] [sdf_range=8] [atlas=1024]
-//                  [glyphs=basic|european] [fallback.ttf|otf] [fallback_scale=1]
+//                  [glyphs=basic|european|rtl] [fallback.ttf|otf] [fallback_scale=1]
 // A letter the font lacks is taken from the fallback face when one is given
 // (scaled by fallback_scale so its letters stand as tall as the main face's):
 // how Google Sans, which has no Cyrillic or Greek, gets them from Inter.
@@ -47,7 +47,7 @@ struct Baked
 // U+0386 to U+03CE, U+0410 to U+044F, Io), curly quotation marks, the euro
 // and the trade mark sign: about 450 more glyphs, which need a 2048 atlas at
 // 56 pixels. A face without Greek simply skips those letters.
-std::vector<int> codepoints(bool european)
+std::vector<int> codepoints(bool european, bool rtl)
 {
     std::vector<int> result;
     for (int c = 32; c < 127; ++c)
@@ -73,6 +73,20 @@ std::vector<int> codepoints(bool european)
             result.push_back(c);
         const int more[] = {0x2018, 0x2019, 0x201C, 0x201D, 0x201E, 0x20AC, 0x2122};
         result.insert(result.end(), std::begin(more), std::end(more));
+    }
+    if (rtl)
+    {
+        // Hebrew, Arabic and the presentation forms emitted by FriBidi.
+        for (int c = 0x0590; c <= 0x06FF; ++c)
+            result.push_back(c);
+        for (int c = 0x0750; c <= 0x077F; ++c)
+            result.push_back(c);
+        for (int c = 0x08A0; c <= 0x08FF; ++c)
+            result.push_back(c);
+        for (int c = 0xFB1D; c <= 0xFDFF; ++c)
+            result.push_back(c);
+        for (int c = 0xFE70; c <= 0xFEFC; ++c)
+            result.push_back(c);
     }
     // Middle dot, multiplication sign, copyright, degree, en/em dash, bullet,
     // ellipsis, arrows, check mark, and (in fonts that have them) a full
@@ -102,7 +116,7 @@ int main(int argc, char **argv)
 {
     if (argc < 3)
     {
-        std::fprintf(stderr, "usage: %s font.ttf out.huifont [pixel_size] [sdf_range] [atlas] [basic|european]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s font.ttf out.huifont [pixel_size] [sdf_range] [atlas] [basic|european|rtl]\n", argv[0]);
         return 2;
     }
     const float pixel_size = argc > 3 ? std::strtof(argv[3], nullptr) : 56.0f;
@@ -144,7 +158,7 @@ int main(int argc, char **argv)
     int from_fallback = 0;
 
     std::vector<Baked> glyphs;
-    for (int codepoint : codepoints(european))
+    for (int codepoint : codepoints(european, argc > 6 && std::strcmp(argv[6], "rtl") == 0))
     {
         const stbtt_fontinfo *face = &font;
         float face_scale = scale;

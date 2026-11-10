@@ -26,11 +26,15 @@ done < <(find "$root/src" -type f \( -name '*.cpp' -o -name '*.c' \) \
 
 objects=()
 for source in "${sources[@]}"; do
+    vendor_flags=()
+    if [[ $source == "$root/src/third_party/fribidi/"* ]]; then
+        vendor_flags=(-DHAVE_CONFIG_H -I"$root/src/third_party/fribidi")
+    fi
     relative=${source#"$root/"}
     object="$build/obj/${relative//\//_}.o"
     if [[ $source == *.c ]]; then
         ninja_inputs=("$source" "$cc")
-        ninja_edge CC "$object" "${compiler_cache[@]}" "$cc" -std=c11 -O2 -w -I"$root/src" \
+        ninja_edge CC "$object" "${compiler_cache[@]}" "$cc" -std=c11 -O2 -w "${vendor_flags[@]}" -I"$root/src" \
             -MD -MF "$object.d" -c "$source" -o "$object"
     else
         ninja_inputs=("$source" "$cxx")

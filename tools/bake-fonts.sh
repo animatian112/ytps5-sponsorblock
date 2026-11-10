@@ -26,11 +26,14 @@ while read -r source output size range fallback fallback_scale; do
         extra=("$root/third_party/fonts/$fallback" "$fallback_scale")
     fi
     "$root/build/host/bake_font" "$root/third_party/fonts/$source" \
-        "$root/assets/fonts/$output.huifont" "$size" "$range" 2048 european "${extra[@]}"
+        "$root/assets/fonts/$output.huifont" "$size" "$range" 2048 european ${extra[@]+"${extra[@]}"}
 done <<'FONTS'
 GoogleSansFlex-Regular.ttf google-sans-regular 56 8 Inter-Regular.ttf 0.95
 GoogleSansFlex-Medium.ttf google-sans-medium 56 8 Inter-Medium.ttf 0.95
 GoogleSansFlex-Bold.ttf google-sans-bold 56 8 Inter-SemiBold.ttf 0.95
 DejaVuSansMono.ttf dejavu-sans-mono 52 8
 FONTS
+# Shared fallback includes contextual Arabic forms, Persian letters and Hebrew.
+"$root/build/host/bake_font" "$root/third_party/fonts/DejaVuSans.ttf" \
+    "$root/assets/fonts/dejavu-sans-rtl.huifont" 56 8 2048 rtl
 cp "$root"/third_party/fonts/*-LICENSE.txt "$root/assets/fonts/"
