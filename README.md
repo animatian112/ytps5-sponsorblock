@@ -1,3 +1,7 @@
+> **Arabic / RTL text:** Adds joined Arabic text, Hebrew ordering, and a
+> shared font fallback for mixed-language titles and captions. See
+> [RTL text support](docs/RTL_TEXT.md) for implementation, tests and scope.
+
 # ytps5
 
 A native YouTube app for jailbroken PS5 consoles. Title ID: `PPSA99350`.

@@ -176,6 +176,9 @@ for source in "${sources[@]}"; do
     if [[ $source == *.c ]]; then standard=-std=c11; else standard=-std=c++20; fi
     args=("$standard" -O2 -Wall -Wextra -ffunction-sections -fdata-sections)
     [[ $source == *.c ]] || args+=(-fno-exceptions -fno-rtti)
+    if [[ $source == src/third_party/fribidi/* ]]; then
+        args+=(-DHAVE_CONFIG_H -I"$root/src/third_party/fribidi")
+    fi
     # Vendored upstream code is built as published; its warnings are not ours to fix.
     [[ $source != src/third_party/* ]] || args+=(-w)
     for definition in "${definitions[@]}"; do

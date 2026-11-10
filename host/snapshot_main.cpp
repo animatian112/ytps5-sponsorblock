@@ -269,6 +269,8 @@ int main(int argc, char **argv)
     hui::gfx::Font semibold;
     hui::gfx::Font display;
     hui::gfx::Font mono;
+    hui::gfx::Font rtl;
+    hui::ui::FontRef rtl_face;
     hui::ui::Fonts fonts;
     if (!renderer.init() ||
         !load_font(renderer, assets + "/fonts/google-sans-regular.huifont", &regular,
@@ -277,8 +279,12 @@ int main(int argc, char **argv)
                    &fonts.semibold) ||
         !load_font(renderer, assets + "/fonts/google-sans-bold.huifont", &display,
                    &fonts.display) ||
-        !load_font(renderer, assets + "/fonts/dejavu-sans-mono.huifont", &mono, &fonts.mono))
+        !load_font(renderer, assets + "/fonts/dejavu-sans-mono.huifont", &mono, &fonts.mono) ||
+        !load_font(renderer, assets + "/fonts/dejavu-sans-rtl.huifont", &rtl, &rtl_face))
         return 1;
+
+    for (hui::gfx::Font *face : {&regular, &semibold, &display, &mono})
+        face->add_fallback(&rtl, rtl_face.texture);
 
     const std::string data_root = output + "/.data";
     hui::save::ensure_directory(output);

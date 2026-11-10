@@ -5,6 +5,7 @@
 #include "gfx/font.hpp"
 
 #include "gfx/emoji.hpp"
+#include "gfx/text_layout.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -18,20 +19,22 @@ std::uint32_t next_codepoint(std::string_view text, std::size_t *index)
 {
     const auto byte = [&](std::size_t at) { return static_cast<unsigned char>(text[at]); };
     const std::size_t i = *index;
+    if (i >= text.size())
+        return 0xfffd;
     const unsigned char lead = byte(i);
     int length = 1;
     std::uint32_t value = lead;
-    if (lead >= 0xf0 && lead < 0xf8)
+    if (lead >= 0xf0 && lead <= 0xf4)
     {
         length = 4;
         value = lead & 0x07u;
     }
-    else if (lead >= 0xe0)
+    else if (lead >= 0xe0 && lead <= 0xef)
     {
         length = 3;
         value = lead & 0x0fu;
     }
-    else if (lead >= 0xc0)
+    else if (lead >= 0xc2 && lead <= 0xdf)
     {
         length = 2;
         value = lead & 0x1fu;
@@ -57,6 +60,10 @@ std::uint32_t next_codepoint(std::string_view text, std::size_t *index)
         value = (value << 6) | (continuation & 0x3fu);
     }
     *index = i + static_cast<std::size_t>(length);
+    if ((length == 2 && value < 0x80) || (length == 3 && value < 0x800) ||
+        (length == 4 && value < 0x10000) || value > 0x10ffff ||
+        (value >= 0xd800 && value <= 0xdfff))
+        return 0xfffd;
     return value;
 }
 
@@ -135,13 +142,13 @@ std::string Font::fit(std::string_view text, float size, float max_width, float 
     for (std::size_t index = 0; index < text.size();)
     {
         const std::size_t start = index;
-        next_codepoint(text, &index);
+        index = text_layout::next_boundary(text, index);
         std::string candidate(text.substr(0, start));
         while (!candidate.empty() && candidate.back() == ' ')
             candidate.pop_back();
         candidate.append(mark);
         if (measure(candidate, size, tracking) > max_width)
-            break;
+            continue; // Arabic ligatures can make a longer prefix narrower.
         best = std::move(candidate);
     }
     return best;
@@ -173,6 +180,11 @@ Font::Resolved Font::resolve(std::uint32_t *codepoint) const
 }
 
 float Font::measure(std::string_view text, float size, float tracking) const
+{
+    return measure_visual(text_layout::visual(text), size, tracking);
+}
+
+float Font::measure_visual(std::string_view text, float size, float tracking) const
 {
     float width = 0.0f;
     std::uint32_t previous = 0;
@@ -211,7 +223,9 @@ float Font::measure(std::string_view text, float size, float tracking) const
 float Font::layout(std::string_view text, float x, float y, float size, Align align,
                    std::vector<GlyphQuad> &quads, float tracking) const
 {
-    const float width = measure(text, size, tracking);
+    const std::string visual = text_layout::visual(text);
+    text = visual;
+    const float width = measure_visual(text, size, tracking);
     float pen = x;
     if (align == Align::center)
         pen -= width * 0.5f;
@@ -311,10 +325,10 @@ std::vector<std::string> Font::wrap(std::string_view text, float size, float max
                 while (measure(word.substr(start), size) > max_width)
                 {
                     std::size_t end = start;
-                    next_codepoint(word, &end);
+                    end = text_layout::next_boundary(word, end);
                     for (std::size_t next = end; next < word.size(); end = next)
                     {
-                        next_codepoint(word, &next);
+                        next = text_layout::next_boundary(word, next);
                         if (measure(word.substr(start, next - start), size) > max_width)
                             break;
                     }

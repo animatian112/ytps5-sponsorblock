@@ -330,16 +330,22 @@ int main()
     gfx::Font semibold;
     gfx::Font display_font;
     gfx::Font mono;
+    gfx::Font rtl;
+    ui::FontRef rtl_face;
     ui::Fonts fonts;
     if (!renderer.init() ||
         !load_font(renderer, "google-sans-regular.huifont", &regular, &fonts.regular) ||
         !load_font(renderer, "google-sans-medium.huifont", &semibold, &fonts.semibold) ||
         !load_font(renderer, "google-sans-bold.huifont", &display_font, &fonts.display) ||
-        !load_font(renderer, "dejavu-sans-mono.huifont", &mono, &fonts.mono))
+        !load_font(renderer, "dejavu-sans-mono.huifont", &mono, &fonts.mono) ||
+        !load_font(renderer, "dejavu-sans-rtl.huifont", &rtl, &rtl_face))
     {
         sys::log("[YTV] fatal: renderer init failed");
         sys::park();
     }
+
+    for (gfx::Font *face : {&regular, &semibold, &display_font, &mono})
+        face->add_fallback(&rtl, rtl_face.texture);
 
     ps5::Pad pad;
     pad.open();

@@ -197,3 +197,18 @@ other contributors, licensed under CC-BY 4.0
 (`assets/emoji/LICENSE-GRAPHICS.txt`). `tools/pack-emoji.py` packs the 72x72
 PNGs into `assets/emoji/twemoji.pack` unchanged; the upstream commit is in
 `assets/emoji/TWEMOJI_COMMIT`.
+
+## FriBidi and RTL font fallback
+
+[GNU FriBidi 1.0.16](https://github.com/fribidi/fribidi/releases/tag/v1.0.16)
+provides Unicode 16.0 bidirectional ordering, mirroring and Arabic presentation
+shaping. The unchanged core sources and generated tables are vendored in
+`src/third_party/fribidi`; `UPSTREAM` records provenance and `COPYING` contains
+the LGPL-2.1-or-later license. Local configuration targets C11 and 32-bit int.
+The license is also distributed in `assets/licenses/FRIBIDI-COPYING.txt`.
+
+DejaVu Sans 2.37 (`third_party/fonts/DejaVuSans.ttf`) supplies Arabic, Persian
+and Hebrew glyphs and Arabic presentation forms in `dejavu-sans-rtl.huifont`.
+It uses the existing Bitstream Vera / public-domain DejaVu license in
+`third_party/fonts/DejaVu-LICENSE.txt` and `assets/fonts/DejaVu-LICENSE.txt`.
+Source: https://github.com/dejavu-fonts/dejavu-fonts/releases/tag/version_2_37
