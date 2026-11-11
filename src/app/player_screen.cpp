@@ -34,6 +34,7 @@
 #include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <utility>
 
 namespace hui::app
 {
@@ -585,6 +586,8 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             playing_id_ = requested_id_;
             consumed_player_ = true;
             ended_ = false;
+            // The kept stats lines name the previous video's format.
+            stats_.invalidate();
             // Videos under 5 minutes start over unless the setting keeps them.
             const double length = video_view().info.length_s;
             if (resume_s_ > 0.0 &&
@@ -626,6 +629,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
 
     update_remote();
     update_extras(dt);
+    refresh_stats(dt);
 
     if (view.revision != video_revision_)
     {
@@ -2040,6 +2044,31 @@ std::vector<std::string> PlayerScreen::comment_lines() const
     return lines;
 }
 
+void PlayerScreen::refresh_stats(float dt)
+{
+    if (!context_.settings.dev_stats || player_ == nullptr || context_.fonts.mono.font == nullptr)
+    {
+        // Turned back on, the overlay must not show minutes-old figures.
+        stats_.invalidate();
+        return;
+    }
+    if (!stats_.tick(dt))
+        return;
+    const yt::VideoView &view = video_view();
+    std::vector<std::string> lines;
+    lines.push_back("client  " +
+                    (view.source_client.empty() ? std::string("-") : view.source_client) +
+                    "   id " + playing_id_);
+    if (!view.format_line.empty())
+        lines.push_back("format  " + view.format_line);
+    for (std::string &line : StatsOverlay::split_lines(player_->stats()))
+        lines.push_back(std::move(line));
+    float width = 0.0f;
+    for (const std::string &line : lines)
+        width = std::max(width, context_.fonts.mono.measure(line, 19.0f));
+    stats_.set(std::move(lines), width);
+}
+
 void PlayerScreen::update_extras(float dt)
 {
     // A quality above 1080p that never shows a picture (a black screen: the
@@ -2408,34 +2437,23 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
     // Settings > Developer > Stats for nerds.
     if (context.settings.dev_stats && player_ != nullptr && context.fonts.mono.font != nullptr)
     {
-        std::vector<std::string> lines;
-        lines.push_back("client  " +
-                        (view.source_client.empty() ? std::string("-") : view.source_client) +
-                        "   id " + playing_id_);
-        if (!view.format_line.empty())
-            lines.push_back("format  " + view.format_line);
-        std::string block = player_->stats();
-        std::size_t at = 0;
-        while (at < block.size())
-        {
-            std::size_t end = block.find('\n', at);
-            if (end == std::string::npos)
-                end = block.size();
-            lines.push_back(block.substr(at, end - at));
-            at = end + 1;
-        }
+        // The clock is the only line that changes every frame: it is built
+        // and measured here, on the first line, and the rest come from the
+        // copy refresh_stats() keeps (issue #3).
         char clock[96];
         std::snprintf(clock, sizeof(clock), "clock   %.2f / %.2f s   speed %.2fx   sync %+d ms",
                       player_->clock_s(), player_->duration_s(), player_->speed(),
                       context.settings.dev_av_offset_ms);
-        lines.emplace_back(clock);
-        float width = 0.0f;
-        for (const std::string &line : lines)
-            width = std::max(width, context.fonts.mono.measure(line, 19.0f));
-        canvas.list.rounded_rect({30.0f, 30.0f, width + 40.0f, lines.size() * 27.0f + 24.0f}, 10.0f,
+        const std::vector<std::string> &kept = stats_.lines();
+        const float width = std::max(stats_.width(), context.fonts.mono.measure(clock, 19.0f));
+        const std::size_t count = kept.size() + 1;
+        canvas.list.rounded_rect({30.0f, 30.0f, width + 40.0f, count * 27.0f + 24.0f}, 10.0f,
                                  gfx::Color::rgb(0x000000, 0.72f));
         float y = 66.0f;
-        for (const std::string &line : lines)
+        ui::text(canvas.list, context.fonts.mono, clock, 50.0f, y, 19.0f,
+                 gfx::Color::rgb(0xe8e8e8));
+        y += 27.0f;
+        for (const std::string &line : kept)
         {
             ui::text(canvas.list, context.fonts.mono, line, 50.0f, y, 19.0f,
                      gfx::Color::rgb(0xe8e8e8));
