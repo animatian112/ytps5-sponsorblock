@@ -4,6 +4,7 @@
 
 #include "app/player_chrome.hpp"
 
+#include "core/i18n.hpp"
 #include "core/settings.hpp"
 
 #include "app/icons.hpp"
@@ -181,57 +182,58 @@ std::string PlayerChrome::tooltip(Button button) const
     switch (button)
     {
     case Button::restart:
-        return "Previous";
+        return tr("Previous");
     case Button::rewind:
-        return "Back 10 seconds";
+        return tr("Back 10 seconds");
     case Button::play:
-        return playing_ ? "Pause" : "Play";
+        return playing_ ? tr("Pause") : tr("Play");
     case Button::forward:
-        return "Forward 10 seconds";
+        return tr("Forward 10 seconds");
     case Button::next:
-        return "Next";
+        return tr("Next");
     case Button::skip:
-        return "Skip " + segment_;
+        return trf("Skip {}", segment_);
     case Button::captions:
-        return "Subtitles";
+        return tr("Subtitles");
     case Button::speed:
-        return "Playback speed (" + speed_label_ + ")";
+        return trf("Playback speed ({})", speed_label_);
     case Button::quality:
-        return "Playback quality settings" +
-               (quality_label_.empty() ? std::string() : " (" + quality_label_ + ")");
+        return quality_label_.empty() ? std::string(tr("Playback quality settings"))
+                                      : trf("Playback quality settings ({})", quality_label_);
     case Button::audio:
-        return "Audio track";
+        return tr("Audio track");
     case Button::like:
-        return liked_ ? "Liked" : "Like";
+        return liked_ ? tr("Liked") : tr("Like");
     case Button::dislike:
-        return disliked_ ? "Disliked" : "Dislike";
+        return disliked_ ? tr("Disliked") : tr("Dislike");
     case Button::subscribe:
-        return subscribed_ ? "Unsubscribe" : "Subscribe";
+        return subscribed_ ? tr("Unsubscribe") : tr("Subscribe");
     case Button::channel:
-        return "Open channel";
+        return tr("Open channel");
     case Button::save:
-        return "Add to playlist";
+        return tr("Add to playlist");
     case Button::info:
-        return "Video info";
+        return tr("Video info");
     case Button::chapters:
-        return "Chapters";
+        return tr("Chapters");
     case Button::comments:
-        return "Comments";
+        return tr("Comments");
     case Button::sleep:
-        return sleep_on_ ? "Sleep timer (on)" : "Sleep timer";
+        return sleep_on_ ? tr("Sleep timer (on)") : tr("Sleep timer");
     case Button::dim:
-        return "Screen dimming";
+        return tr("Screen dimming");
     case Button::stats:
-        return stats_on_ ? "Hide stats for nerds" : "Stats for nerds";
+        return stats_on_ ? tr("Hide stats for nerds") : tr("Stats for nerds");
     case Button::lock:
-        return "Lock controls (hold Circle to unlock)";
+        return tr("Lock controls (hold Circle to unlock)");
     case Button::audio_only:
-        return audio_only_ ? "Audio only (on)" : "Audio only";
+        return audio_only_ ? tr("Audio only (on)") : tr("Audio only");
     case Button::mode:
     {
-        static const char *const kModes[] = {"Play next", "Repeat the video", "Pause at the end",
-                                             "Close at the end", "Shuffle"};
-        return std::string("Playback mode: ") + kModes[std::clamp(mode_, 0, 4)];
+        const char *const kModes[] = {tr("Play next"), tr("Repeat the video"),
+                                      tr("Pause at the end"), tr("Close at the end"),
+                                      tr("Shuffle")};
+        return trf("Playback mode: {}", kModes[std::clamp(mode_, 0, 4)]);
     }
     }
     return {};
@@ -969,8 +971,8 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
             times = fonts.regular.measure(
                 clock_text(shown_position) + " / " + clock_text(duration_), 30.0f);
             if (options_.remaining)
-                times =
-                    std::max(times, fonts.regular.measure("Remaining: " + clock_text(left), 30.0f));
+                times = std::max(
+                    times, fonts.regular.measure(trf("Remaining: {}", clock_text(left)), 30.0f));
         }
         const float last = kRight - times - 40.0f - kButtonRadius; // the last centre
         const float first = kLeft + 24.0f;
@@ -980,7 +982,7 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
         draw_row(row, kBottomRowY - rise, Zone::bottom, pitch);
     }
     if (options_.remaining)
-        ui::text(list, fonts.regular, "Remaining: " + clock_text(left), kRight,
+        ui::text(list, fonts.regular, trf("Remaining: {}", clock_text(left)), kRight,
                  kBottomRowY - 8.0f - rise, 30.0f, kInk, gfx::Align::right);
     ui::text(list, fonts.regular,
              live_ ? "LIVE  " + clock_text(shown_position)

@@ -11,6 +11,7 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace
@@ -18,8 +19,12 @@ namespace
 
 using hui::Action;
 using hui::Settings;
+using hui::app::is_kana_modifier;
+using hui::app::keyboard_language_index;
+using hui::app::keyboard_languages;
 using hui::app::keyboard_layouts;
 using hui::app::KeyboardLanguageSync;
+using hui::app::next_kana_form;
 using hui::ui::Event;
 using hui::ui::Keyboard;
 using hui::ui::KeyboardLayout;
@@ -27,6 +32,20 @@ using hui::ui::KeyKind;
 
 constexpr int kEnglish = 1;
 constexpr int kEnglishAndRussian = 3;
+// Bits 2, 3 and 4: Italian, Spanish and Japanese.
+constexpr int kItalian = 1 << 2;
+constexpr int kSpanish = 1 << 3;
+constexpr int kJapanese = 1 << 4;
+
+// The key that types `text` in a layout, or null.
+const hui::ui::KeyboardKey *find_key(const KeyboardLayout &layout, std::string_view text)
+{
+    for (const auto &row : layout.rows)
+        for (const auto &key : row)
+            if (key.kind == KeyKind::character && key.text == text)
+                return &key;
+    return nullptr;
+}
 
 int count_kind(const KeyboardLayout &layout, KeyKind kind)
 {
@@ -180,6 +199,125 @@ TEST_F(KeyboardLanguages, SyncOpensOnTheLastLanguageAndRemembersASwitch)
     EXPECT_EQ(keys_.layouts().size(), 2u);
     EXPECT_EQ(keys_.layout(), 0);
     EXPECT_EQ(keys_.language(), "EN");
+}
+
+TEST_F(KeyboardLanguages, TheTableKeepsItsOrderAndEveryLanguageFitsItsGrid)
+{
+    // Settings stores a bit per position: the first two never move.
+    const auto languages = keyboard_languages();
+    ASSERT_EQ(languages.size(), 5u);
+    EXPECT_EQ(keyboard_language_index("EN"), 0);
+    EXPECT_EQ(keyboard_language_index("RU"), 1);
+    EXPECT_EQ(keyboard_language_index("IT"), 2);
+    EXPECT_EQ(keyboard_language_index("ES"), 3);
+    EXPECT_EQ(keyboard_language_index("JA"), 4);
+    EXPECT_EQ(keyboard_language_index("ZH"), -1);
+
+    const std::vector<KeyboardLayout> layouts = keyboard_layouts((1 << 5) - 1);
+    ASSERT_EQ(layouts.size(), 6u) << "five languages, then the symbols";
+    for (std::size_t i = 0; i < languages.size(); ++i)
+    {
+        const KeyboardLayout &layout = layouts[i];
+        EXPECT_EQ(layout.language, languages[i].tag);
+        for (const auto &row : layout.rows)
+        {
+            int span = 0;
+            for (const auto &key : row)
+                span += key.span;
+            EXPECT_LE(span, layout.columns) << layout.language;
+        }
+        EXPECT_EQ(count_kind(layout, KeyKind::language), 1) << layout.language;
+        EXPECT_EQ(count_kind(layout, KeyKind::shift), 1) << layout.language;
+        EXPECT_EQ(count_kind(layout, KeyKind::backspace), 1) << layout.language;
+        EXPECT_EQ(count_kind(layout, KeyKind::done), 1) << layout.language;
+    }
+}
+
+TEST_F(KeyboardLanguages, ItalianAndSpanishHaveTheirAccentedLettersWithCapitals)
+{
+    const KeyboardLayout italian = keyboard_layouts(kItalian)[0];
+    EXPECT_EQ(italian.language, "IT");
+    for (const auto &[small, capital] : {std::pair<std::string_view, std::string_view>{"è", "È"},
+                                         {"é", "É"},
+                                         {"ò", "Ò"},
+                                         {"à", "À"},
+                                         {"ù", "Ù"},
+                                         {"ì", "Ì"}})
+    {
+        const auto *key = find_key(italian, small);
+        ASSERT_NE(key, nullptr) << small;
+        EXPECT_EQ(key->shifted, capital);
+    }
+    ASSERT_NE(find_key(italian, "'"), nullptr) << "l'acqua";
+
+    const KeyboardLayout spanish = keyboard_layouts(kSpanish)[0];
+    EXPECT_EQ(spanish.language, "ES");
+    for (const auto &[small, capital] : {std::pair<std::string_view, std::string_view>{"ñ", "Ñ"},
+                                         {"á", "Á"},
+                                         {"é", "É"},
+                                         {"í", "Í"},
+                                         {"ó", "Ó"},
+                                         {"ú", "Ú"},
+                                         {"ü", "Ü"}})
+    {
+        const auto *key = find_key(spanish, small);
+        ASSERT_NE(key, nullptr) << small;
+        EXPECT_EQ(key->shifted, capital);
+    }
+    EXPECT_NE(find_key(spanish, "¿"), nullptr);
+}
+
+TEST_F(KeyboardLanguages, JapaneseTypesHiraganaAndShiftTypesKatakana)
+{
+    const KeyboardLayout japanese = keyboard_layouts(kJapanese)[0];
+    EXPECT_EQ(japanese.language, "JA");
+    // The gojūon table: a column per consonant, the vowels down it.
+    EXPECT_EQ(japanese.rows[0][0].text, "あ");
+    EXPECT_EQ(japanese.rows[0][1].text, "か");
+    EXPECT_EQ(japanese.rows[1][1].text, "き");
+    EXPECT_EQ(japanese.rows[2][9].text, "ん");
+    for (const std::string_view kana : {"あ", "か", "し", "つ", "の", "ふ", "ゆ", "ろ", "を", "ん"})
+        EXPECT_NE(find_key(japanese, kana), nullptr) << kana;
+    EXPECT_EQ(find_key(japanese, "か")->shifted, "カ");
+    EXPECT_EQ(find_key(japanese, "ん")->shifted, "ン");
+    EXPECT_EQ(find_key(japanese, "ー")->shifted, "ー") << "the long mark is both";
+    const auto *modifier = find_key(japanese, hui::app::kKanaModifier);
+    ASSERT_NE(modifier, nullptr);
+    EXPECT_EQ(modifier->label, "゛゜小");
+    EXPECT_TRUE(is_kana_modifier(modifier->text));
+    EXPECT_FALSE(is_kana_modifier("か"));
+
+    // Typing it: か, then with shift カ.
+    keys_.set_layouts(keyboard_layouts(kJapanese));
+    keys_.set_focus(0, 1);
+    send(press(Action::confirm));
+    send(press(Action::jump_prev)); // L2: shift
+    send(press(Action::confirm));
+    EXPECT_EQ(text_, "かカ");
+}
+
+TEST(KanaModifier, StepsTheLastKanaThroughItsForms)
+{
+    EXPECT_EQ(next_kana_form("か"), "が");
+    EXPECT_EQ(next_kana_form("が"), "か");
+    EXPECT_EQ(next_kana_form("は"), "ば");
+    EXPECT_EQ(next_kana_form("ば"), "ぱ");
+    EXPECT_EQ(next_kana_form("ぱ"), "は");
+    EXPECT_EQ(next_kana_form("つ"), "っ");
+    EXPECT_EQ(next_kana_form("っ"), "づ");
+    EXPECT_EQ(next_kana_form("づ"), "つ");
+    EXPECT_EQ(next_kana_form("う"), "ぅ");
+    EXPECT_EQ(next_kana_form("ぅ"), "ゔ");
+    EXPECT_EQ(next_kana_form("や"), "ゃ");
+    // Katakana alike, and only the last character counts.
+    EXPECT_EQ(next_kana_form("ラーメンカ"), "ガ");
+    EXPECT_EQ(next_kana_form("ホ"), "ボ");
+    EXPECT_EQ(next_kana_form("ツ"), "ッ");
+    // Nothing to change: no form, not kana, or nothing typed.
+    EXPECT_EQ(next_kana_form("な"), "");
+    EXPECT_EQ(next_kana_form("ー"), "");
+    EXPECT_EQ(next_kana_form("abc"), "");
+    EXPECT_EQ(next_kana_form(""), "");
 }
 
 TEST(KeyboardLanguageSettings, SurviveTheSaveFile)

@@ -16,6 +16,7 @@
 #include "ui/components/keyboard.hpp"
 
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -37,6 +38,15 @@ struct KeyboardLanguage
 std::span<const KeyboardLanguage> keyboard_languages();
 // The entry whose tag this is, or -1.
 int keyboard_language_index(std::string_view tag);
+
+// The Japanese keyboard's ゛゜小 key types this mark; the screen that owns the
+// text asks next_kana_form() what it makes of the kana before it instead of
+// typing the mark itself.
+inline constexpr std::string_view kKanaModifier = "\u309B"; // ゛
+bool is_kana_modifier(std::string_view typed);
+// The next form of the last kana of `text` (か: が, が: か, は: ば, ば: ぱ, つ: っ,
+// katakana alike), which replaces it; empty when that character has none.
+std::string next_kana_form(std::string_view text);
 
 // The letters of each language `mask` turns on (bit i: keyboard_languages()[i];
 // English when none is), followed by the symbols. With one language there is

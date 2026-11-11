@@ -121,10 +121,15 @@ struct Settings
     bool keyboard_auto = true;  // the keyboard opens with the search
     bool search_history = true; // keep the last searches as suggestions
     // The on-screen keyboard's languages, a bit per keyboard_languages() entry
-    // (app/keyboard_languages.hpp; bit 0 English, bit 1 Russian), and the
-    // entry it was last left on, where it opens next time.
+    // (app/keyboard_languages.hpp; bit 0 English, 1 Russian, 2 Italian,
+    // 3 Spanish, 4 Japanese), and the entry it was last left on, where it
+    // opens next time.
     int keyboard_languages = 1;
     int keyboard_language = 0;
+    // The language of the app's own words (core/i18n.hpp): 0 the console's,
+    // else 1 + i18n::Language (1 English ... 6 Japanese). Read at start.
+    int ui_language = 0;
+    static constexpr int kUiLanguageMax = 6;
     // SponsorBlock
     bool sb_markers = true; // the segments on the seek bar
     bool sb_once = false;   // a segment skipped once plays the next time

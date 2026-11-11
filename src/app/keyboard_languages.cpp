@@ -5,7 +5,9 @@
 #include "app/keyboard_languages.hpp"
 
 #include "core/settings.hpp"
+#include "gfx/font.hpp"
 
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -18,6 +20,55 @@ namespace
 using ui::KeyboardKey;
 using ui::KeyboardLayout;
 using ui::KeyKind;
+
+// The code points of a UTF-8 string, and back.
+std::u32string decode(std::string_view text)
+{
+    std::u32string out;
+    std::size_t i = 0;
+    while (i < text.size())
+        out.push_back(gfx::next_codepoint(text, &i));
+    return out;
+}
+
+std::string encode(std::u32string_view codes)
+{
+    std::string out;
+    for (const char32_t code : codes)
+    {
+        if (code < 0x80)
+            out += static_cast<char>(code);
+        else if (code < 0x800)
+        {
+            out += static_cast<char>(0xC0 | (code >> 6));
+            out += static_cast<char>(0x80 | (code & 0x3F));
+        }
+        else if (code < 0x10000)
+        {
+            out += static_cast<char>(0xE0 | (code >> 12));
+            out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (code & 0x3F));
+        }
+        else
+        {
+            out += static_cast<char>(0xF0 | (code >> 18));
+            out += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
+            out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (code & 0x3F));
+        }
+    }
+    return out;
+}
+
+// Hiragana (U+3041 to U+3096) move 0x60 up to their katakana; the rest stay.
+std::string katakana(std::string_view text)
+{
+    std::u32string codes = decode(text);
+    for (char32_t &code : codes)
+        if (code >= 0x3041 && code <= 0x3096)
+            code += 0x60;
+    return encode(codes);
+}
 
 KeyboardKey wide(KeyKind kind, int span)
 {
@@ -85,10 +136,80 @@ KeyboardLayout russian(bool with_globe)
     return layout;
 }
 
+// Italian: QWERTY with the accented vowels Italian writes (è é ò à ù ì) on
+// keys of their own, and the apostrophe of l'acqua by the digits.
+KeyboardLayout italian(bool with_globe)
+{
+    KeyboardLayout layout;
+    layout.name = "abc";
+    layout.language = "IT";
+    layout.columns = 12;
+    layout.add_row("1234567890'");
+    layout.rows.back().push_back(wide(KeyKind::backspace, 1));
+    layout.add_row("qwertyuiopèé");
+    layout.add_row("asdfghjklòàù");
+    add_shift_row(layout, "zxcvbnm,.ì?");
+    add_bottom_row(layout, with_globe);
+    return layout;
+}
+
+// Spanish: QWERTY with ñ where the Spanish keyboard has it, the acute vowels
+// and ü, and the opening question mark.
+KeyboardLayout spanish(bool with_globe)
+{
+    KeyboardLayout layout;
+    layout.name = "abc";
+    layout.language = "ES";
+    layout.columns = 12;
+    layout.add_row("1234567890¿");
+    layout.rows.back().push_back(wide(KeyKind::backspace, 1));
+    layout.add_row("qwertyuiopáé");
+    layout.add_row("asdfghjklñíó");
+    add_shift_row(layout, "zxcvbnm,.úü");
+    add_bottom_row(layout, with_globe);
+    return layout;
+}
+
+// Hiragana in the order of the gojūon table, a column per consonant (あかさ
+// たなはまやらわ) read down the vowels, as Japanese TV keyboards lay it out.
+// Shift types the same key in katakana. The ゛゜小 key changes the kana before
+// it, as on a phone: か to が, は to ば to ぱ, つ to っ to づ.
+KeyboardLayout japanese(bool with_globe)
+{
+    KeyboardLayout layout;
+    layout.name = "あいう";
+    layout.language = "JA";
+    layout.columns = 12;
+    layout.add_row("あかさたなはまやらわー");
+    layout.rows.back().push_back(wide(KeyKind::backspace, 1));
+    layout.add_row("いきしちにひみゆりを、。");
+    layout.add_row("うくすつぬふむよるん？！");
+    add_shift_row(layout, "えけせてねへめ「れ」");
+    layout.add_row("おこそとのほも・ろ〜");
+    KeyboardKey modifier;
+    modifier.text = std::string(kKanaModifier);
+    modifier.label = "゛゜小";
+    layout.rows.back().push_back(std::move(modifier));
+    for (auto &row : layout.rows)
+        for (KeyboardKey &key : row)
+            if (key.kind == KeyKind::character && key.shifted.empty())
+                key.shifted = katakana(key.text);
+    add_bottom_row(layout, with_globe);
+    return layout;
+}
+
 // Settings::keyboard_languages has a bit per entry, in this order: append only.
 constexpr KeyboardLanguage kLanguages[] = {
-    {"English", "EN", english},
-    {"Russian", "RU", russian},
+    {"English", "EN", english}, {"Russian", "RU", russian},   {"Italian", "IT", italian},
+    {"Spanish", "ES", spanish}, {"Japanese", "JA", japanese},
+};
+
+// The forms the ゛゜小 key steps a kana through, each cycle in order (the last
+// goes back to the first). Hiragana; katakana are the same 0x60 higher.
+constexpr std::string_view kKanaCycles[] = {
+    "かが", "きぎ", "くぐ",   "けげ", "こご", "さざ",   "しじ",   "すず",   "せぜ",   "そぞ",
+    "ただ", "ちぢ", "つっづ", "てで", "とど", "はばぱ", "ひびぴ", "ふぶぷ", "へべぺ", "ほぼぽ",
+    "あぁ", "いぃ", "うぅゔ", "えぇ", "おぉ", "やゃ",   "ゆゅ",   "よょ",   "わゎ",
 };
 
 } // namespace
@@ -125,6 +246,36 @@ std::vector<KeyboardLayout> keyboard_layouts(int mask)
     symbols.name = "@#:";
     layouts.push_back(std::move(symbols));
     return layouts;
+}
+
+bool is_kana_modifier(std::string_view typed)
+{
+    return typed == kKanaModifier;
+}
+
+std::string next_kana_form(std::string_view text)
+{
+    const std::u32string codes = decode(text);
+    if (codes.empty())
+        return {};
+    char32_t last = codes.back();
+    const bool katakana_form = last >= 0x30A1 && last <= 0x30F6;
+    if (katakana_form)
+        last -= 0x60;
+    for (const std::string_view cycle : kKanaCycles)
+    {
+        const std::u32string forms = decode(cycle);
+        for (std::size_t i = 0; i < forms.size(); ++i)
+        {
+            if (forms[i] != last)
+                continue;
+            char32_t next = forms[(i + 1) % forms.size()];
+            if (katakana_form)
+                next += 0x60;
+            return encode(std::u32string_view(&next, 1));
+        }
+    }
+    return {};
 }
 
 bool KeyboardLanguageSync::sync(ui::Keyboard &keys, Settings &settings)

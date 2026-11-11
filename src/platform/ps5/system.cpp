@@ -88,6 +88,17 @@ bool local_date(int *weekday, int *month, int *day)
     return true;
 }
 
+int console_language()
+{
+    // System parameter 1 is the language Settings > Language > System
+    // Language set.
+    constexpr int kLanguage = 1;
+    int language = -1;
+    if (sceSystemServiceParamGetInt(kLanguage, &language) != 0)
+        return -1;
+    return language;
+}
+
 void log(const char *format, ...)
 {
     // klog lines are short; longer messages are truncated rather than split.

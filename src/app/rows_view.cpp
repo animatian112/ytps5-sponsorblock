@@ -4,6 +4,8 @@
 
 #include "app/rows_view.hpp"
 
+#include "core/i18n.hpp"
+
 #include "app/glow.hpp"
 
 #include "app/feed_view.hpp"
@@ -162,7 +164,7 @@ void RowsView::set_items(const std::vector<yt::FeedItem> &items, const Context &
         row->title = groups[g].title;
         row->items = std::move(groups[g].items);
         style_shelf(row->shelf);
-        row->shelf.title = row->title;
+        row->shelf.title = tr(row->title.c_str()); // "Recommended", "Continue watching"
         std::vector<ui::CardItem> cards;
         cards.reserve(row->items.size());
         for (const yt::FeedItem &item : row->items)

@@ -4,6 +4,8 @@
 
 #include "app/channel_screen.hpp"
 
+#include "core/i18n.hpp"
+
 #include "app/screens.hpp"
 #include "app/theme.hpp"
 #include "app/thumbs.hpp"
@@ -77,7 +79,8 @@ void ChannelScreen::draw(const Context &context, Frame &frame) const
     else
         list.circle(x + avatar * 0.5f, 70.0f + avatar * 0.5f, avatar * 0.5f,
                     gfx::Color::rgb(0x3a3a3a));
-    const std::string name = view.channel.name.empty() ? std::string("Channel") : view.channel.name;
+    const std::string name =
+        view.channel.name.empty() ? std::string(tr("Channel")) : view.channel.name;
     if (context.fonts.semibold.font != nullptr)
         ui::text(list, context.fonts.semibold,
                  context.fonts.semibold.font->fit(name, 50.0f, kContentW - avatar - 420.0f),
@@ -91,9 +94,9 @@ void ChannelScreen::draw(const Context &context, Frame &frame) const
     {
         const bool failed = view.state == yt::Load::failed;
         ui::text(list, context.fonts.regular,
-                 failed ? (view.error.empty() ? std::string("This channel didn't load")
-                                              : "This channel didn't load: " + view.error)
-                        : std::string("Loading..."),
+                 failed ? (view.error.empty() ? std::string(tr("This channel didn't load"))
+                                              : trf("This channel didn't load: {}", view.error))
+                        : std::string(tr("Loading...")),
                  kContentX + kContentW * 0.5f, 480.0f, 30.0f, gfx::Color::rgb(0xaaaaaa),
                  gfx::Align::center);
         return;

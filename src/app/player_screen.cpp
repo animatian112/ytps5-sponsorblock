@@ -9,6 +9,8 @@
 
 #include "app/player_screen.hpp"
 
+#include "core/i18n.hpp"
+
 #include "yt/comments.hpp"
 
 #include "yt/chapters.hpp"
@@ -72,24 +74,11 @@ std::string upload_line(const yt::VideoView &view)
     if (std::sscanf(view.info.publish_date.c_str(), "%d-%d-%d", &y, &m, &d) == 3 && y > 2004 &&
         m >= 1 && m <= 12 && d >= 1 && d <= 31)
     {
-        static const char *const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-        char text[64];
-        std::snprintf(text, sizeof(text), "%s %d, %d", kMonths[m - 1], d, y);
-        std::string out = text;
+        std::string out = i18n::long_date(y, m, d);
         const long long now = static_cast<long long>(std::time(nullptr)) / 86400;
         const long long days = now - days_from_civil(y, m, d);
         if (days >= 0 && now > 19000) // a console clock that was never set says nothing
-        {
-            const auto ago = [](long long n, const char *unit)
-            { return std::to_string(n) + " " + unit + (n == 1 ? "" : "s") + " ago"; };
-            const std::string age = days == 0    ? std::string("today")
-                                    : days < 7   ? ago(days, "day")
-                                    : days < 31  ? ago(days / 7, "week")
-                                    : days < 365 ? ago(days / 30 > 0 ? days / 30 : 1, "month")
-                                                 : ago(days / 365, "year");
-            out += " (" + age + ")";
-        }
+            out += " (" + i18n::days_ago(days) + ")";
         return out;
     }
     return view.date_text;
@@ -131,29 +120,17 @@ std::string chapter_time(double seconds)
 
 std::string clock_line(bool hours24)
 {
-    static const char *const kDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-    static const char *const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     std::string line;
     int weekday = 0;
     int month = 0;
     int day = 0;
     if (sys::local_date(&weekday, &month, &day) && month >= 1 && month <= 12)
-        line = std::string(kDays[weekday % 7]) + " " + kMonths[month - 1] + " " +
-               std::to_string(day) + "  ";
+        line = i18n::short_date(weekday, month, day) + "  ";
     int hour = 0;
     int minute = 0;
     bool twelve = true;
     if (sys::local_clock(&hour, &minute, &twelve))
-    {
-        char text[16];
-        if (!hours24)
-            std::snprintf(text, sizeof(text), "%d:%02d %s", hour % 12 == 0 ? 12 : hour % 12, minute,
-                          hour < 12 ? "AM" : "PM");
-        else
-            std::snprintf(text, sizeof(text), "%02d:%02d", hour, minute);
-        line += text;
-    }
+        line += i18n::clock_time(hour, minute, !hours24);
     return line;
 }
 
@@ -221,7 +198,7 @@ PlayerScreen::PlayerScreen(Context &context) : context_(context)
     related_.style.card.info_focus_text = gfx::Color::rgb(0x4a4a4a);
     related_.style.item_width = 330.0f;
     related_.style.counter = false;
-    related_.title = "Recommended";
+    related_.title = tr("Recommended");
     related_.set_bounds({96.0f, 1080.0f, 1728.0f, 370.0f});
     chapters_row_.style = related_.style;
     chapters_row_.style.item_width = 240.0f;
@@ -229,7 +206,7 @@ PlayerScreen::PlayerScreen(Context &context) : context_(context)
     chapters_row_.style.card.title_size = 19.0f;
     chapters_row_.style.card.subtitle_size = 16.0f;
     chapters_row_.style.title_size = 26.0f;
-    chapters_row_.title = "Chapters";
+    chapters_row_.title = tr("Chapters");
     chapters_row_.set_bounds({96.0f, 1080.0f, 1728.0f, 250.0f});
     related_.set_active(false);
 }
@@ -434,8 +411,8 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
         if (!label.empty() && settings.sb_act[9] != 0 && sponsor_notice_for_ != playing_id_)
         {
             sponsor_notice_for_ = playing_id_;
-            context_.toasts.push(ui::StatusKind::info, "This video: " + label, "SponsorBlock",
-                                 4.0f);
+            context_.toasts.push(ui::StatusKind::info, trf("This video: {}", tr(label.c_str())),
+                                 "SponsorBlock", 4.0f);
         }
     }
 
@@ -449,7 +426,8 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
         skipped_ends_.push_back(decision.target_s);
         player_->seek(decision.target_s);
         if (!decision.silent)
-            context_.toasts.push(ui::StatusKind::info, "Skipped " + decision.label, "SponsorBlock",
+            context_.toasts.push(ui::StatusKind::info,
+                                 trf("Skipped {}", tr(decision.label.c_str())), "SponsorBlock",
                                  2.5f);
         if (settings.sb_stats)
             sb::report_viewed(decision.uuid, settings.sb_alt_server);
@@ -493,7 +471,7 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
             continue;
         if (position >= segment.start_s && position < segment.end_s - 0.5)
         {
-            sponsor_here_ = segment.label;
+            sponsor_here_ = tr(segment.label.c_str());
             break;
         }
     }
@@ -501,7 +479,7 @@ void PlayerScreen::update_sponsorblock(const InputFrame &input, ui::Feedback &fe
     if (sponsor_here_.empty() && settings.sb_act[8] != 0 && highlight > position + 2.0)
     {
         sponsor_highlight_ = highlight;
-        sponsor_here_ = "to highlight";
+        sponsor_here_ = tr("to highlight");
     }
 
     if (input.is_pressed(Action::north) && !sponsor_here_.empty())
@@ -516,7 +494,8 @@ void PlayerScreen::skip_segment_now(ui::Feedback &feedback)
     {
         // Triangle before the highlight: jump to the best part.
         player_->seek(sponsor_highlight_);
-        context_.toasts.push(ui::StatusKind::info, "Jumped to the highlight", "SponsorBlock", 2.0f);
+        context_.toasts.push(ui::StatusKind::info, tr("Jumped to the highlight"), "SponsorBlock",
+                             2.0f);
         sponsor_highlight_ = -1.0;
         sponsor_here_.clear();
         return;
@@ -526,7 +505,8 @@ void PlayerScreen::skip_segment_now(ui::Feedback &feedback)
     if (manual.kind == yt::sponsorblock::Kind::skip)
     {
         player_->seek(manual.target_s);
-        context_.toasts.push(ui::StatusKind::info, "Skipped " + manual.label, "SponsorBlock", 2.5f);
+        context_.toasts.push(ui::StatusKind::info, trf("Skipped {}", tr(manual.label.c_str())),
+                             "SponsorBlock", 2.5f);
         feedback.rumble(0.2f, 0.02f);
         sponsor_here_.clear();
     }
@@ -800,13 +780,15 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             for (const yt::FeedItem &item : context_.section)
                 if (item.video_id.size() == 11)
                     related_items_.push_back(item);
-            related_.title =
-                context_.section_title.empty() ? std::string("Up next") : context_.section_title;
+            // The row's name: YouTube's, or one of Home's own ("Continue watching").
+            related_.title = context_.section_title.empty()
+                                 ? std::string(tr("Up next"))
+                                 : std::string(tr(context_.section_title.c_str()));
         }
         else
         {
             related_items_ = context_.service.feed(yt::FeedKind::related).items;
-            related_.title = "Recommended";
+            related_.title = tr("Recommended");
         }
         std::vector<ui::CardItem> cards;
         cards.reserve(related_items_.size());
@@ -888,14 +870,15 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + view.subscribers;
         if (!view.info.view_count.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") +
-                    grouped_digits(view.info.view_count) + " views";
+                    trf("{} views", grouped_digits(view.info.view_count));
         // When it was uploaded.
         if (const std::string uploaded = upload_line(view); !uploaded.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + uploaded;
         // Return YouTube Dislike's counts.
         if (view.likes >= 0 && view.dislikes >= 0)
-            meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + yt::compact_count(view.likes) +
-                    " likes / " + yt::compact_count(view.dislikes) + " dislikes";
+            meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") +
+                    trf("{} likes / {} dislikes", yt::compact_count(view.likes),
+                        yt::compact_count(view.dislikes));
         // The chapter playing, after the channel and views.
         if (player_ != nullptr && !chapters_.empty())
         {
@@ -981,7 +964,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         history_toast_for_ = view.info.video_id;
         // Only a failure is worth a word now that history works.
         if (view.history_status != "ok")
-            context_.toasts.push(ui::StatusKind::warning, "Not added to YouTube history",
+            context_.toasts.push(ui::StatusKind::warning, tr("Not added to YouTube history"),
                                  view.history_status, 4.0f);
     }
     update_captions();
@@ -1083,27 +1066,30 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         case PlayerChrome::Command::toggle_audio_only:
             context_.settings.audio_only = !context_.settings.audio_only;
             context_.settings_changed = true;
-            context_.toasts.push(
-                ui::StatusKind::info, context_.settings.audio_only ? "Audio only" : "Video back on",
-                context_.settings.audio_only ? "The smallest picture is fetched to save the network"
-                                             : "The picture returns at your quality",
-                3.0f);
+            context_.toasts.push(ui::StatusKind::info,
+                                 context_.settings.audio_only ? tr("Audio only")
+                                                              : tr("Video back on"),
+                                 context_.settings.audio_only
+                                     ? tr("The smallest picture is fetched to save the network")
+                                     : tr("The picture returns at your quality"),
+                                 3.0f);
             reopen();
             break;
         case PlayerChrome::Command::lock_controls:
             // The app swallows the controller from here (App::gate_input).
             context_.controls_locked = true;
             chrome_.hide();
-            context_.toasts.push(ui::StatusKind::info, "Controls locked",
-                                 "Hold Circle for 2 seconds to unlock", 4.0f);
+            context_.toasts.push(ui::StatusKind::info, tr("Controls locked"),
+                                 tr("Hold Circle for 2 seconds to unlock"), 4.0f);
             break;
         case PlayerChrome::Command::cycle_mode:
         {
             // SmartTube's playback mode button: next, shuffle, repeat,
             // pause, close, and round again. It is the setting itself.
             static const int kOrder[] = {0, 4, 1, 2, 3};
-            static const char *const kNames[] = {"Play next", "Repeat the video",
-                                                 "Pause at the end", "Close at the end", "Shuffle"};
+            const char *const kNames[] = {tr("Play next"), tr("Repeat the video"),
+                                          tr("Pause at the end"), tr("Close at the end"),
+                                          tr("Shuffle")};
             int at = 0;
             for (int i = 0; i < 5; ++i)
                 if (kOrder[i] == context_.settings.playback_mode)
@@ -1112,7 +1098,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             context_.settings_changed = true;
             shuffle_pick_.clear();
             context_.toasts.push(ui::StatusKind::info, kNames[context_.settings.playback_mode],
-                                 "Playback mode", 1.5f);
+                                 tr("Playback mode"), 1.5f);
             break;
         }
         case PlayerChrome::Command::pick:
@@ -1146,7 +1132,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             {
                 context_.service.set_subscribed(view.info.channel_id, !view.subscribed);
                 context_.toasts.push(ui::StatusKind::info,
-                                     view.subscribed ? "Unsubscribed" : "Subscribed",
+                                     view.subscribed ? tr("Unsubscribed") : tr("Subscribed"),
                                      view.info.author, 2.0f);
             }
             break;
@@ -1246,7 +1232,8 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             sleep_at_end_ = false;
             chrome_.set_sleep_on(false);
             mode = 2;
-            context_.toasts.push(ui::StatusKind::info, "Sleep timer", "Playback stopped", 4.0f);
+            context_.toasts.push(ui::StatusKind::info, tr("Sleep timer"), tr("Playback stopped"),
+                                 4.0f);
         }
         if (mode == 1)
         {
@@ -1274,7 +1261,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         else
         {
             back_armed_ = 2.0f;
-            context_.toasts.push(ui::StatusKind::info, "Press Circle again to exit", {}, 2.0f);
+            context_.toasts.push(ui::StatusKind::info, tr("Press Circle again to exit"), {}, 2.0f);
         }
     }
 
@@ -1660,7 +1647,7 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
     {
     case PlayerChrome::Command::open_captions:
     {
-        std::vector<std::string> options{"Off"};
+        std::vector<std::string> options{tr("Off")};
         int selected = 0;
         for (std::size_t i = 0; i < view.info.captions.size(); ++i)
         {
@@ -1669,8 +1656,8 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
                 selected = static_cast<int>(i) + 1;
         }
         if (options.size() == 1)
-            options[0] = "Off (this video has no subtitles)";
-        chrome_.open_panel(PlayerChrome::Panel::captions, "Subtitles", std::move(options),
+            options[0] = tr("Off (this video has no subtitles)");
+        chrome_.open_panel(PlayerChrome::Panel::captions, tr("Subtitles"), std::move(options),
                            selected);
         break;
     }
@@ -1685,7 +1672,7 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
             if (std::abs(kSpeeds[i] - speed_) < 0.01)
                 selected = i;
         }
-        chrome_.open_panel(PlayerChrome::Panel::speed, "Playback speed", std::move(options),
+        chrome_.open_panel(PlayerChrome::Panel::speed, tr("Playback speed"), std::move(options),
                            selected);
         break;
     }
@@ -1708,8 +1695,8 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
                          });
         menu_heights_.clear();
         menu_itags_.clear();
-        std::vector<std::string> options{"Auto (up to " +
-                                         std::to_string(context_.settings.max_height) + "p)"};
+        std::vector<std::string> options{
+            trf("Auto (up to {}p)", std::to_string(context_.settings.max_height))};
         int selected = quality_override_ == 0 && itag_override_ == 0 ? 0 : -1;
         for (const yt::Format *format : formats)
         {
@@ -1728,7 +1715,7 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
             // experimental, so those picks keep a note.
             const bool heavy = format->height > 1080;
             options.emplace_back(std::string(line) +
-                                 (heavy ? "  (console decoder, experimental)" : ""));
+                                 (heavy ? tr("  (console decoder, experimental)") : ""));
             menu_heights_.push_back(format->height);
             menu_itags_.push_back(format->itag);
             if (format->itag == itag_override_)
@@ -1741,7 +1728,7 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
                     selected = static_cast<int>(i) + 1;
                     break;
                 }
-        chrome_.open_panel(PlayerChrome::Panel::quality, "Video formats", std::move(options),
+        chrome_.open_panel(PlayerChrome::Panel::quality, tr("Video formats"), std::move(options),
                            std::max(0, selected));
         break;
     }
@@ -1753,7 +1740,7 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
         for (const yt::Chapter &chapter : chapters_)
             options.push_back(chapter_time(chapter.start_s) + "   " + chapter.title);
         const int at = player_ != nullptr ? yt::chapter_at(chapters_, player_->clock_s()) : 0;
-        chrome_.open_panel(PlayerChrome::Panel::chapters, "Chapters", std::move(options),
+        chrome_.open_panel(PlayerChrome::Panel::chapters, tr("Chapters"), std::move(options),
                            std::max(0, at));
         break;
     }
@@ -1773,17 +1760,18 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
                     grouped += ',';
                 grouped += digits[i];
             }
-            head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + grouped + " views";
+            head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + trf("{} views", grouped);
         }
         if (const std::string uploaded = upload_line(view); !uploaded.empty())
             head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + uploaded;
         if (view.likes >= 0 && view.dislikes >= 0)
-            head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + yt::compact_count(view.likes) +
-                    " likes / " + yt::compact_count(view.dislikes) + " dislikes";
+            head += (head.empty() ? "" : "  \xE2\x80\xA2  ") +
+                    trf("{} likes / {} dislikes", yt::compact_count(view.likes),
+                        yt::compact_count(view.dislikes));
         if (!head.empty())
             lines.push_back(head);
-        const std::string text =
-            view.info.description.empty() ? std::string("No description.") : view.info.description;
+        const std::string text = view.info.description.empty() ? std::string(tr("No description."))
+                                                               : view.info.description;
         std::size_t at = 0;
         while (at <= text.size() && context_.fonts.regular.font != nullptr)
         {
@@ -1801,7 +1789,7 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
             at = end + 1;
         }
         chrome_.open_panel(PlayerChrome::Panel::info,
-                           view.info.title.empty() ? std::string("Info") : view.info.title,
+                           view.info.title.empty() ? std::string(tr("Info")) : view.info.title,
                            std::move(lines), -1);
         break;
     }
@@ -1812,20 +1800,21 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
             context_.service.request_comments(id, false);
         comments_seen_ = context_.service.comments_revision();
         comments_asked_more_ = false;
-        chrome_.open_panel(PlayerChrome::Panel::comments, "Comments", comment_lines(), -1);
+        chrome_.open_panel(PlayerChrome::Panel::comments, tr("Comments"), comment_lines(), -1);
         break;
     }
     case PlayerChrome::Command::open_sleep:
     {
         // SmartTube's sleep timer: stop after a while, or at the video's end.
         std::vector<std::string> options{
-            "Off",        "15 minutes", "30 minutes",       "45 minutes",
-            "60 minutes", "90 minutes", "End of this video"};
+            tr("Off"),        tr("15 minutes"), tr("30 minutes"),       tr("45 minutes"),
+            tr("60 minutes"), tr("90 minutes"), tr("End of this video")};
         int selected = sleep_at_end_ ? 6 : sleep_left_s_ > 0.0f ? -1 : 0;
         if (sleep_left_s_ > 0.0f)
-            options[0] = "Off (" + std::to_string(static_cast<int>(sleep_left_s_ / 60.0f) + 1) +
-                         " min left)";
-        chrome_.open_panel(PlayerChrome::Panel::sleep, "Sleep timer", std::move(options), selected);
+            options[0] = trf("Off ({} min left)",
+                             std::to_string(static_cast<int>(sleep_left_s_ / 60.0f) + 1));
+        chrome_.open_panel(PlayerChrome::Panel::sleep, tr("Sleep timer"), std::move(options),
+                           selected);
         break;
     }
     case PlayerChrome::Command::open_dim:
@@ -1837,13 +1826,13 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
         for (int level = 100, i = 0; level >= 0; level -= 10, ++i)
         {
             options.push_back(std::to_string(level) + "%" +
-                              (level == 100 ? "  (no dimming)"
-                               : level == 0 ? "  (screen off)"
+                              (level == 100 ? tr("  (no dimming)")
+                               : level == 0 ? tr("  (screen off)")
                                             : ""));
             if (level == context_.settings.video_brightness)
                 selected = i;
         }
-        chrome_.open_panel(PlayerChrome::Panel::dim, "Screen dimming", std::move(options),
+        chrome_.open_panel(PlayerChrome::Panel::dim, tr("Screen dimming"), std::move(options),
                            selected);
         break;
     }
@@ -1856,11 +1845,12 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
             menu_tracks_.push_back(tracks[i].id);
-            options.push_back(tracks[i].name + (tracks[i].is_default ? "  (original)" : ""));
+            options.push_back(tracks[i].name + (tracks[i].is_default ? tr("  (original)") : ""));
             if ((audio_track_.empty() && tracks[i].is_default) || tracks[i].id == audio_track_)
                 selected = static_cast<int>(i);
         }
-        chrome_.open_panel(PlayerChrome::Panel::audio, "Audio track", std::move(options), selected);
+        chrome_.open_panel(PlayerChrome::Panel::audio, tr("Audio track"), std::move(options),
+                           selected);
         break;
     }
     default:
@@ -1949,13 +1939,13 @@ void PlayerScreen::apply_pick()
         sleep_at_end_ = pick == 6;
         sleep_left_s_ = pick >= 1 && pick <= 5 ? kMinutes[pick] * 60.0f : -1.0f;
         chrome_.set_sleep_on(sleep_at_end_ || sleep_left_s_ > 0.0f);
-        context_.toasts.push(ui::StatusKind::info, "Sleep timer",
-                             sleep_at_end_ ? std::string("Stops at the end of this video")
-                             : sleep_left_s_ > 0.0f
-                                 ? "Stops in " + std::to_string(static_cast<int>(kMinutes[pick])) +
-                                       " minutes"
-                                 : std::string("Off"),
-                             2.0f);
+        context_.toasts.push(
+            ui::StatusKind::info, tr("Sleep timer"),
+            sleep_at_end_ ? std::string(tr("Stops at the end of this video"))
+            : sleep_left_s_ > 0.0f
+                ? trf("Stops in {} minutes", std::to_string(static_cast<int>(kMinutes[pick])))
+                : std::string(tr("Off")),
+            2.0f);
         break;
     }
     case PlayerChrome::Panel::dim:
@@ -1978,13 +1968,13 @@ std::vector<std::string> PlayerScreen::comment_lines() const
     std::vector<std::string> lines;
     for (const yt::Comment &comment : view.items)
     {
-        std::string head = comment.author.empty() ? std::string("Someone") : comment.author;
+        std::string head = comment.author.empty() ? std::string(tr("Someone")) : comment.author;
         if (!comment.published.empty())
             head += "  \xE2\x80\xA2  " + comment.published;
         if (!comment.likes.empty())
-            head += "  \xE2\x80\xA2  " + comment.likes + " likes";
+            head += "  \xE2\x80\xA2  " + trf("{} likes", comment.likes);
         if (!comment.replies.empty())
-            head += "  \xE2\x80\xA2  " + comment.replies + " replies";
+            head += "  \xE2\x80\xA2  " + trf("{} replies", comment.replies);
         lines.push_back(head);
         std::size_t at = 0;
         const std::string &text = comment.text;
@@ -2006,10 +1996,10 @@ std::vector<std::string> PlayerScreen::comment_lines() const
             break;
     }
     if (view.state == yt::Load::loading || view.more)
-        lines.push_back(view.state == yt::Load::loading ? "Loading comments..."
-                                                        : "More comments load as you scroll");
+        lines.push_back(view.state == yt::Load::loading ? tr("Loading comments...")
+                                                        : tr("More comments load as you scroll"));
     else if (lines.empty())
-        lines.push_back(view.error.empty() ? std::string("No comments.") : view.error);
+        lines.push_back(view.error.empty() ? std::string(tr("No comments.")) : view.error);
     return lines;
 }
 
@@ -2027,8 +2017,8 @@ void PlayerScreen::update_extras(float dt)
             yt::log::line("player: no picture at %dp after 8 s; 1080p", quality_override_);
             quality_override_ = 1080;
             itag_override_ = 0;
-            context_.toasts.push(ui::StatusKind::info, "Switched to 1080p",
-                                 "This quality showed no picture on this console", 4.0f);
+            context_.toasts.push(ui::StatusKind::info, tr("Switched to 1080p"),
+                                 tr("This quality showed no picture on this console"), 4.0f);
             reopen();
             return;
         }
@@ -2061,9 +2051,10 @@ void PlayerScreen::update_extras(float dt)
                 heavy_hint_for_ = playing_id_;
                 yt::log::line("player: %dp drops frames (%llu in 4 s); tip shown",
                               player_->source_height(), static_cast<unsigned long long>(fresh));
-                context_.toasts.push(ui::StatusKind::info, "4K is at the PS5 decoder's limit here",
-                                     "1440p looks the same on this screen and plays smoothly "
-                                     "(Quality in the player)",
+                context_.toasts.push(ui::StatusKind::info,
+                                     tr("4K is at the PS5 decoder's limit here"),
+                                     tr("1440p looks the same on this screen and plays smoothly "
+                                        "(Quality in the player)"),
                                      8.0f);
             }
             else if (smooth_strikes_ >= 2)
@@ -2074,8 +2065,8 @@ void PlayerScreen::update_extras(float dt)
                 quality_override_ = 1080;
                 itag_override_ = 0;
                 context_.toasts.push(
-                    ui::StatusKind::info, "Switched to 1080p",
-                    "This video was too heavy to play smoothly at a higher quality", 4.0f);
+                    ui::StatusKind::info, tr("Switched to 1080p"),
+                    tr("This video was too heavy to play smoothly at a higher quality"), 4.0f);
                 reopen();
                 return;
             }
@@ -2118,7 +2109,8 @@ void PlayerScreen::update_extras(float dt)
             if (player_ != nullptr)
                 player_->set_paused(true);
             chrome_.show();
-            context_.toasts.push(ui::StatusKind::info, "Sleep timer", "Playback paused", 4.0f);
+            context_.toasts.push(ui::StatusKind::info, tr("Sleep timer"), tr("Playback paused"),
+                                 4.0f);
         }
     }
 }
@@ -2139,7 +2131,7 @@ void PlayerScreen::jump_chapter(int step)
     const yt::Chapter &chapter = chapters_[static_cast<std::size_t>(target)];
     player_->seek(chapter.start_s);
     chrome_.show();
-    context_.toasts.push(ui::StatusKind::info, chapter.title, "Chapter", 2.0f);
+    context_.toasts.push(ui::StatusKind::info, chapter.title, tr("Chapter"), 2.0f);
 }
 
 void PlayerScreen::update_captions()
@@ -2282,9 +2274,9 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
             canvas.list.image(cover, box, gfx::kFullUv, gfx::Color::rgb(0xffffff, 0.85f), 18.0f);
         else
             canvas.list.rounded_rect(box, 18.0f, gfx::Color::rgb(0x202020));
-        ui::text(canvas.list, context.fonts.semibold, "Audio only", gfx::kVirtualWidth * 0.5f,
+        ui::text(canvas.list, context.fonts.semibold, tr("Audio only"), gfx::kVirtualWidth * 0.5f,
                  790.0f, 30.0f, gfx::Color::rgb(0xffffff), gfx::Align::center);
-        ui::text(canvas.list, context.fonts.regular, "Turn it off in the player's buttons",
+        ui::text(canvas.list, context.fonts.regular, tr("Turn it off in the player's buttons"),
                  gfx::kVirtualWidth * 0.5f, 830.0f, 22.0f, gfx::Color::rgb(0x999999),
                  gfx::Align::center);
     }
@@ -2294,10 +2286,10 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
         const bool no_stream = view.error.starts_with("no_stream");
         const bool needs_login = view.error == "login_required";
         const bool timed_out = view.error == "timeout";
-        const char *headline = needs_login ? "Sign-in required"
+        const char *headline = needs_login ? tr("Sign-in required")
                                : no_stream ? kNoStream
-                               : timed_out ? "Playback timed out"
-                                           : "Playback failed";
+                               : timed_out ? tr("Playback timed out")
+                                           : tr("Playback failed");
         ui::text(canvas.list, context.fonts.semibold, headline, gfx::kVirtualWidth * 0.5f, 470.0f,
                  36.0f,
                  (needs_login || no_stream) ? gfx::Color::rgb(0xf5a524) : gfx::Color::rgb(0xe5484d),
@@ -2307,7 +2299,7 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
                           1000.0f, 30.0f, gfx::Color::rgb(0xaaaaaa), 3, gfx::Align::center);
         if (no_stream)
         {
-            ui::text(canvas.list, context.fonts.regular, "Enable another codec in Settings.",
+            ui::text(canvas.list, context.fonts.regular, tr("Enable another codec in Settings."),
                      gfx::kVirtualWidth * 0.5f, 520.0f, 24.0f, gfx::Color::rgb(0xaaaaaa),
                      gfx::Align::center);
             // The failure text carries the format census after the "no_stream"
@@ -2323,12 +2315,12 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
         }
         if (timed_out)
             ui::text(canvas.list, context.fonts.regular,
-                     "The stream did not answer in time. Details: /download0/hui/dev/yt.log",
+                     tr("The stream did not answer in time. Details: /download0/hui/dev/yt.log"),
                      gfx::kVirtualWidth * 0.5f, 520.0f, 24.0f, gfx::Color::rgb(0xaaaaaa),
                      gfx::Align::center);
         if (needs_login)
             ui::text(canvas.list, context.fonts.regular,
-                     "YouTube requires a signed-in account for playback on this network.",
+                     tr("YouTube requires a signed-in account for playback on this network."),
                      gfx::kVirtualWidth * 0.5f, 520.0f, 24.0f, gfx::Color::rgb(0xaaaaaa),
                      gfx::Align::center);
         // Name the stage that failed and, once the request has waited, show the
@@ -2337,7 +2329,7 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
             ui::text(canvas.list, context.fonts.regular, view.stage, gfx::kVirtualWidth * 0.5f,
                      556.0f, 22.0f, gfx::Color::rgb(0x777777), gfx::Align::center);
         draw_log_lines(canvas, context, 10);
-        const char *hint = needs_login ? "X: sign in      Circle: back" : "Circle: back";
+        const char *hint = needs_login ? tr("X: sign in      Circle: back") : tr("Circle: back");
         ui::text(canvas.list, context.fonts.regular, hint, gfx::kVirtualWidth * 0.5f, 600.0f, 24.0f,
                  gfx::Color::rgb(0x777777), gfx::Align::center);
         return;
@@ -2480,8 +2472,9 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
                           gfx::kVirtualWidth - x - 80.0f, 38.0f, gfx::Color::rgb(0xffffff), 3);
             ui::text(canvas.list, context.fonts.regular, view.info.author, x, 900.0f, 24.0f,
                      gfx::Color::rgb(0xbbbbbb));
-            ui::text(canvas.list, context.fonts.regular, "Up: previous   Down: next   X: controls",
-                     x, 960.0f, 20.0f, gfx::Color::rgb(0x888888));
+            ui::text(canvas.list, context.fonts.regular,
+                     tr("Up: previous   Down: next   X: controls"), x, 960.0f, 20.0f,
+                     gfx::Color::rgb(0x888888));
         }
     }
     if (clock_ - shorts_swipe_s_ < 0.35f)
@@ -2508,14 +2501,14 @@ void PlayerScreen::draw(const Context &context, Frame &frame) const
     }
 
     if (player_ != nullptr && ended_)
-        ui::text(canvas.list, context.fonts.semibold, "Ended", gfx::kVirtualWidth * 0.5f, 500.0f,
-                 30.0f, gfx::Color::rgb(0xf5a524), gfx::Align::center);
+        ui::text(canvas.list, context.fonts.semibold, tr("Ended"), gfx::kVirtualWidth * 0.5f,
+                 500.0f, 30.0f, gfx::Color::rgb(0xf5a524), gfx::Align::center);
 
     if (!sponsor_here_.empty() && chrome_.visibility() < 0.5f)
     {
         // The skip offer while the controls are away (they carry their own
         // "Skip" button): bottom right, Triangle skips.
-        const std::string text = "Triangle  Skip " + sponsor_here_;
+        const std::string text = trf("Triangle  Skip {}", sponsor_here_);
         constexpr float kSize = 26.0f;
         const float width = (context.fonts.semibold.font != nullptr
                                  ? context.fonts.semibold.font->measure(text, kSize)
