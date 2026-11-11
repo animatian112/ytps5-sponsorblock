@@ -7,6 +7,8 @@
 
 #include "app/home_screen.hpp"
 
+#include "core/i18n.hpp"
+
 #include <algorithm>
 #include "yt/log.hpp"
 
@@ -38,8 +40,14 @@ const TourStep kTour[] = {
 // are different states and must not read the same. Signed out YouTube
 // answers an empty home feed from most networks; the app says why instead of
 // showing nothing.
-const char *kSignedOutEmpty = "Sign in to see your Home feed - or use Search";
-const char *kSignedInEmpty = "No feed available - use Search";
+const char *signed_out_empty()
+{
+    return tr("Sign in to see your Home feed - or use Search");
+}
+const char *signed_in_empty()
+{
+    return tr("No feed available - use Search");
+}
 
 } // namespace
 
@@ -109,21 +117,21 @@ void HomeScreen::refresh_from_service()
         rows_.set_items(rows, context_);
     if (context_.service.signed_in())
     {
-        feed_.set_empty_text(kSignedInEmpty);
+        feed_.set_empty_text(signed_in_empty());
         feed_.set_state(view.state, view.error);
     }
     else if (context_.service.has_token())
     {
         // The saved account is still signing in: Home is on its way, not
         // missing.
-        feed_.set_empty_text(kSignedInEmpty);
+        feed_.set_empty_text(signed_in_empty());
         feed_.set_state(view.items.empty() ? yt::Load::loading : yt::Load::ready, {});
     }
     else
     {
         // Not signed in: there is no feed to load or to fail - the empty
         // text names the missing account, never "no feed".
-        feed_.set_empty_text(kSignedOutEmpty);
+        feed_.set_empty_text(signed_out_empty());
         feed_.set_state(yt::Load::idle, {});
     }
     more_requested_ = false;
@@ -153,7 +161,7 @@ void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedbac
             context_.service.request_history();
             context_.service.request_subscriptions(true);
         }
-        context_.toasts.push(ui::StatusKind::info, "Refreshing Home", {}, 1.5f);
+        context_.toasts.push(ui::StatusKind::info, tr("Refreshing Home"), {}, 1.5f);
         feedback.play(audio::Cue::select);
     }
     // The account can arrive after Home opened (the saved token loads in the

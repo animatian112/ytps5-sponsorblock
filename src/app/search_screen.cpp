@@ -8,6 +8,8 @@
 
 #include "app/search_screen.hpp"
 
+#include "core/i18n.hpp"
+
 #include "app/theme.hpp"
 #include "app/thumbs.hpp"
 #include "yt/log.hpp"
@@ -76,7 +78,9 @@ constexpr float kChannelResultsH = 560.0f;
 SearchScreen::SearchScreen(Context &context) : context_(context)
 {
     field_.style.theme = youtube_theme();
-    field_.set_placeholder("Search videos");
+    field_.set_placeholder(tr("Search videos"));
+    field_.style.recent_title = tr("Recent");
+    field_.style.empty_text = tr("No matches");
     // provider stays empty: no suggestions from the network.
     field_.set_bounds({kContentX, 140.0f, kContentW, 64.0f});
     field_.set_active(true);
@@ -86,18 +90,23 @@ SearchScreen::SearchScreen(Context &context) : context_(context)
     filters_.style.panel = true;
     filters_.style.on_page = false;
     filters_.set_bounds({1120.0f, 230.0f, 720.0f, 330.0f});
-    filters_.add_header("Search filters");
-    filters_.add_choice(1, "Sort by", {"Relevance", "Upload date", "View count", "Rating"},
+    filters_.add_header(tr("Search filters"));
+    filters_.add_choice(1, tr("Sort by"),
+                        {tr("Relevance"), tr("Upload date"), tr("View count"), tr("Rating")},
                         context_.settings.search_sort);
-    filters_.add_choice(2, "Upload date",
-                        {"Any time", "Last hour", "Today", "This week", "This month", "This year"},
+    filters_.add_choice(2, tr("Upload date"),
+                        {tr("Any time"), tr("Last hour"), tr("Today"), tr("This week"),
+                         tr("This month"), tr("This year")},
                         context_.settings.search_date);
-    filters_.add_choice(3, "Length", {"Any", "Under 4 minutes", "4-20 minutes", "Over 20 minutes"},
-                        context_.settings.search_duration);
+    filters_.add_choice(
+        3, tr("Length"),
+        {tr("Any"), tr("Under 4 minutes"), tr("4-20 minutes"), tr("Over 20 minutes")},
+        context_.settings.search_duration);
 
     // The PlayStation's own keyboard: a full-width dark band at the bottom,
     // grey keys, the focused one white with dark text, Done a lighter key; Square
-    // deletes, Triangle types a space, L2 shifts, R2 switches to symbols.
+    // deletes, Triangle types a space, L2 shifts, R2 switches to symbols, L3
+    // (and the globe key) to the next language.
     static const ui::Theme kPs5Keys = []
     {
         ui::Theme theme = youtube_theme();
@@ -119,43 +128,34 @@ SearchScreen::SearchScreen(Context &context) : context_(context)
     keys_.style.gap = 10.0f;
     keys_.style.label_size = 32.0f;
     keys_.style.bindings = ui::KeyboardBindings::standard();
-    {
-        using ui::KeyboardKey;
-        using ui::KeyKind;
-        ui::KeyboardLayout letters;
-        letters.name = "abc";
-        letters.columns = 11;
-        letters.add_row("1234567890");
-        letters.rows.back().push_back({KeyKind::backspace, {}, {}, 1, {}});
-        letters.add_row("qwertyuiop-");
-        letters.add_row("asdfghjkl'&");
-        letters.rows[2][9].shifted = "\"";
-        letters.add_row(std::vector<KeyboardKey>{{KeyKind::shift, {}, {}, 1, {}}});
-        for (const char ch : std::string("zxcvbnm,.?"))
-        {
-            KeyboardKey key;
-            key.text = std::string(1, ch);
-            if (ch >= 'a' && ch <= 'z')
-                key.shifted = std::string(1, static_cast<char>(ch - 'a' + 'A'));
-            letters.rows.back().push_back(std::move(key));
-        }
-        letters.add_row(std::vector<KeyboardKey>{{KeyKind::layout, {}, {}, 2, "@#:"},
-                                                 {KeyKind::space, {}, {}, 6, {}},
-                                                 {KeyKind::done, {}, {}, 3, {}}});
-        ui::KeyboardLayout symbols = ui::KeyboardLayout::symbols();
-        symbols.name = "@#:";
-        keys_.set_layouts({letters, symbols});
-    }
+    keys_.style.space_label = tr("Space");
+    keys_.style.done_label = tr("Done");
+    // The letters of each language in Settings > Search, then the symbols.
+    keyboard_languages_.sync(keys_, context_.settings);
     keys_.set_bounds({300.0f, 640.0f, 1320.0f, 410.0f});
     // Up from the top row leaves for the suggestion row above it.
     keys_.style.exits.up = true;
-    keys_.on_text = [this](std::string_view text) { field_.insert(text); };
+    keys_.on_text = [this](std::string_view text)
+    {
+        // The Japanese ゛゜小 key changes the kana before it instead of typing.
+        if (is_kana_modifier(text))
+        {
+            const std::string next = next_kana_form(field_.text());
+            if (!next.empty())
+            {
+                field_.backspace();
+                field_.insert(next);
+            }
+            return;
+        }
+        field_.insert(text);
+    };
     keys_.on_backspace = [this] { field_.backspace(); };
     keys_.on_done = [this] { run_search(); };
 
     results_.grid().style.theme = card_theme();
     results_.set_bounds({kContentX, kResultsY, kContentW, kResultsH});
-    results_.set_empty_text("No results");
+    results_.set_empty_text(tr("No results"));
     results_.set_active(false);
 
     // Channel avatars: square art, the name and the subscriber line under it.
@@ -207,6 +207,8 @@ void SearchScreen::enter()
     results_.set_active(false);
     channels_.set_active(false);
     tabs_.set_focused(false);
+    // Settings > Search > Keyboard languages may have changed meanwhile.
+    keyboard_languages_.sync(keys_, context_.settings);
     // Settings > Search > Show keyboard automatically.
     if (context_.settings.keyboard_auto)
     {
@@ -217,10 +219,10 @@ void SearchScreen::enter()
 
 std::string SearchScreen::filter_summary() const
 {
-    static const char *const kSort[] = {"", "Upload date", "View count", "Rating"};
-    static const char *const kDate[] = {"",          "Last hour",  "Today",
-                                        "This week", "This month", "This year"};
-    static const char *const kLength[] = {"", "Under 4 min", "4-20 min", "Over 20 min"};
+    const char *const kSort[] = {"", tr("Upload date"), tr("View count"), tr("Rating")};
+    const char *const kDate[] = {
+        "", tr("Last hour"), tr("Today"), tr("This week"), tr("This month"), tr("This year")};
+    const char *const kLength[] = {"", tr("Under 4 min"), tr("4-20 min"), tr("Over 20 min")};
     const Settings &s = context_.settings;
     std::string out;
     for (const char *part :
@@ -425,8 +427,8 @@ void SearchScreen::draw_chips(ui::Canvas &canvas, const Context &context) const
         x += w + kGap;
     }
     if (!active)
-        ui::text(canvas.list, context.fonts.regular, "Up: suggestions", kRight, kY - 12.0f, 18.0f,
-                 gfx::Color::rgb(0x9a9a9a), gfx::Align::right);
+        ui::text(canvas.list, context.fonts.regular, tr("Up: suggestions"), kRight, kY - 12.0f,
+                 18.0f, gfx::Color::rgb(0x9a9a9a), gfx::Align::right);
 }
 
 void SearchScreen::run_search()
@@ -441,7 +443,7 @@ void SearchScreen::run_search()
     context_.service.request_search(field_.text());
     results_.set_items(std::vector<yt::FeedItem>{}, context_);
     results_.set_state(yt::Load::loading, std::string());
-    results_.set_empty_text("No results");
+    results_.set_empty_text(tr("No results"));
 }
 
 void SearchScreen::refresh_results()
@@ -449,7 +451,7 @@ void SearchScreen::refresh_results()
     const yt::FeedView view = context_.service.search_feed();
     results_.set_items(view.items, context_);
     results_.set_state(view.state, view.error);
-    results_.set_empty_text("No results");
+    results_.set_empty_text(tr("No results"));
     searching_ = view.state == yt::Load::loading;
     more_requested_ = false;
 
@@ -509,7 +511,7 @@ void SearchScreen::refresh_channel_feed()
     const yt::FeedView view = context_.service.feed(yt::FeedKind::channel);
     results_.set_items(view.items, context_);
     results_.set_state(view.state, view.error);
-    results_.set_empty_text("No videos");
+    results_.set_empty_text(tr("No videos"));
     results_.set_bounds({kContentX, kChannelResultsY, kContentW, kChannelResultsH});
     more_requested_ = false;
 }
@@ -549,7 +551,7 @@ void SearchScreen::open_channel_item(const yt::ChannelItem &channel)
         // Drop the previous channel's videos; the answer replaces them.
         results_.set_items(std::vector<yt::FeedItem>{}, context_);
         results_.set_state(yt::Load::loading, std::string());
-        results_.set_empty_text("No videos");
+        results_.set_empty_text(tr("No videos"));
         results_.set_bounds({kContentX, kChannelResultsY, kContentW, kChannelResultsH});
     }
 
@@ -855,6 +857,10 @@ void SearchScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     channels_.set_active(live && spot_ == Spot::channels);
     tabs_.set_focused(live && spot_ == Spot::tabs);
 
+    // Settings > Search > Keyboard languages may have changed, and the globe
+    // key's language is where the keyboard opens next time.
+    if (keyboard_languages_.sync(keys_, context_.settings))
+        context_.settings_changed = true;
     field_.update(dt);
     keys_.update(dt);
     results_.update(dt, context_);
@@ -867,7 +873,7 @@ void SearchScreen::draw_channel(ui::Canvas &canvas, const Context &context) cons
     if (channel_header_.name.empty())
     {
         if (channel_state_ == yt::Load::loading)
-            ui::text(canvas.list, context.fonts.regular, "Loading channel...", kChannelNameX,
+            ui::text(canvas.list, context.fonts.regular, tr("Loading channel..."), kChannelNameX,
                      kChannelNameBaseline, 24.0f, kMuted);
         return;
     }
@@ -887,7 +893,7 @@ void SearchScreen::draw_channel(ui::Canvas &canvas, const Context &context) cons
     // The tabs of the page, and the note that its videos are still coming.
     tabs_.draw(canvas);
     if (channel_state_ == yt::Load::loading)
-        ui::text(canvas.list, context.fonts.regular, "Loading channel...", kContentX,
+        ui::text(canvas.list, context.fonts.regular, tr("Loading channel..."), kContentX,
                  kChannelResultsY - 14.0f, 22.0f, kMuted);
 }
 
@@ -909,8 +915,8 @@ void SearchScreen::draw(const Context &context, Frame &frame) const
     {
         // Which filters the next search carries, above the field.
         const std::string summary = filter_summary();
-        const std::string line = summary.empty() ? std::string("Triangle: search filters")
-                                                 : "Filters: " + summary + "   (Triangle)";
+        const std::string line = summary.empty() ? std::string(tr("Triangle: search filters"))
+                                                 : trf("Filters: {}   (Triangle)", summary);
         ui::text(canvas.list, context.fonts.regular, line.c_str(), kContentX, 122.0f, 20.0f,
                  summary.empty() ? gfx::Color::rgb(0x777777) : gfx::Color::rgb(0xcfcfcf));
     }

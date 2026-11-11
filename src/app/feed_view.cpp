@@ -4,6 +4,8 @@
 
 #include "app/feed_view.hpp"
 
+#include "core/i18n.hpp"
+
 #include "app/branding.hpp"
 #include "app/glow.hpp"
 #include "app/theme.hpp"
@@ -230,11 +232,11 @@ void FeedView::draw(ui::Canvas &canvas, const Context &context) const
         const gfx::Rect &bounds = grid_.bounds();
         std::string text;
         if (state_ == yt::Load::loading)
-            text = "Loading...";
+            text = tr("Loading...");
         else if (state_ == yt::Load::failed)
-            text = error_.empty() ? "No connection" : error_;
+            text = error_.empty() ? tr("No connection") : error_;
         else
-            text = empty_text_.empty() ? "Nothing here" : empty_text_;
+            text = empty_text_.empty() ? tr("Nothing here") : empty_text_;
         ui::text(canvas.list, context.fonts.regular, text, bounds.cx(), bounds.y + 60.0f, 30.0f,
                  kMuted, gfx::Align::center);
         return;
@@ -243,7 +245,7 @@ void FeedView::draw(ui::Canvas &canvas, const Context &context) const
     if (state_ == yt::Load::loading && !items_.empty())
     {
         // A small note that more rows are on the way.
-        ui::text(canvas.list, context.fonts.regular, "Loading more...", grid_.bounds().cx(),
+        ui::text(canvas.list, context.fonts.regular, tr("Loading more..."), grid_.bounds().cx(),
                  grid_.bounds().y + grid_.bounds().h - 18.0f, 22.0f, kMuted, gfx::Align::center);
     }
 }

@@ -6,6 +6,8 @@
 
 #include "app/login_screen.hpp"
 
+#include "core/i18n.hpp"
+
 #include "app/theme.hpp"
 #include "app/thumbs.hpp"
 #include "ui/components.hpp"
@@ -115,7 +117,7 @@ void LoginScreen::update(const InputFrame &input, float dt, ui::Feedback &feedba
         if (!announced_)
         {
             announced_ = true;
-            context_.toasts.push(ui::StatusKind::success, "Signed in");
+            context_.toasts.push(ui::StatusKind::success, tr("Signed in"));
         }
         // No navigation here: the app returns to the screen that asked for the
         // sign-in (and a player that was waiting retries by itself).
@@ -143,17 +145,18 @@ void LoginScreen::draw(const Context &context, Frame &frame) const
     }
     else
     {
-        ui::text(canvas.list, context.fonts.regular, "Loading code...", panel.cx(), panel.cy(),
+        ui::text(canvas.list, context.fonts.regular, tr("Loading code..."), panel.cx(), panel.cy(),
                  28.0f, gfx::Color::rgb(0x555555), gfx::Align::center);
     }
 
     // The right column: instruction, the code, the URL and the flow state.
-    ui::text(canvas.list, context.fonts.display, "Sign in", kColumnX, 300.0f, 48.0f, kInk);
-    float y = ui::paragraph(canvas.list, context.fonts.regular,
-                            "Scan the code with your phone's camera: the sign-in page opens with "
-                            "this code already filled in. Just pick your account and allow. "
-                            "Or open the address below and type it:",
-                            kColumnX, 360.0f, 24.0f, 800.0f, 34.0f, kInk);
+    ui::text(canvas.list, context.fonts.display, tr("Sign in"), kColumnX, 300.0f, 48.0f, kInk);
+    float y =
+        ui::paragraph(canvas.list, context.fonts.regular,
+                      tr("Scan the code with your phone's camera: the sign-in page opens with "
+                         "this code already filled in. Just pick your account and allow. "
+                         "Or open the address below and type it:"),
+                      kColumnX, 360.0f, 24.0f, 800.0f, 34.0f, kInk);
     y += 40.0f;
 
     const std::string code = view.user_code.empty() ? std::string("----") : view.user_code;
@@ -168,7 +171,7 @@ void LoginScreen::draw(const Context &context, Frame &frame) const
 
     if (view.state == yt::Load::loading)
     {
-        ui::text(canvas.list, context.fonts.regular, "Waiting for confirmation...", kColumnX, y,
+        ui::text(canvas.list, context.fonts.regular, tr("Waiting for confirmation..."), kColumnX, y,
                  24.0f, kMuted);
         const float pulse = ui::breathe(clock_);
         canvas.list.circle(kColumnX + 300.0f, y - 8.0f, 6.0f + 4.0f * pulse,
@@ -176,11 +179,12 @@ void LoginScreen::draw(const Context &context, Frame &frame) const
     }
     else if (view.state == yt::Load::failed)
     {
-        const std::string error = view.error.empty() ? std::string("Sign-in failed") : view.error;
+        const std::string error =
+            view.error.empty() ? std::string(tr("Sign-in failed")) : view.error;
         ui::text(canvas.list, context.fonts.regular, error, kColumnX, y, 24.0f,
                  youtube_theme().danger);
-        ui::text(canvas.list, context.fonts.regular, "Square: new code", kColumnX, y + 36.0f, 22.0f,
-                 kMuted);
+        ui::text(canvas.list, context.fonts.regular, tr("Square: new code"), kColumnX, y + 36.0f,
+                 22.0f, kMuted);
     }
 }
 

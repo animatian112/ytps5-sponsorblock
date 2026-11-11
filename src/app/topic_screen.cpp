@@ -4,6 +4,8 @@
 
 #include "app/topic_screen.hpp"
 
+#include "core/i18n.hpp"
+
 #include "app/screens.hpp"
 #include "app/glow.hpp"
 #include "app/theme.hpp"
@@ -18,7 +20,7 @@ TopicScreen::TopicScreen(Context &context, const char *id, const char *title, st
     : context_(context), id_(id), title_(title), browse_id_(std::move(browse_id))
 {
     grid_.set_bounds({kContentX, 150.0f, kContentW, 860.0f});
-    grid_.set_empty_text("Nothing here right now");
+    grid_.set_empty_text(tr("Nothing here right now"));
     rows_.set_bounds({kContentX, 140.0f, kContentW, 880.0f});
     shorts_ = browse_id_ == "FEshorts";
     if (shorts_)
@@ -43,10 +45,10 @@ void TopicScreen::enter()
     {
         browse_id_ = context_.pending_browse;
         context_.pending_browse.clear();
-        title_ = browse_id_ == "VLWL"                     ? "Watch later"
-                 : browse_id_ == "VLLL"                   ? "Liked videos"
+        title_ = browse_id_ == "VLWL"                     ? tr("Watch later")
+                 : browse_id_ == "VLLL"                   ? tr("Liked videos")
                  : !context_.pending_browse_title.empty() ? context_.pending_browse_title
-                                                          : "Playlist";
+                                                          : tr("Playlist");
         context_.pending_browse_title.clear();
     }
     // One slot serves every topic: ask for this one unless it already holds it.

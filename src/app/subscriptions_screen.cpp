@@ -4,6 +4,8 @@
 
 #include "app/subscriptions_screen.hpp"
 
+#include "core/i18n.hpp"
+
 #include "app/glow.hpp"
 #include "app/theme.hpp"
 #include "yt/service.hpp"
@@ -29,7 +31,7 @@ SubscriptionsScreen::SubscriptionsScreen(Context &context, yt::FeedKind kind)
 
     sign_in_.style.theme = youtube_theme();
     sign_in_.style.role = ui::ButtonRole::primary;
-    sign_in_.label = "Sign in";
+    sign_in_.label = tr("Sign in");
     sign_in_.set_bounds({810.0f, 560.0f, 300.0f, 64.0f});
     sign_in_.set_active(true);
 
@@ -58,11 +60,11 @@ void SubscriptionsScreen::refresh_from_service()
         std::vector<yt::FeedItem> items;
         yt::FeedItem later;
         later.video_id = "VLWL";
-        later.title = "Watch later";
+        later.title = tr("Watch later");
         items.push_back(later);
         yt::FeedItem liked;
         liked.video_id = "VLLL";
-        liked.title = "Liked videos";
+        liked.title = tr("Liked videos");
         items.push_back(liked);
         for (const yt::FeedItem &item : view.items)
         {
@@ -75,16 +77,17 @@ void SubscriptionsScreen::refresh_from_service()
         subs_.set_items(view.items, context_);
     if (context_.service.signed_in())
     {
-        subs_.set_empty_text(kind_ == yt::FeedKind::history ? "No watch history yet"
-                                                            : "No subscriptions found");
+        subs_.set_empty_text(kind_ == yt::FeedKind::history ? tr("No watch history yet")
+                                                            : tr("No subscriptions found"));
         subs_.set_state(view.state, view.error);
     }
     else
     {
         // Not signed in: the cause is the missing account, and no text may
         // claim there are no subscriptions.
-        subs_.set_empty_text(kind_ == yt::FeedKind::history ? "Sign in to see your history"
-                                                            : "Sign in to see your subscriptions");
+        subs_.set_empty_text(kind_ == yt::FeedKind::history
+                                 ? tr("Sign in to see your history")
+                                 : tr("Sign in to see your subscriptions"));
         subs_.set_state(yt::Load::idle, {});
     }
     more_requested_ = false;
@@ -162,9 +165,9 @@ void SubscriptionsScreen::draw(const Context &context, Frame &frame) const
         ui::text(canvas.list, context.fonts.semibold, title(), 960.0f, 400.0f, 40.0f,
                  gfx::Color::rgb(0xf1f1f1), gfx::Align::center);
         ui::text(canvas.list, context.fonts.regular,
-                 kind_ == yt::FeedKind::history   ? "Sign in to see your watch history."
-                 : kind_ == yt::FeedKind::library ? "Sign in to see your playlists."
-                                                  : "Sign in to see your subscriptions.",
+                 kind_ == yt::FeedKind::history   ? tr("Sign in to see your watch history.")
+                 : kind_ == yt::FeedKind::library ? tr("Sign in to see your playlists.")
+                                                  : tr("Sign in to see your subscriptions."),
                  960.0f, 470.0f, 24.0f, gfx::Color::rgb(0xaaaaaa), gfx::Align::center);
         sign_in_.draw(canvas);
         return;

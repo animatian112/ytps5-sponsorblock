@@ -8,6 +8,7 @@
 
 #include "app/screens.hpp"
 #include "app/theme.hpp"
+#include "core/i18n.hpp"
 #include "platform/ps5/system.hpp"
 #include "app/thumbs.hpp"
 #include "core/save_file.hpp"
@@ -34,6 +35,15 @@ namespace
 constexpr int kRailMyVideos = -1;
 constexpr int kRailBlocked = -2;
 constexpr int kRailPinBase = -100;
+
+// Characters, not bytes: what the name prompt's keyboard counts.
+int utf8_length(const std::string &text)
+{
+    int count = 0;
+    for (const char c : text)
+        count += (static_cast<unsigned char>(c) & 0xC0) == 0x80 ? 0 : 1;
+    return count;
+}
 } // namespace
 
 namespace
@@ -88,8 +98,8 @@ std::string first_lines(const std::string &text, int count)
 
 std::string download_body(const yt::update::Snapshot &snapshot)
 {
-    return "Version " + snapshot.latest_version + " - " + megabytes(snapshot.downloaded) + " / " +
-           megabytes(snapshot.asset_size) + " MB";
+    return trf("Version {} - {} / {} MB", snapshot.latest_version, megabytes(snapshot.downloaded),
+               megabytes(snapshot.asset_size));
 }
 
 } // namespace
@@ -105,6 +115,8 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
           pending_browse_, play_queue_, section_items_, sb_excluded_,  false,    Remote{},
           nullptr}
 {
+    // Before any screen is built: they take their words from it.
+    i18n::set_language(i18n::resolve(settings_.ui_language, sys::console_language()));
     if (!data_root_.empty())
     {
         // Pictures from earlier starts show at once.
@@ -139,17 +151,14 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     // The name prompt's keyboard (Add to new playlist).
     prompt_keys_.style.theme = youtube_theme();
     prompt_keys_.style.bindings = ui::KeyboardBindings::standard();
-    prompt_keys_.set_layouts({ui::KeyboardLayout::letters(), ui::KeyboardLayout::numeric()});
+    prompt_keys_.style.space_label = tr("Space");
+    prompt_keys_.style.done_label = tr("Done");
+    // The letters of each language in Settings > Search, then the symbols.
+    prompt_languages_.sync(prompt_keys_, settings_);
     prompt_keys_.set_bounds({560.0f, 470.0f, 1080.0f, 520.0f});
-    prompt_keys_.on_text = [this](std::string_view text)
+    // One whole UTF-8 character off the end of the name.
+    const auto erase_last = [this]
     {
-        if (prompt_text_.size() < 120)
-            prompt_text_ += text;
-        prompt_keys_.set_length(static_cast<int>(prompt_text_.size()));
-    };
-    prompt_keys_.on_backspace = [this]
-    {
-        // One whole UTF-8 character.
         while (!prompt_text_.empty())
         {
             const unsigned char last = static_cast<unsigned char>(prompt_text_.back());
@@ -157,14 +166,34 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
             if ((last & 0xC0) != 0x80)
                 break;
         }
-        prompt_keys_.set_length(static_cast<int>(prompt_text_.size()));
+    };
+    prompt_keys_.on_text = [this, erase_last](std::string_view text)
+    {
+        // The Japanese ゛゜小 key changes the kana before it instead of typing.
+        if (is_kana_modifier(text))
+        {
+            const std::string next = next_kana_form(prompt_text_);
+            if (!next.empty())
+            {
+                erase_last();
+                prompt_text_ += next;
+            }
+        }
+        else if (prompt_text_.size() < 120)
+            prompt_text_ += text;
+        prompt_keys_.set_length(utf8_length(prompt_text_));
+    };
+    prompt_keys_.on_backspace = [this, erase_last]
+    {
+        erase_last();
+        prompt_keys_.set_length(utf8_length(prompt_text_));
     };
     prompt_keys_.on_done = [this]
     {
         prompt_active_ = false;
         if (prompt_text_.empty())
             return;
-        service_.create_playlist(prompt_text_, prompt_video_, "Created " + prompt_text_);
+        service_.create_playlist(prompt_text_, prompt_video_, trf("Created {}", prompt_text_));
     };
     rail_.icon = [this](ui::Canvas &canvas, const gfx::Rect &box, const ui::NavEntry &entry, int,
                         float, gfx::Color ink)
@@ -241,13 +270,16 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     // In the order of the kXxxScreen indices (screens.hpp).
     screens_.push_back(make_search_screen(context_));
     screens_.push_back(make_home_screen(context_));
-    screens_.push_back(make_topic_screen(context_, "shorts", "Shorts", "FEshorts"));
-    screens_.push_back(make_topic_screen(context_, "sports", "Sports", "UCEgdi0XIXXZ-qJOFPf4JSKw"));
-    screens_.push_back(make_topic_screen(context_, "live", "Live", "UC4R8DWoMoI7CAwX8_LjQHig"));
-    screens_.push_back(make_topic_screen(context_, "gaming", "Gaming", "UCOpNcN46UbXVtpKMrmU4Abg"));
-    screens_.push_back(make_topic_screen(context_, "news", "News", "UCYfdidRxbB8Qhf0Nx7ioOYw"));
-    screens_.push_back(make_topic_screen(context_, "music", "Music", "UC-9-kyTW8ZkZNDHQJ6FgpwQ"));
-    screens_.push_back(make_topic_screen(context_, "channels", "Channels", "FEchannels"));
+    screens_.push_back(make_topic_screen(context_, "shorts", tr("Shorts"), "FEshorts"));
+    screens_.push_back(
+        make_topic_screen(context_, "sports", tr("Sports"), "UCEgdi0XIXXZ-qJOFPf4JSKw"));
+    screens_.push_back(make_topic_screen(context_, "live", tr("Live"), "UC4R8DWoMoI7CAwX8_LjQHig"));
+    screens_.push_back(
+        make_topic_screen(context_, "gaming", tr("Gaming"), "UCOpNcN46UbXVtpKMrmU4Abg"));
+    screens_.push_back(make_topic_screen(context_, "news", tr("News"), "UCYfdidRxbB8Qhf0Nx7ioOYw"));
+    screens_.push_back(
+        make_topic_screen(context_, "music", tr("Music"), "UC-9-kyTW8ZkZNDHQJ6FgpwQ"));
+    screens_.push_back(make_topic_screen(context_, "channels", tr("Channels"), "FEchannels"));
     screens_.push_back(make_subscriptions_screen(context_));
     screens_.push_back(make_history_screen(context_));
     screens_.push_back(make_playlists_screen(context_));
@@ -361,21 +393,21 @@ ui::Notification App::update_note(const yt::update::Snapshot &snapshot) const
 {
     ui::Notification note;
     note.seconds = -1.0f; // it stays until the player answers it
-    note.source = "Update";
+    note.source = tr("Update");
     switch (snapshot.state)
     {
     case yt::update::State::downloading:
         note.kind = ui::StatusKind::info;
-        note.title = "Downloading update";
+        note.title = tr("Downloading update");
         note.body = download_body(snapshot);
         note.progress = tween::clamp01(snapshot.progress);
-        note.actions = {"Cancel"};
+        note.actions = {tr("Cancel")};
         note.closable = false;
         break;
     case yt::update::State::staged:
         note.kind = ui::StatusKind::success;
-        note.title = "Update staged";
-        note.body = "The app closes now";
+        note.title = tr("Update staged");
+        note.body = tr("The app closes now");
         note.progress = -1.0f;
         note.actions = {};
         note.closable = false;
@@ -383,12 +415,12 @@ ui::Notification App::update_note(const yt::update::Snapshot &snapshot) const
     case yt::update::State::failed:
     {
         note.kind = ui::StatusKind::danger;
-        note.title = "Update failed";
+        note.title = tr("Update failed");
         std::string body = snapshot.error;
         if (snapshot.error.find("no payload loader on port 9021") != std::string::npos)
-            body += "\nStart the ELF loader on the console first";
+            body += std::string("\n") + tr("Start the ELF loader on the console first");
         note.body = std::move(body);
-        note.actions = {"Try again", "Later"};
+        note.actions = {tr("Try again"), tr("Later")};
         note.closable = true;
         break;
     }
@@ -398,13 +430,13 @@ ui::Notification App::update_note(const yt::update::Snapshot &snapshot) const
         const std::string running =
             snapshot.current_version.empty() ? version_ : snapshot.current_version;
         note.kind = ui::StatusKind::info;
-        note.title = "Update available";
-        std::string body = "Version " + snapshot.latest_version + " (running " + running + ")";
+        note.title = tr("Update available");
+        std::string body = trf("Version {} (running {})", snapshot.latest_version, running);
         const std::string notes = first_lines(snapshot.notes, 2);
         if (!notes.empty())
             body += "\n" + notes;
         note.body = std::move(body);
-        note.actions = {"Update now", "Later"};
+        note.actions = {tr("Update now"), tr("Later")};
         note.closable = true;
         break;
     }
@@ -650,50 +682,50 @@ void App::open_card_menu(const yt::FeedItem &item)
     const bool signed_in = service_.signed_in();
     const bool video = !item.is_playlist() && !item.is_channel();
     if (signed_in && !item.remove_history_token.empty())
-        entries.push_back({"Remove from history", kPickRemoveHistory});
+        entries.push_back({tr("Remove from history"), kPickRemoveHistory});
     if (signed_in && video)
     {
-        entries.push_back({"Save to Watch later", kPickWatchLater}); // one press
-        entries.push_back({"Add/Remove from playlist", kPickPlaylist});
-        entries.push_back({"Add to new playlist", kPickNewPlaylist});
+        entries.push_back({tr("Save to Watch later"), kPickWatchLater}); // one press
+        entries.push_back({tr("Add/Remove from playlist"), kPickPlaylist});
+        entries.push_back({tr("Add to new playlist"), kPickNewPlaylist});
     }
     // Not interested: this video goes (the channel stays); YouTube is told
     // when the card carried its token.
     if (video || !item.not_interested_token.empty())
-        entries.push_back({"Not interested", kPickNotInterested});
+        entries.push_back({tr("Not interested"), kPickNotInterested});
     if (signed_in && !item.dont_recommend_token.empty())
-        entries.push_back({"Don't recommend channel", kPickDontRecommend});
+        entries.push_back({tr("Don't recommend channel"), kPickDontRecommend});
     if (video)
-        entries.push_back({"Play next", kPickPlayNext});
+        entries.push_back({tr("Play next"), kPickPlayNext});
     if (video)
-        entries.push_back({"Shuffle play", kPickShuffle});
+        entries.push_back({tr("Shuffle play"), kPickShuffle});
     if (!item.channel_id.empty() && settings_.sb_enabled)
     {
         const bool excluded = std::find(sb_excluded_.begin(), sb_excluded_.end(),
                                         item.channel_id) != sb_excluded_.end();
-        entries.push_back({excluded ? "Include this channel in SponsorBlock"
-                                    : "Exclude this channel from SponsorBlock",
+        entries.push_back({excluded ? tr("Include this channel in SponsorBlock")
+                                    : tr("Exclude this channel from SponsorBlock"),
                            kPickSbExclude});
     }
-    entries.push_back({"Open channel", kPickChannel});
+    entries.push_back({tr("Open channel"), kPickChannel});
     if (signed_in)
-        entries.push_back({"Subscribe to the channel", kPickSubscribe});
+        entries.push_back({tr("Subscribe to the channel"), kPickSubscribe});
     if (!item.author.empty() || item.is_channel() || !item.channel_id.empty())
-        entries.push_back({"Block the channel", kPickBlock});
+        entries.push_back({tr("Block the channel"), kPickBlock});
     const std::string channel = item.is_channel() ? item.video_id : item.channel_id;
     if (pinned(channel))
-        entries.push_back({"Remove channel from the sidebar", kPickUnpin});
+        entries.push_back({tr("Remove channel from the sidebar"), kPickUnpin});
     else
-        entries.push_back({"Add channel to the sidebar", kPickPin});
+        entries.push_back({tr("Add channel to the sidebar"), kPickPin});
     if (current_ == kHistoryScreen &&
         !service_.feed(yt::FeedKind::history).clear_history_token.empty())
-        entries.push_back({"Clear history", kPickClearHistory});
+        entries.push_back({tr("Clear history"), kPickClearHistory});
     if (item.is_playlist())
-        entries.push_back({"Open playlist", kPickOpen});
+        entries.push_back({tr("Open playlist"), kPickOpen});
     if (current_ == kHomeScreen)
-        entries.push_back({"Refresh Home", kPickRefresh});
+        entries.push_back({tr("Refresh Home"), kPickRefresh});
     if (entries.empty())
-        entries.push_back({"Play video", kPickOpen});
+        entries.push_back({tr("Play video"), kPickOpen});
     card_menu_.open(item.title, std::move(entries));
 }
 
@@ -701,7 +733,7 @@ void App::open_playlist_menu()
 {
     menu_playlists_.clear();
     std::vector<CardMenu::Entry> entries;
-    entries.push_back({"Watch later", kPickWatchLater});
+    entries.push_back({tr("Watch later"), kPickWatchLater});
     for (const yt::FeedItem &list : service_.feed(yt::FeedKind::library).items)
     {
         // Watch later has its own entry; Liked videos is filled by the like button.
@@ -713,7 +745,7 @@ void App::open_playlist_menu()
         if (menu_playlists_.size() >= 50)
             break;
     }
-    card_menu_.open("Add to playlist", std::move(entries));
+    card_menu_.open(tr("Add to playlist"), std::move(entries));
 }
 
 void App::open_account_menu()
@@ -724,15 +756,16 @@ void App::open_account_menu()
     for (std::size_t i = 0; i < accounts.size(); ++i)
     {
         const std::string name =
-            accounts[i].name.empty() ? "Account " + std::to_string(i + 1) : accounts[i].name;
-        entries.push_back({accounts[i].active ? name + "  (current)" : name,
+            accounts[i].name.empty() ? trf("Account {}", std::to_string(i + 1)) : accounts[i].name;
+        entries.push_back({accounts[i].active ? name + "  " + tr("(current)") : name,
                            kPickAccountBase + static_cast<int>(i)});
     }
     if (accounts.size() < 3)
-        entries.push_back({service_.signed_in() ? "Add account" : "Sign in", kPickAddAccount});
+        entries.push_back(
+            {service_.signed_in() ? tr("Add account") : tr("Sign in"), kPickAddAccount});
     if (service_.signed_in())
-        entries.push_back({"Sign out", kPickSignOut});
-    card_menu_.open("Accounts", std::move(entries));
+        entries.push_back({tr("Sign out"), kPickSignOut});
+    card_menu_.open(tr("Accounts"), std::move(entries));
 }
 
 std::vector<yt::FeedItem> App::current_section(const std::string &video_id, SectionInfo *info) const
@@ -767,7 +800,7 @@ std::vector<yt::FeedItem> App::current_section(const std::string &video_id, Sect
             info->shelf = found->shelf;
             info->title = !found->shelf.empty()    ? found->shelf
                           : !found->author.empty() ? found->author
-                                                   : std::string("Channel videos");
+                                                   : std::string(tr("Channel videos"));
         }
         return row;
     };
@@ -886,21 +919,21 @@ void App::rebuild_rail()
         int tag;
         int section; // Settings::kSectionNames index (-1: always shown)
     };
-    static const Item kItems[] = {
-        {"Search", static_cast<int>(kSearchScreen), -1},
-        {"Home", static_cast<int>(kHomeScreen), -1},
-        {"Shorts", static_cast<int>(kShortsScreen), 0},
-        {"Sports", static_cast<int>(kSportsScreen), 1},
+    const Item kItems[] = {
+        {tr("Search"), static_cast<int>(kSearchScreen), -1},
+        {tr("Home"), static_cast<int>(kHomeScreen), -1},
+        {tr("Shorts"), static_cast<int>(kShortsScreen), 0},
+        {tr("Sports"), static_cast<int>(kSportsScreen), 1},
         {"LIVE", static_cast<int>(kLiveScreen), 2},
-        {"Gaming", static_cast<int>(kGamingScreen), 3},
-        {"News", static_cast<int>(kNewsScreen), 4},
-        {"Music", static_cast<int>(kMusicScreen), 5},
-        {"Channels", static_cast<int>(kChannelsScreen), 6},
-        {"Subscriptions", static_cast<int>(kSubscriptionsScreen), 7},
-        {"History", static_cast<int>(kHistoryScreen), 8},
-        {"Playlists", static_cast<int>(kPlaylistsScreen), 9},
-        {"My videos", kRailMyVideos, 10},
-        {"Blocked Channels", kRailBlocked, 11},
+        {tr("Gaming"), static_cast<int>(kGamingScreen), 3},
+        {tr("News"), static_cast<int>(kNewsScreen), 4},
+        {tr("Music"), static_cast<int>(kMusicScreen), 5},
+        {tr("Channels"), static_cast<int>(kChannelsScreen), 6},
+        {tr("Subscriptions"), static_cast<int>(kSubscriptionsScreen), 7},
+        {tr("History"), static_cast<int>(kHistoryScreen), 8},
+        {tr("Playlists"), static_cast<int>(kPlaylistsScreen), 9},
+        {tr("My videos"), kRailMyVideos, 10},
+        {tr("Blocked Channels"), kRailBlocked, 11},
     };
     // Settings > User interface > Sidebar sections hides any of them.
     rail_hidden_ = settings_.hidden_sections;
@@ -916,7 +949,8 @@ void App::rebuild_rail()
                            true,
                            false,
                            kRailPinBase - static_cast<int>(i)});
-    entries.push_back({"Settings", {}, {}, false, false, false, static_cast<int>(kSettingsScreen)});
+    entries.push_back(
+        {tr("Settings"), {}, {}, false, false, false, static_cast<int>(kSettingsScreen)});
     rail_.set_entries(std::move(entries));
 }
 
@@ -946,8 +980,9 @@ void App::activate_rail(int position)
     {
         const std::string mine = service_.account_channel();
         if (mine.empty())
-            toasts_.push(ui::StatusKind::warning, "Your channel isn't known yet",
-                         service_.signed_in() ? "Try again in a moment" : "Sign in first", 2.5f);
+            toasts_.push(ui::StatusKind::warning, tr("Your channel isn't known yet"),
+                         service_.signed_in() ? tr("Try again in a moment") : tr("Sign in first"),
+                         2.5f);
         else if (mine.size() != 24 || mine.rfind("UC", 0) != 0)
         {
             pending_channel_ = {mine, service_.account().first, {}, {}};
@@ -960,7 +995,7 @@ void App::activate_rail(int position)
             // upload order, newest first, without the channel page's
             // featured shelf on top.
             pending_browse_ = "VLUU" + mine.substr(2);
-            context_.pending_browse_title = "My videos";
+            context_.pending_browse_title = tr("My videos");
             rail_focused_ = false;
             show(kBrowseScreen);
         }
@@ -1053,20 +1088,20 @@ void App::pin_channel(const yt::ChannelItem &channel)
     {
         if (pin.channel_id == channel.channel_id)
         {
-            toasts_.push(ui::StatusKind::info, "Already in the sidebar", channel.name, 2.0f);
+            toasts_.push(ui::StatusKind::info, tr("Already in the sidebar"), channel.name, 2.0f);
             return;
         }
     }
     if (pins_.size() >= kMaxPins)
     {
-        toasts_.push(ui::StatusKind::warning, "The sidebar is full", "Remove a channel first",
-                     2.5f);
+        toasts_.push(ui::StatusKind::warning, tr("The sidebar is full"),
+                     tr("Remove a channel first"), 2.5f);
         return;
     }
     pins_.push_back(channel);
     save_pins();
     rebuild_rail();
-    toasts_.push(ui::StatusKind::success, "Added to the sidebar", channel.name, 2.0f);
+    toasts_.push(ui::StatusKind::success, tr("Added to the sidebar"), channel.name, 2.0f);
 }
 
 void App::unpin_channel(const std::string &channel_id)
@@ -1076,7 +1111,7 @@ void App::unpin_channel(const std::string &channel_id)
                 pins_.end());
     save_pins();
     rebuild_rail();
-    toasts_.push(ui::StatusKind::info, "Removed from the sidebar", {}, 2.0f);
+    toasts_.push(ui::StatusKind::info, tr("Removed from the sidebar"), {}, 2.0f);
 }
 
 bool App::pinned(const std::string &channel_id) const
@@ -1092,16 +1127,16 @@ void App::open_blocked_menu()
     const std::vector<yt::ChannelItem> blocked = service_.blocked_channels();
     if (blocked.empty())
     {
-        toasts_.push(ui::StatusKind::info, "No blocked channels",
-                     "Hold Cross on a video: Block the channel", 3.0f);
+        toasts_.push(ui::StatusKind::info, tr("No blocked channels"),
+                     tr("Hold Cross on a video: Block the channel"), 3.0f);
         return;
     }
     std::vector<CardMenu::Entry> entries;
     for (std::size_t i = 0; i < blocked.size(); ++i)
         entries.push_back(
-            {"Unblock " + (blocked[i].name.empty() ? blocked[i].channel_id : blocked[i].name),
+            {trf("Unblock {}", blocked[i].name.empty() ? blocked[i].channel_id : blocked[i].name),
              kPickUnblockBase + static_cast<int>(i)});
-    card_menu_.open("Blocked Channels", std::move(entries));
+    card_menu_.open(tr("Blocked Channels"), std::move(entries));
 }
 
 void App::open_name_prompt(const std::string &video_id)
@@ -1109,6 +1144,7 @@ void App::open_name_prompt(const std::string &video_id)
     prompt_video_ = video_id;
     prompt_text_.clear();
     prompt_active_ = true;
+    prompt_languages_.sync(prompt_keys_, settings_);
     prompt_keys_.set_length(0);
     prompt_keys_.enter();
     prompt_keys_.set_active(true);
@@ -1121,7 +1157,7 @@ void App::draw_prompt(ui::Canvas &canvas) const
     gfx::DrawList &list = canvas.list;
     list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
                       gfx::Color::rgb(0x000000, 0.75f));
-    ui::text(list, fonts_.semibold, "New playlist name", 560.0f, 300.0f, 40.0f,
+    ui::text(list, fonts_.semibold, tr("New playlist name"), 560.0f, 300.0f, 40.0f,
              gfx::Color::rgb(0xffffff));
     const gfx::Rect field{560.0f, 340.0f, 1080.0f, 84.0f};
     list.rounded_rect(field, 12.0f, gfx::Color::rgb(0x262626));
@@ -1133,8 +1169,8 @@ void App::draw_prompt(ui::Canvas &canvas) const
             : prompt_text_,
         field.x + 24.0f, field.cy() + 12.0f, 34.0f, gfx::Color::rgb(0xffffff));
     prompt_keys_.draw(canvas);
-    ui::text(list, fonts_.regular, "Done creates the playlist   Circle cancels", 560.0f, 1030.0f,
-             22.0f, gfx::Color::rgb(0x9e9e9e));
+    ui::text(list, fonts_.regular, tr("Done creates the playlist   Circle cancels"), 560.0f,
+             1030.0f, 22.0f, gfx::Color::rgb(0x9e9e9e));
 }
 
 void App::refresh_home()
@@ -1145,7 +1181,7 @@ void App::refresh_home()
         service_.request_history();
         service_.request_subscriptions(true);
     }
-    toasts_.push(ui::StatusKind::info, "Refreshing Home", {}, 1.5f);
+    toasts_.push(ui::StatusKind::info, tr("Refreshing Home"), {}, 1.5f);
 }
 
 void App::apply_card_pick(int pick)
@@ -1157,7 +1193,7 @@ void App::apply_card_pick(int pick)
         if (index < blocked.size())
         {
             service_.unblock_channel(index);
-            toasts_.push(ui::StatusKind::info, "Unblocked",
+            toasts_.push(ui::StatusKind::info, tr("Unblocked"),
                          blocked[index].name.empty() ? blocked[index].channel_id
                                                      : blocked[index].name,
                          2.0f);
@@ -1172,7 +1208,7 @@ void App::apply_card_pick(int pick)
             !accounts[static_cast<std::size_t>(index)].active)
         {
             service_.switch_account(index);
-            toasts_.push(ui::StatusKind::info, "Switching account", {}, 2.0f);
+            toasts_.push(ui::StatusKind::info, tr("Switching account"), {}, 2.0f);
         }
         return;
     }
@@ -1191,7 +1227,7 @@ void App::apply_card_pick(int pick)
     if (pick == kPickSignOut)
     {
         service_.sign_out();
-        toasts_.push(ui::StatusKind::info, "Signed out");
+        toasts_.push(ui::StatusKind::info, tr("Signed out"));
         return;
     }
     const yt::FeedItem &item = menu_item_;
@@ -1200,7 +1236,7 @@ void App::apply_card_pick(int pick)
         const std::size_t index = static_cast<std::size_t>(pick - kPickPlaylistBase);
         if (index < menu_playlists_.size())
             service_.add_to_playlist(menu_playlists_[index].video_id.substr(2), item.video_id,
-                                     "Added to " + menu_playlists_[index].title);
+                                     trf("Added to {}", menu_playlists_[index].title));
         return;
     }
     switch (pick)
@@ -1227,8 +1263,8 @@ void App::apply_card_pick(int pick)
         channel.channel_id = item.is_channel() ? item.video_id : item.channel_id;
         channel.name = item.is_channel() ? item.title : item.author;
         service_.block_channel(channel);
-        toasts_.push(ui::StatusKind::info, "Channel blocked",
-                     channel.name + " (Blocked Channels in the sidebar undoes it)", 3.0f);
+        toasts_.push(ui::StatusKind::info, tr("Channel blocked"),
+                     trf("{} (Blocked Channels in the sidebar undoes it)", channel.name), 3.0f);
         break;
     }
     case kPickPin:
@@ -1247,26 +1283,26 @@ void App::apply_card_pick(int pick)
         open_name_prompt(item.video_id);
         break;
     case kPickClearHistory:
-        card_menu_.open("Clear all watch history?",
-                        {{"Clear history", kPickClearConfirm}, {"Cancel", kPickCancel}});
+        card_menu_.open(tr("Clear all watch history?"),
+                        {{tr("Clear history"), kPickClearConfirm}, {tr("Cancel"), kPickCancel}});
         break;
     case kPickClearConfirm:
     {
         const std::string token = service_.feed(yt::FeedKind::history).clear_history_token;
         if (!token.empty())
         {
-            service_.send_feedback(token, "Watch history cleared");
+            service_.send_feedback(token, tr("Watch history cleared"));
             service_.request_history();
         }
         break;
     }
     case kPickRemoveHistory:
-        service_.send_feedback(item.remove_history_token, "Removed from history");
+        service_.send_feedback(item.remove_history_token, tr("Removed from history"));
         service_.hide_item(item.video_id);
         break;
     case kPickPlayNext:
         play_queue_.push_back(item);
-        toasts_.push(ui::StatusKind::info, "Plays next", item.title, 2.0f);
+        toasts_.push(ui::StatusKind::info, tr("Plays next"), item.title, 2.0f);
         break;
     case kPickSbExclude:
     {
@@ -1275,13 +1311,13 @@ void App::apply_card_pick(int pick)
         if (at != sb_excluded_.end())
         {
             sb_excluded_.erase(at);
-            toasts_.push(ui::StatusKind::info, "SponsorBlock on for this channel", item.author,
+            toasts_.push(ui::StatusKind::info, tr("SponsorBlock on for this channel"), item.author,
                          2.0f);
         }
         else if (item.channel_id.size() == 24)
         {
             sb_excluded_.push_back(item.channel_id);
-            toasts_.push(ui::StatusKind::info, "SponsorBlock off for this channel", item.author,
+            toasts_.push(ui::StatusKind::info, tr("SponsorBlock off for this channel"), item.author,
                          2.0f);
         }
         save_sb_excluded();
@@ -1309,22 +1345,22 @@ void App::apply_card_pick(int pick)
         shuffle_started_ = true;
         context_.nav.open_video = true;
         context_.nav.video_id = videos[pick].video_id;
-        toasts_.push(ui::StatusKind::info, "Shuffle", std::to_string(videos.size()) + " videos",
-                     2.0f);
+        toasts_.push(ui::StatusKind::info, tr("Shuffle"),
+                     trf("{} videos", std::to_string(videos.size())), 2.0f);
         break;
     }
     case kPickSubscribe:
         if (item.is_channel() || !item.channel_id.empty())
         {
             service_.set_subscribed(item.is_channel() ? item.video_id : item.channel_id, true);
-            toasts_.push(ui::StatusKind::success, "Subscribed",
+            toasts_.push(ui::StatusKind::success, tr("Subscribed"),
                          item.is_channel() ? item.title : item.author, 2.0f);
         }
         else
             service_.resolve_channel(item.video_id, item.author, 1);
         break;
     case kPickWatchLater:
-        service_.add_to_playlist("WL", item.video_id, "Added to Watch later");
+        service_.add_to_playlist("WL", item.video_id, tr("Added to Watch later"));
         break;
     case kPickPlaylist:
     {
@@ -1342,14 +1378,14 @@ void App::apply_card_pick(int pick)
     case kPickNotInterested:
         if (service_.signed_in() && !item.not_interested_token.empty())
             service_.send_feedback(item.not_interested_token,
-                                   "Got it. You'll see fewer videos like this");
+                                   tr("Got it. You'll see fewer videos like this"));
         else
-            toasts_.push(ui::StatusKind::info, "Video hidden", item.title, 2.0f);
+            toasts_.push(ui::StatusKind::info, tr("Video hidden"), item.title, 2.0f);
         service_.hide_item(item.video_id);
         break;
     case kPickDontRecommend:
         service_.send_feedback(item.dont_recommend_token,
-                               "Got it. This channel won't be recommended");
+                               tr("Got it. This channel won't be recommended"));
         service_.hide_item(item.video_id);
         break;
     case kPickRefresh:
@@ -1448,7 +1484,7 @@ void App::handle_picker(const InputFrame &input)
         if (!account.active)
         {
             service_.switch_account(picker_focus_);
-            toasts_.push(ui::StatusKind::info, "Switching account", account.name, 2.0f);
+            toasts_.push(ui::StatusKind::info, tr("Switching account"), account.name, 2.0f);
         }
         return;
     }
@@ -1467,7 +1503,7 @@ void App::draw_picker(ui::Canvas &canvas) const
     gfx::DrawList &list = canvas.list;
     list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
                       gfx::Color::rgb(0x0f0f0f));
-    ui::text(list, fonts_.semibold, "Who's watching?", gfx::kVirtualWidth * 0.5f, 330.0f, 56.0f,
+    ui::text(list, fonts_.semibold, tr("Who's watching?"), gfx::kVirtualWidth * 0.5f, 330.0f, 56.0f,
              gfx::Color::rgb(0xffffff), gfx::Align::center);
     const auto accounts = service_.saved_accounts();
     const int count = static_cast<int>(accounts.size()) + 1;
@@ -1489,7 +1525,7 @@ void App::draw_picker(ui::Canvas &canvas) const
         if (i < static_cast<int>(accounts.size()))
         {
             const auto &account = accounts[static_cast<std::size_t>(i)];
-            label = account.name.empty() ? "Account" : account.name;
+            label = account.name.empty() ? tr("Account") : account.name;
             const std::uint32_t photo =
                 account.photo.empty() || thumbs_ == nullptr ? 0u : thumbs_->texture(account.photo);
             if (photo != 0)
@@ -1505,7 +1541,7 @@ void App::draw_picker(ui::Canvas &canvas) const
         }
         else
         {
-            label = "Add account";
+            label = tr("Add account");
             list.circle(cx, cy, r, gfx::Color::rgb(0x272727));
             list.rounded_rect({cx - 36.0f, cy - 5.0f, 72.0f, 10.0f}, 5.0f,
                               gfx::Color::rgb(0xffffff));
@@ -1520,7 +1556,7 @@ void App::draw_picker(ui::Canvas &canvas) const
             focused ? gfx::Color::rgb(0xffffff) : gfx::Color::rgb(0xaaaaaa), gfx::Align::center);
         x += kTile + kGap;
     }
-    ui::text(list, fonts_.regular, "Cross: choose   Circle: keep the current account",
+    ui::text(list, fonts_.regular, tr("Cross: choose   Circle: keep the current account"),
              gfx::kVirtualWidth * 0.5f, 940.0f, 22.0f, gfx::Color::rgb(0x777777),
              gfx::Align::center);
 }
@@ -1550,7 +1586,7 @@ const InputFrame &App::gate_input(const InputFrame &input, float dt)
         {
             context_.controls_locked = false;
             unlock_hold_s_ = 0.0f;
-            toasts_.push(ui::StatusKind::success, "Controls unlocked", {}, 2.0f);
+            toasts_.push(ui::StatusKind::success, tr("Controls unlocked"), {}, 2.0f);
         }
     }
     else
@@ -1559,8 +1595,8 @@ const InputFrame &App::gate_input(const InputFrame &input, float dt)
         if ((input.pressed != 0 || input.nav != Direction::none) && locked_hint_s_ <= 0.0f)
         {
             locked_hint_s_ = 5.0f;
-            toasts_.push(ui::StatusKind::info, "Controls locked",
-                         "Hold Circle for 2 seconds to unlock", 3.0f);
+            toasts_.push(ui::StatusKind::info, tr("Controls locked"),
+                         tr("Hold Circle for 2 seconds to unlock"), 3.0f);
         }
     }
     locked_input_ = InputFrame{};
@@ -1656,11 +1692,12 @@ void App::update(const InputFrame &raw_input, float dt)
                 const std::size_t next = (active + 1) % accounts.size();
                 feedback_.play(audio::Cue::select);
                 service_.switch_account(static_cast<int>(next));
-                toasts_.push(ui::StatusKind::info,
-                             "Switching to " + (accounts[next].name.empty()
-                                                    ? "account " + std::to_string(next + 1)
-                                                    : accounts[next].name),
-                             {}, 2.0f);
+                toasts_.push(
+                    ui::StatusKind::info,
+                    trf("Switching to {}", accounts[next].name.empty()
+                                               ? trf("account {}", std::to_string(next + 1))
+                                               : accounts[next].name),
+                    {}, 2.0f);
             }
             else if (input.is_pressed(Action::confirm) || input.is_pressed(Action::west))
             {
@@ -1744,6 +1781,9 @@ void App::update(const InputFrame &raw_input, float dt)
         if (prompt_keys_.handle(input, feedback_) == ui::Event::cancelled ||
             input.is_pressed(Action::back))
             prompt_active_ = false;
+        // The globe key's language is where the keyboards open next time.
+        if (prompt_languages_.sync(prompt_keys_, settings_))
+            settings_changed_ = true;
         prompt_keys_.update(dt);
         screen_input = InputFrame{};
         screen_input.connected = input.connected;
@@ -1780,11 +1820,11 @@ void App::update(const InputFrame &raw_input, float dt)
         seen_resolved_revision_ = service_.resolved_revision();
         const auto [channel, purpose] = service_.resolved_channel();
         if (channel.channel_id.empty())
-            toasts_.push(ui::StatusKind::warning, "Channel not found", channel.name, 2.5f);
+            toasts_.push(ui::StatusKind::warning, tr("Channel not found"), channel.name, 2.5f);
         else if (purpose == 1)
         {
             service_.set_subscribed(channel.channel_id, true);
-            toasts_.push(ui::StatusKind::success, "Subscribed", channel.name, 2.0f);
+            toasts_.push(ui::StatusKind::success, tr("Subscribed"), channel.name, 2.0f);
         }
         else if (purpose == 2)
             pin_channel(channel);
@@ -2233,13 +2273,7 @@ void App::draw_chrome(Frame &frame)
         constexpr float kClockX = 1578.0f;
         if (settings_.corner_clock && sys::local_clock(&hour, &minute, &twelve))
         {
-            twelve = !settings_.time_24h;
-            char text[16];
-            if (twelve)
-                std::snprintf(text, sizeof(text), "%d:%02d %s", hour % 12 == 0 ? 12 : hour % 12,
-                              minute, hour < 12 ? "AM" : "PM");
-            else
-                std::snprintf(text, sizeof(text), "%02d:%02d", hour, minute);
+            const std::string text = i18n::clock_time(hour, minute, !settings_.time_24h);
             ui::text(overlay.list, fonts_.semibold, text, kClockX, 98.0f, 50.0f,
                      gfx::Color::rgb(0xffffff), gfx::Align::center);
         }
@@ -2249,12 +2283,7 @@ void App::draw_chrome(Frame &frame)
         if (settings_.corner_clock && sys::local_date(&weekday, &month, &day) && month >= 1 &&
             month <= 12)
         {
-            static const char *const kDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-            static const char *const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-            char text[32];
-            std::snprintf(text, sizeof(text), "%s %s %d", kDays[weekday % 7], kMonths[month - 1],
-                          day);
+            const std::string text = i18n::short_date(weekday, month, day);
             ui::text(overlay.list, fonts_.semibold, text, kClockX, 136.0f, 24.0f,
                      gfx::Color::rgb(0xffffff), gfx::Align::center);
         }

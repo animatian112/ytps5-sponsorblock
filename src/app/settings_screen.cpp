@@ -7,8 +7,10 @@
 #include "yt/lounge.hpp"
 
 #include "app/icons.hpp"
+#include "app/keyboard_languages.hpp"
 
 #include "app/theme.hpp"
+#include "core/i18n.hpp"
 #include "yt/http.hpp"
 #include "yt/log.hpp"
 #include "yt/service.hpp"
@@ -188,15 +190,15 @@ const char *decode_mode_description(yt::DecodeMode mode)
     switch (mode)
     {
     case yt::DecodeMode::software:
-        return "Software: the CPU up to 1080p; a 1440p or 4K pick still plays on the console's "
-               "decoder chip (VP9), which the CPU can't match";
+        return tr("Software: the CPU up to 1080p; a 1440p or 4K pick still plays on the console's "
+                  "decoder chip (VP9), which the CPU can't match");
     case yt::DecodeMode::hardware:
-        return "Hardware (experimental): VP9 on the console's decoder chip, for 1440p and 4K. "
-               "Falls back to software if it fails; AVC, AV1 and HDR stay software";
+        return tr("Hardware (experimental): VP9 on the console's decoder chip, for 1440p and 4K. "
+                  "Falls back to software if it fails; AVC, AV1 and HDR stay software");
     case yt::DecodeMode::auto_detect:
     default:
-        return "Auto: software up to 1080p; a 1440p or 4K pick plays on the console's "
-               "decoder chip (VP9)";
+        return tr("Auto: software up to 1080p; a 1440p or 4K pick plays on the console's "
+                  "decoder chip (VP9)");
     }
 }
 
@@ -205,12 +207,12 @@ const char *sb_mode_description(int mode)
     switch (mode)
     {
     case 1:
-        return "Offer Triangle: skip when a segment starts";
+        return tr("Offer Triangle: skip when a segment starts");
     case 2:
-        return "Only mark segments on the seek bar; Triangle skips";
+        return tr("Only mark segments on the seek bar; Triangle skips");
     case 0:
     default:
-        return "Skip at once and show what was skipped";
+        return tr("Skip at once and show what was skipped");
     }
 }
 
@@ -219,12 +221,12 @@ const char *sb_scope_description(int scope)
     switch (scope)
     {
     case 0:
-        return "Paid sponsor reads";
+        return tr("Paid sponsor reads");
     case 1:
-        return "Sponsors, self-promotion and subscribe reminders";
+        return tr("Sponsors, self-promotion and subscribe reminders");
     case 2:
     default:
-        return "Also intros, outros, recaps and non-music parts";
+        return tr("Also intros, outros, recaps and non-music parts");
     }
 }
 
@@ -256,41 +258,42 @@ ui::Form &SettingsScreen::add_tile(const char *label, Icon icon)
 SettingsScreen::SettingsScreen(Context &context) : context_(context)
 {
     using S = Settings;
-    add_tile("Accounts", Icon::accounts);
+    add_tile(tr("Accounts"), Icon::accounts);
     rebuild_accounts();
 
     // ---- User interface (SmartTube's "Main UI") ----
-    ui::Form &ui_form = add_tile("User interface", Icon::main_ui);
-    ui_form.add_header("Look");
+    ui::Form &ui_form = add_tile(tr("User interface"), Icon::main_ui);
+    ui_form.add_header(tr("Look"));
     {
         std::vector<int> values;
         std::vector<std::string> labels;
         for (int i = 0; i < S::kColorSchemeCount; ++i)
         {
             values.push_back(i);
-            labels.emplace_back(S::kColorSchemes[i]);
+            labels.emplace_back(tr(S::kColorSchemes[i]));
         }
-        add_steps(ui_form, "Color scheme", &S::color_scheme, values, labels,
-                  "The sidebar's and the menus' colors");
+        add_steps(ui_form, tr("Color scheme"), &S::color_scheme, values, labels,
+                  tr("The sidebar's and the menus' colors"));
     }
-    add_steps(ui_form, "Video grid scale", &S::grid_columns, {5, 4, 3},
-              {"Small", "Normal", "Large"}, "Cards a row in Subscriptions, History and the grids");
-    add_steps(ui_form, "Layout", &S::ui_layout, {0, 1}, {"SmartTube", "Glow"},
-              "Glow: the focused video fills the screen behind its title, with rounded cards");
-    add_steps(ui_form, "Card title lines", &S::title_lines, {1, 2, 3}, {"1", "2", "3"});
-    add_steps(ui_form, "Screen size", &S::screen_size, {100, 97, 95, 93, 90, 87, 85},
+    add_steps(ui_form, tr("Video grid scale"), &S::grid_columns, {5, 4, 3},
+              {tr("Small"), tr("Normal"), tr("Large")},
+              tr("Cards a row in Subscriptions, History and the grids"));
+    add_steps(ui_form, tr("Layout"), &S::ui_layout, {0, 1}, {"SmartTube", "Glow"},
+              tr("Glow: the focused video fills the screen behind its title, with rounded cards"));
+    add_steps(ui_form, tr("Card title lines"), &S::title_lines, {1, 2, 3}, {"1", "2", "3"});
+    add_steps(ui_form, tr("Screen size"), &S::screen_size, {100, 97, 95, 93, 90, 87, 85},
               {"100%", "97%", "95%", "93%", "90%", "87%", "85%"},
-              "Smaller when the TV cuts off the edges (the app and the video alike)");
-    add_flag(ui_form, "Rounded card corners", &S::rounded_cards);
-    add_flag(ui_form, "Home: top right corner clock", &S::corner_clock);
-    add_flag(ui_form, "24-hour clock", &S::time_24h);
-    ui_form.add_header("Sidebar sections");
+              tr("Smaller when the TV cuts off the edges (the app and the video alike)"));
+    add_flag(ui_form, tr("Rounded card corners"), &S::rounded_cards);
+    add_flag(ui_form, tr("Home: top right corner clock"), &S::corner_clock);
+    add_flag(ui_form, tr("24-hour clock"), &S::time_24h);
+    ui_form.add_header(tr("Sidebar sections"));
     for (int i = 0; i < S::kSectionCount; ++i)
         add_section(ui_form, i);
 
     // ---- Player ----
-    ui::Form &player = add_tile("Player", Icon::player);
-    player.add_header("Playback");
+    ui::Form &player = add_tile(tr("Player"), Icon::player);
+    player.add_header(tr("Playback"));
     {
         std::vector<int> values;
         std::vector<std::string> labels;
@@ -301,71 +304,77 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
             values.push_back(i);
             labels.emplace_back(kSpeedLabels[i]);
         }
-        add_steps(player, "Video speed", &S::speed_index, values, labels,
-                  "The speed every video starts at");
+        add_steps(player, tr("Video speed"), &S::speed_index, values, labels,
+                  tr("The speed every video starts at"));
     }
-    add_flag(player, "Remember picked quality", &S::remember_quality,
-             "A quality chosen in the player stays for every video, also after a restart");
-    add_flag(player, "Audio only", &S::audio_only,
-             "Plays the sound with a still picture: the smallest video stream is fetched");
-    add_flag(player, "Remember speed", &S::remember_speed,
-             "A speed picked in the player stays for the next video");
-    add_flag(player, "Triggers jump chapters", &S::trigger_chapters,
-             "L2 / R2 go to the previous / next chapter (off: they do nothing while watching)");
-    add_flag(player, "Live chat", &S::live_chat,
-             "A live stream shows its chat on the right (Top chat)");
-    add_flag(player, "Speed per channel", &S::channel_speed,
-             "A speed picked for a video is kept for that channel's videos (1x forgets it)");
-    add_steps(player, "Playback mode", &S::playback_mode, {0, 4, 1, 2, 3},
-              {"Next video", "Shuffle", "Repeat", "Pause", "Close"},
-              "When a video ends: the next one, a random one from the section, the same again, a "
-              "pause, or back out");
-    add_flag(player, "Loop Shorts", &S::loop_shorts, "A Short starts again when it ends");
-    add_flag(player, "Remember position", &S::resume, "Continue a video where you left it");
-    add_flag(player, "Remember position of short videos", &S::resume_short,
-             "Also videos shorter than 5 minutes");
-    add_steps(player, "Seek interval", &S::seek_seconds, {5, 10, 15, 20, 30, 60},
-              {"5 sec", "10 sec", "15 sec", "20 sec", "30 sec", "60 sec"},
-              "Left/right on the seek bar, L1/R1 while playing");
-    player.add_header("Controls");
-    add_steps(player, "Auto-hide UI", &S::ui_hide_seconds, {3, 4, 5, 8, 10, 0},
-              {"3 sec", "4 sec", "5 sec", "8 sec", "10 sec", "Never"});
-    add_steps(player, "OK button behavior", &S::ok_behavior, {0, 1, 2}, {"UI", "Pause", "Both"},
-              "What Cross does while the controls are hidden: show them, pause, or both");
-    add_flag(player, "Show clock in controls bar", &S::show_clock);
-    add_flag(player, "Show remaining time", &S::show_remaining);
-    add_flag(player, "Show quality info", &S::show_quality);
-    add_flag(player, "Show button tooltips", &S::show_tooltips);
-    add_flag(player, "Suggestions", &S::suggestions, "The row of videos under the controls");
-    add_steps(player, "Video zoom", &S::video_zoom, {0, 1, 2}, {"Fit", "Fill", "Stretch"},
-              "Fit shows the whole picture; Fill crops the black bars; Stretch fills the screen");
-    add_steps(player, "Screen dimming", &S::video_brightness,
+    add_flag(player, tr("Remember picked quality"), &S::remember_quality,
+             tr("A quality chosen in the player stays for every video, also after a restart"));
+    add_flag(player, tr("Audio only"), &S::audio_only,
+             tr("Plays the sound with a still picture: the smallest video stream is fetched"));
+    add_flag(player, tr("Remember speed"), &S::remember_speed,
+             tr("A speed picked in the player stays for the next video"));
+    add_flag(player, tr("Triggers jump chapters"), &S::trigger_chapters,
+             tr("L2 / R2 go to the previous / next chapter (off: they do nothing while watching)"));
+    add_flag(player, tr("Live chat"), &S::live_chat,
+             tr("A live stream shows its chat on the right (Top chat)"));
+    add_flag(player, tr("Speed per channel"), &S::channel_speed,
+             tr("A speed picked for a video is kept for that channel's videos (1x forgets it)"));
+    add_steps(
+        player, tr("Playback mode"), &S::playback_mode, {0, 4, 1, 2, 3},
+        {tr("Next video"), tr("Shuffle"), tr("Repeat"), tr("Pause"), tr("Close")},
+        tr("When a video ends: the next one, a random one from the section, the same again, a "
+           "pause, or back out"));
+    add_flag(player, tr("Loop Shorts"), &S::loop_shorts, tr("A Short starts again when it ends"));
+    add_flag(player, tr("Remember position"), &S::resume, tr("Continue a video where you left it"));
+    add_flag(player, tr("Remember position of short videos"), &S::resume_short,
+             tr("Also videos shorter than 5 minutes"));
+    add_steps(player, tr("Seek interval"), &S::seek_seconds, {5, 10, 15, 20, 30, 60},
+              {tr("5 sec"), tr("10 sec"), tr("15 sec"), tr("20 sec"), tr("30 sec"), tr("60 sec")},
+              tr("Left/right on the seek bar, L1/R1 while playing"));
+    player.add_header(tr("Controls"));
+    add_steps(player, tr("Auto-hide UI"), &S::ui_hide_seconds, {3, 4, 5, 8, 10, 0},
+              {tr("3 sec"), tr("4 sec"), tr("5 sec"), tr("8 sec"), tr("10 sec"), tr("Never")});
+    add_steps(player, tr("OK button behavior"), &S::ok_behavior, {0, 1, 2},
+              {tr("UI"), tr("Pause"), tr("Both")},
+              tr("What Cross does while the controls are hidden: show them, pause, or both"));
+    add_flag(player, tr("Show clock in controls bar"), &S::show_clock);
+    add_flag(player, tr("Show remaining time"), &S::show_remaining);
+    add_flag(player, tr("Show quality info"), &S::show_quality);
+    add_flag(player, tr("Show button tooltips"), &S::show_tooltips);
+    add_flag(player, tr("Suggestions"), &S::suggestions,
+             tr("The row of videos under the controls"));
+    add_steps(
+        player, tr("Video zoom"), &S::video_zoom, {0, 1, 2}, {tr("Fit"), tr("Fill"), tr("Stretch")},
+        tr("Fit shows the whole picture; Fill crops the black bars; Stretch fills the screen"));
+    add_steps(player, tr("Screen dimming"), &S::video_brightness,
               {100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0},
-              {"100% (off)", "90%", "80%", "70%", "60%", "50%", "40%", "30%", "20%", "10%",
-               "0% (screen off)"},
-              "Darkens the video; at 0% only the sound plays on");
-    add_flag(player, "Exit from the player: double back", &S::player_double_back,
-             "Circle twice to leave a video, so a stray press does not end it");
-    player.add_header("Player buttons");
-    player.add_action(kButtonsAll, "Show every button").description =
-        "All the buttons under the seek bar";
-    player.add_action(kButtonsFew, "Just a few").description =
-        "Quality, captions, info and comments";
-    player.add_action(kButtonsNone, "Hide them all").description =
-        "Only the play controls above the seek bar";
+              {tr("100% (off)"), "90%", "80%", "70%", "60%", "50%", "40%", "30%", "20%", "10%",
+               tr("0% (screen off)")},
+              tr("Darkens the video; at 0% only the sound plays on"));
+    add_flag(player, tr("Exit from the player: double back"), &S::player_double_back,
+             tr("Circle twice to leave a video, so a stray press does not end it"));
+    player.add_header(tr("Player buttons"));
+    player.add_action(kButtonsAll, tr("Show every button")).description =
+        tr("All the buttons under the seek bar");
+    player.add_action(kButtonsFew, tr("Just a few")).description =
+        tr("Quality, captions, info and comments");
+    player.add_action(kButtonsNone, tr("Hide them all")).description =
+        tr("Only the play controls above the seek bar");
     for (int i = 0; i < S::kPlayerButtonCount; ++i)
         add_button_toggle(player, i);
-    player.add_header("Video formats");
+    player.add_header(tr("Video formats"));
     player.add_toggle(kCodecAvc, "AVC (H.264)", context_.settings.codec_avc);
     player.add_toggle(kCodecVp9, "VP9", context_.settings.codec_vp9);
-    add_flag(player, "Prefer AVC over VP9", &S::prefer_avc,
-             "Steadier on the CPU decoder; 1080p at most");
+    add_flag(player, tr("Prefer AVC over VP9"), &S::prefer_avc,
+             tr("Steadier on the CPU decoder; 1080p at most"));
 
-    ui::FormRow &resolution = player.add_stepper(
-        kMaxHeight, "Maximum resolution", height_to_index(context_.settings.max_height), 0, 4, 1);
+    ui::FormRow &resolution =
+        player.add_stepper(kMaxHeight, tr("Maximum resolution"),
+                           height_to_index(context_.settings.max_height), 0, 4, 1);
     // The codec ceilings (VP9 720p, AV1 480p) cap the stream below this value
     // while decoding runs on the CPU; the selector's log line names what it picked.
-    resolution.description = "Software decoding caps VP9 at 720p and AVC at 1080p; Auto lifts it";
+    resolution.description =
+        tr("Software decoding caps VP9 at 720p and AVC at 1080p; Auto lifts it");
     resolution.stepper.format = [](int value) -> std::string
     {
         static const char *const kLabels[] = {"720p", "1080p", "1440p", "4K", "8K"};
@@ -375,45 +384,60 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     };
 
     ui::FormRow &decode = player.add_stepper(
-        kDecodeMode, "Decoding", decode_mode_to_index(context_.settings.decode_mode), 0, 2, 1);
+        kDecodeMode, tr("Decoding"), decode_mode_to_index(context_.settings.decode_mode), 0, 2, 1);
     decode.description = decode_mode_description(context_.settings.decode_mode);
     decode.stepper.format = [](int value) -> std::string
     {
-        static const char *const kLabels[] = {"Software", "Auto", "Hardware"};
+        const char *const kLabels[] = {tr("Software"), tr("Auto"), tr("Hardware")};
         if (value < 0 || value > 2)
-            return "Auto";
+            return tr("Auto");
         return kLabels[value];
     };
 
     // ---- Subtitles ----
-    ui::Form &subtitles = add_tile("Subtitles", Icon::subtitles);
+    ui::Form &subtitles = add_tile(tr("Subtitles"), Icon::subtitles);
     {
         std::vector<int> values;
         std::vector<std::string> labels;
         for (int i = 0; i < S::kSubtitleLanguageCount; ++i)
         {
             values.push_back(i);
-            labels.emplace_back(S::kSubtitleLanguages[i][1]);
+            labels.emplace_back(tr(S::kSubtitleLanguages[i][1]));
         }
-        add_steps(subtitles, "Subtitle language", &S::subtitle_language, values, labels,
-                  "Turned on by itself when a video has it");
+        add_steps(subtitles, tr("Subtitle language"), &S::subtitle_language, values, labels,
+                  tr("Turned on by itself when a video has it"));
     }
-    add_steps(subtitles, "Text size", &S::subtitle_size, {0, 1, 2}, {"Small", "Medium", "Large"});
-    add_flag(subtitles, "Background", &S::subtitle_background, "A dark box behind the text");
-    add_steps(subtitles, "Text color", &S::subtitle_color, {0, 1, 2}, {"White", "Yellow", "Cyan"});
+    add_steps(subtitles, tr("Text size"), &S::subtitle_size, {0, 1, 2},
+              {tr("Small"), tr("Medium"), tr("Large")});
+    add_flag(subtitles, tr("Background"), &S::subtitle_background,
+             tr("A dark box behind the text"));
+    add_steps(subtitles, tr("Text color"), &S::subtitle_color, {0, 1, 2},
+              {tr("White"), tr("Yellow"), tr("Cyan")});
 
     // ---- General ----
-    ui::Form &general = add_tile("General", Icon::general);
+    ui::Form &general = add_tile(tr("General"), Icon::general);
+    {
+        // Each language under its own name, so it can be found from any other.
+        std::vector<int> values{0};
+        std::vector<std::string> labels{tr("Console language")};
+        for (int i = 0; i < i18n::kLanguageCount; ++i)
+        {
+            values.push_back(i + 1);
+            labels.emplace_back(i18n::info(static_cast<i18n::Language>(i)).native);
+        }
+        add_steps(general, tr("App language"), &S::ui_language, values, labels,
+                  tr("The language of the menus and messages (applies at the next start)"));
+    }
     {
         std::vector<int> values;
         std::vector<std::string> labels;
         for (int i = 0; i < S::kBootSectionCount; ++i)
         {
             values.push_back(i);
-            labels.emplace_back(S::kBootSections[i]);
+            labels.emplace_back(tr(S::kBootSections[i]));
         }
-        add_steps(general, "Boot to section", &S::boot_section, values, labels,
-                  "The section the app opens on");
+        add_steps(general, tr("Boot to section"), &S::boot_section, values, labels,
+                  tr("The section the app opens on"));
     }
     {
         std::vector<int> values;
@@ -421,100 +445,106 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         for (int i = 0; i < S::kRegionCount; ++i)
         {
             values.push_back(i);
-            labels.emplace_back(S::kRegions[i][2]);
+            labels.emplace_back(tr(S::kRegions[i][2]));
         }
-        add_steps(general, "Language/Country", &S::region, values, labels,
-                  "The country and language YouTube picks Home, Trending and search results for");
+        add_steps(
+            general, tr("Language/Country"), &S::region, values, labels,
+            tr("The country and language YouTube picks Home, Trending and search results for"));
     }
-    add_flag(general, "History", &S::history_enabled,
-             "Off pauses history: YouTube is not told what you watch");
-    add_steps(general, "Screen dimming", &S::dim_minutes, {0, 1, 3, 5, 10, 30},
-              {"Never", "1 min", "3 min", "5 min", "10 min", "30 min"},
-              "Darken the screen when nothing happens (not while a video plays)");
-    general.add_toggle(kHaptics, "Haptics", context_.settings.haptics).description =
-        "Rumble on clicks and drags";
-    general.add_header("Backup");
-    general.add_action(kBackupSettings, "Back up settings").description =
-        "Copy all settings to /download0/hui/backup";
-    general.add_action(kRestoreSettings, "Restore settings").description =
-        "Load the settings from the backup (applies at the next start)";
-    general.add_header("Hide content");
+    add_flag(general, tr("History"), &S::history_enabled,
+             tr("Off pauses history: YouTube is not told what you watch"));
+    add_steps(general, tr("Screen dimming"), &S::dim_minutes, {0, 1, 3, 5, 10, 30},
+              {tr("Never"), tr("1 min"), tr("3 min"), tr("5 min"), tr("10 min"), tr("30 min")},
+              tr("Darken the screen when nothing happens (not while a video plays)"));
+    general.add_toggle(kHaptics, tr("Haptics"), context_.settings.haptics).description =
+        tr("Rumble on clicks and drags");
+    general.add_header(tr("Backup"));
+    general.add_action(kBackupSettings, tr("Back up settings")).description =
+        tr("Copy all settings to /download0/hui/backup");
+    general.add_action(kRestoreSettings, tr("Restore settings")).description =
+        tr("Load the settings from the backup (applies at the next start)");
+    general.add_header(tr("Hide content"));
     add_flag(
-        general, "Start screen", &S::start_screen,
-        "At start: \"Who's watching?\" with your accounts, or the sign-in QR code without one");
-    add_flag(general, "Hide Shorts from Home", &S::hide_shorts_home);
-    add_flag(general, "Hide Shorts from Subscriptions", &S::hide_shorts_subscriptions);
-    add_flag(general, "Hide Shorts from History", &S::hide_shorts_history);
-    add_flag(general, "Hide Shorts from search results", &S::hide_shorts_search);
-    add_flag(general, "Hide watched videos from Home", &S::hide_watched_home);
-    add_flag(general, "Hide watched videos from Subscriptions", &S::hide_watched_subscriptions);
-    add_flag(general, "Hide streams from Subscriptions", &S::hide_streams_subscriptions);
-    add_flag(general, "Hide Mixes", &S::hide_mixes);
+        general, tr("Start screen"), &S::start_screen,
+        tr("At start: \"Who's watching?\" with your accounts, or the sign-in QR code without one"));
+    add_flag(general, tr("Hide Shorts from Home"), &S::hide_shorts_home);
+    add_flag(general, tr("Hide Shorts from Subscriptions"), &S::hide_shorts_subscriptions);
+    add_flag(general, tr("Hide Shorts from History"), &S::hide_shorts_history);
+    add_flag(general, tr("Hide Shorts from search results"), &S::hide_shorts_search);
+    add_flag(general, tr("Hide watched videos from Home"), &S::hide_watched_home);
+    add_flag(general, tr("Hide watched videos from Subscriptions"), &S::hide_watched_subscriptions);
+    add_flag(general, tr("Hide streams from Subscriptions"), &S::hide_streams_subscriptions);
+    add_flag(general, tr("Hide Mixes"), &S::hide_mixes);
 
     // ---- Search ----
-    ui::Form &search = add_tile("Search", Icon::search);
-    add_flag(search, "Show keyboard automatically", &S::keyboard_auto,
-             "The keyboard opens as soon as Search does");
-    search.add_header("Filters (Triangle on the Search page)");
-    add_steps(search, "Sort by", &S::search_sort, {0, 1, 2, 3},
-              {"Relevance", "Upload date", "View count", "Rating"});
-    add_steps(search, "Upload date", &S::search_date, {0, 1, 2, 3, 4, 5},
-              {"Any time", "Last hour", "Today", "This week", "This month", "This year"});
-    add_steps(search, "Length", &S::search_duration, {0, 1, 2, 3},
-              {"Any", "Under 4 minutes", "4-20 minutes", "Over 20 minutes"});
+    ui::Form &search = add_tile(tr("Search"), Icon::search);
+    add_flag(search, tr("Show keyboard automatically"), &S::keyboard_auto,
+             tr("The keyboard opens as soon as Search does"));
+    search.add_header(tr("Keyboard languages (L3 or the globe key switches)"));
+    for (int i = 0; i < static_cast<int>(keyboard_languages().size()); ++i)
+        add_language_toggle(search, i);
+    search.add_header(tr("Filters (Triangle on the Search page)"));
+    add_steps(search, tr("Sort by"), &S::search_sort, {0, 1, 2, 3},
+              {tr("Relevance"), tr("Upload date"), tr("View count"), tr("Rating")});
+    add_steps(search, tr("Upload date"), &S::search_date, {0, 1, 2, 3, 4, 5},
+              {tr("Any time"), tr("Last hour"), tr("Today"), tr("This week"), tr("This month"),
+               tr("This year")});
+    add_steps(search, tr("Length"), &S::search_duration, {0, 1, 2, 3},
+              {tr("Any"), tr("Under 4 minutes"), tr("4-20 minutes"), tr("Over 20 minutes")});
 
     // ---- SponsorBlock (SmartTube's page) ----
     ui::Form &sponsor = add_tile("SponsorBlock", Icon::sponsorblock);
-    sponsor.add_toggle(kSbEnabled, "Enable", context_.settings.sb_enabled).description =
-        "Community-marked segments from sponsor.ajay.app";
-    sponsor.add_header("Categories");
+    sponsor.add_toggle(kSbEnabled, tr("Enable"), context_.settings.sb_enabled).description =
+        tr("Community-marked segments from sponsor.ajay.app");
+    sponsor.add_header(tr("Categories"));
     for (int i = 0; i < S::kSbCategories; ++i)
     {
         // The highlight is a point to jump to, a whole-video label a notice.
         if (i == 8)
-            add_raw_steps(sponsor, yt::sponsorblock::category_label(i),
-                          &context_.settings.sb_act[i], {0, 4}, {"Off", "Offer jump"},
-                          "Triangle jumps to the best part");
+            add_raw_steps(sponsor, tr(yt::sponsorblock::category_label(i)),
+                          &context_.settings.sb_act[i], {0, 4}, {tr("Off"), tr("Offer jump")},
+                          tr("Triangle jumps to the best part"));
         else if (i == 9)
-            add_raw_steps(sponsor, yt::sponsorblock::category_label(i),
-                          &context_.settings.sb_act[i], {0, 4}, {"Off", "Notify"},
-                          "Says when a whole video is paid promotion or exclusive");
+            add_raw_steps(sponsor, tr(yt::sponsorblock::category_label(i)),
+                          &context_.settings.sb_act[i], {0, 4}, {tr("Off"), tr("Notify")},
+                          tr("Says when a whole video is paid promotion or exclusive"));
         else
-            add_raw_steps(sponsor, yt::sponsorblock::category_label(i),
+            add_raw_steps(sponsor, tr(yt::sponsorblock::category_label(i)),
                           &context_.settings.sb_act[i], {0, 1, 2, 3, 4},
-                          {"Off", "Skip", "Skip + notify", "Ask", "Show only"});
+                          {tr("Off"), tr("Skip"), tr("Skip + notify"), tr("Ask"), tr("Show only")});
     }
-    sponsor.add_header("Misc");
-    add_flag(sponsor, "Color markers on progress bar", &S::sb_markers);
-    add_flag(sponsor, "Don't skip segments again", &S::sb_once,
-             "A segment skipped once plays when you seek back to it");
-    add_steps(sponsor, "Minimum segment duration", &S::sb_min_seconds, {0, 1, 2, 3, 5},
-              {"None", "1 sec", "2 sec", "3 sec", "5 sec"}, "Shorter segments are not skipped");
-    add_flag(sponsor, "Send skip statistics", &S::sb_stats,
-             "Count your skips on sponsor.ajay.app, as SmartTube does");
-    add_flag(sponsor, "Use alternative server", &S::sb_alt_server,
-             "api.sponsor.ajay.app, when the main one refuses to work");
-    sponsor.add_action(kSbClearExcluded, "Clear excluded channels").description =
-        "Channels excluded from SponsorBlock (video menu) skip again";
+    sponsor.add_header(tr("Misc"));
+    add_flag(sponsor, tr("Color markers on progress bar"), &S::sb_markers);
+    add_flag(sponsor, tr("Don't skip segments again"), &S::sb_once,
+             tr("A segment skipped once plays when you seek back to it"));
+    add_steps(sponsor, tr("Minimum segment duration"), &S::sb_min_seconds, {0, 1, 2, 3, 5},
+              {tr("None"), tr("1 sec"), tr("2 sec"), tr("3 sec"), tr("5 sec")},
+              tr("Shorter segments are not skipped"));
+    add_flag(sponsor, tr("Send skip statistics"), &S::sb_stats,
+             tr("Count your skips on sponsor.ajay.app, as SmartTube does"));
+    add_flag(sponsor, tr("Use alternative server"), &S::sb_alt_server,
+             tr("api.sponsor.ajay.app, when the main one refuses to work"));
+    sponsor.add_action(kSbClearExcluded, tr("Clear excluded channels")).description =
+        tr("Channels excluded from SponsorBlock (video menu) skip again");
     sponsor.add_header("DeArrow");
-    add_flag(sponsor, "Replace titles", &S::dearrow_titles,
-             "Community titles from dearrow.ajay.app instead of clickbait ones");
-    add_flag(sponsor, "Replace thumbnails", &S::dearrow_thumbnails,
-             "Community-picked frames of the video instead of clickbait thumbnails");
+    add_flag(sponsor, tr("Replace titles"), &S::dearrow_titles,
+             tr("Community titles from dearrow.ajay.app instead of clickbait ones"));
+    add_flag(sponsor, tr("Replace thumbnails"), &S::dearrow_thumbnails,
+             tr("Community-picked frames of the video instead of clickbait thumbnails"));
 
     // One-shot tiles.
     // ---- Remote control (SmartTube's "Link with TV code") ----
-    ui::Form &remote = add_tile("Remote control", Icon::remote);
-    add_flag(remote, "Cast from the phone", &S::remote_control,
-             "The YouTube app on your phone controls this console");
-    remote.add_header("Link your phone");
-    remote.add_value(kRemoteCode, "TV code", "...").description =
-        "YouTube app on the phone: Settings > Watch on TV > Link with TV code";
-    remote.add_value(kRemoteStatus, "Status", "Off");
-    remote.add_action(kRemoteNewCode, "New TV code").description =
-        "Get another code (phones linked before stay linked)";
+    ui::Form &remote = add_tile(tr("Remote control"), Icon::remote);
+    add_flag(remote, tr("Cast from the phone"), &S::remote_control,
+             tr("The YouTube app on your phone controls this console"));
+    remote.add_header(tr("Link your phone"));
+    remote.add_value(kRemoteCode, tr("TV code"), "...").description =
+        tr("YouTube app on the phone: Settings > Watch on TV > Link with TV code");
+    remote.add_value(kRemoteStatus, tr("Status"), tr("Off"));
+    remote.add_action(kRemoteNewCode, tr("New TV code")).description =
+        tr("Get another code (phones linked before stay linked)");
     // ---- Developer options (SmartTube's "Developer options", for this console) ----
-    ui::Form &dev = add_tile("Developer", Icon::developer);
+    ui::Form &dev = add_tile(tr("Developer"), Icon::developer);
     dev.add_header("Playback");
     dev.add_value(kDevHardwareNote, "Hardware decoding", "Player > Decoding > Hardware")
         .description = "Experimental: VP9 (1440p/4K) on the decoder chip; stats show which is used";
@@ -561,10 +591,10 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     reset.description = "Every setting back to its default; accounts and history stay";
     reset.danger = true;
 
-    tiles_.push_back({"Network test", Icon::network, nullptr, kNetTest});
-    add_tile("Updates", Icon::updates);
+    tiles_.push_back({tr("Network test"), Icon::network, nullptr, kNetTest});
+    add_tile(tr("Updates"), Icon::updates);
     rebuild_updates();
-    tiles_.push_back({"About", Icon::about, nullptr, kAbout});
+    tiles_.push_back({tr("About"), Icon::about, nullptr, kAbout});
 }
 
 void SettingsScreen::add_flag(ui::Form &form, const char *label, bool Settings::*flag,
@@ -634,8 +664,18 @@ void SettingsScreen::add_button_toggle(ui::Form &form, int button)
     Binding binding;
     binding.id = next_binding_id_++;
     binding.button = button;
-    form.add_toggle(binding.id, Settings::kPlayerButtonNames[button],
+    form.add_toggle(binding.id, tr(Settings::kPlayerButtonNames[button]),
                     context_.settings.button_shown(button));
+    bindings_.push_back(std::move(binding));
+}
+
+void SettingsScreen::add_language_toggle(ui::Form &form, int language)
+{
+    Binding binding;
+    binding.id = next_binding_id_++;
+    binding.language = language;
+    form.add_toggle(binding.id, tr(keyboard_languages()[static_cast<std::size_t>(language)].name),
+                    ((context_.settings.keyboard_languages >> language) & 1) != 0);
     bindings_.push_back(std::move(binding));
 }
 
@@ -653,7 +693,7 @@ void SettingsScreen::add_section(ui::Form &form, int section)
     Binding binding;
     binding.id = next_binding_id_++;
     binding.section = section;
-    form.add_toggle(binding.id, Settings::kSectionNames[section],
+    form.add_toggle(binding.id, tr(Settings::kSectionNames[section]),
                     !context_.settings.section_hidden(section));
     bindings_.push_back(std::move(binding));
 }
@@ -672,6 +712,16 @@ bool SettingsScreen::apply_binding(int id)
                 settings.hidden_buttons &= ~bit;
             else
                 settings.hidden_buttons |= bit;
+        }
+        else if (binding.language >= 0)
+        {
+            const int bit = 1 << binding.language;
+            if (form().toggle_value(id))
+                settings.keyboard_languages |= bit;
+            else if ((settings.keyboard_languages & ~bit) != 0)
+                settings.keyboard_languages &= ~bit;
+            else
+                form().set_toggle(id, true); // the keyboard keeps one language
         }
         else if (binding.section >= 0)
         {
@@ -713,32 +763,32 @@ void SettingsScreen::rebuild_accounts()
     auto form = std::make_unique<ui::Form>();
     form->style.theme = youtube_theme();
     form->set_bounds({480.0f, 220.0f, 960.0f, 740.0f});
-    form->add_header("Accounts on this console");
+    form->add_header(tr("Accounts on this console"));
     for (std::size_t i = 0; i < accounts.size(); ++i)
     {
         const auto &account = accounts[i];
         const std::string name =
-            account.name.empty() ? "Account " + std::to_string(i + 1) : account.name;
+            account.name.empty() ? trf("Account {}", std::to_string(i + 1)) : account.name;
         ui::FormRow &row = form->add_action(kAccountBase + static_cast<int>(i),
-                                            account.active ? name + "  (current)" : name);
-        row.description = account.active ? "Signed in now" : "Switch to this account";
+                                            account.active ? name + "  " + tr("(current)") : name);
+        row.description = account.active ? tr("Signed in now") : tr("Switch to this account");
     }
     if (!context_.service.signed_in() && accounts.empty())
-        form->add_action(kSignIn, "Sign in").description =
-            "Scan the code with your phone: the sign-in page opens with it filled in";
+        form->add_action(kSignIn, tr("Sign in")).description =
+            tr("Scan the code with your phone: the sign-in page opens with it filled in");
     else
     {
-        ui::FormRow &add = form->add_action(kAddAccount, "Add account");
+        ui::FormRow &add = form->add_action(kAddAccount, tr("Add account"));
         add.description = accounts.size() >= kMaxAccounts
-                              ? "Up to 3 accounts: sign one out first"
-                              : "Sign in one more account; switch between them here";
+                              ? tr("Up to 3 accounts: sign one out first")
+                              : tr("Sign in one more account; switch between them here");
         add.disabled = accounts.size() >= kMaxAccounts;
     }
-    form->add_action(kSaveAccount, "Back up account").description =
-        "Write a token copy into the app folder";
-    form->add_action(kSignOut, "Sign out").description =
-        accounts.size() > 1 ? "Remove the current account; the next one takes over"
-                            : "Remove the account from this console";
+    form->add_action(kSaveAccount, tr("Back up account")).description =
+        tr("Write a token copy into the app folder");
+    form->add_action(kSignOut, tr("Sign out")).description =
+        accounts.size() > 1 ? tr("Remove the current account; the next one takes over")
+                            : tr("Remove the account from this console");
     const bool showing = open_ == 0;
     tiles_[0].form = std::move(form);
     if (showing)
@@ -820,55 +870,56 @@ void SettingsScreen::rebuild_updates()
     form->clear();
 
     using yt::update::State;
-    form->add_value(kUpdateVersion, "This version",
-                    snapshot.current_version.empty() ? std::string("unknown")
+    form->add_value(kUpdateVersion, tr("This version"),
+                    snapshot.current_version.empty() ? std::string(tr("unknown"))
                                                      : snapshot.current_version);
     std::string status;
     switch (snapshot.state)
     {
     case State::checking:
-        status = "Checking...";
+        status = tr("Checking...");
         break;
     case State::up_to_date:
-        status = "Up to date";
+        status = tr("Up to date");
         break;
     case State::available:
-        status = snapshot.latest_version + " is out";
+        status = trf("{} is out", snapshot.latest_version);
         break;
     case State::downloading:
-        status = "Downloading";
+        status = tr("Downloading");
         break;
     case State::staged:
-        status = "Ready";
+        status = tr("Ready");
         break;
     case State::failed:
-        status = "Check failed";
+        status = tr("Check failed");
         break;
     case State::no_release:
-        status = "No release yet";
+        status = tr("No release yet");
         break;
     default:
         break;
     }
-    ui::FormRow &check = form->add_action(kCheckUpdates, "Check for updates");
+    ui::FormRow &check = form->add_action(kCheckUpdates, tr("Check for updates"));
     check.text = status;
-    check.description = "Asks GitHub for the newest release";
+    check.description = tr("Asks GitHub for the newest release");
     if (snapshot.state == State::available)
     {
-        ui::FormRow &install = form->add_action(kInstallUpdate, "Install update");
+        ui::FormRow &install = form->add_action(kInstallUpdate, tr("Install update"));
         install.text = snapshot.latest_version;
-        install.description = "Downloads it; the app closes and starts the new version";
+        install.description = tr("Downloads it; the app closes and starts the new version");
     }
     const bool newer = snapshot.state == State::available || snapshot.state == State::downloading ||
                        snapshot.state == State::staged;
     form->add_header(snapshot.latest_version.empty()
-                         ? std::string("Changelog")
-                         : (newer ? "What's new in " : "Changelog: ") + snapshot.latest_version);
+                         ? std::string(tr("Changelog"))
+                         : (newer ? trf("What's new in {}", snapshot.latest_version)
+                                  : trf("Changelog: {}", snapshot.latest_version)));
     const std::vector<std::string> lines = note_lines(snapshot.notes);
     if (lines.empty())
         form->add_value(kUpdateNoteBase,
-                        snapshot.latest_version.empty() ? "Check for updates to see the notes"
-                                                        : "No notes for this release",
+                        snapshot.latest_version.empty() ? tr("Check for updates to see the notes")
+                                                        : tr("No notes for this release"),
                         {});
     for (std::size_t i = 0; i < lines.size(); ++i)
         form->add_value(kUpdateNoteBase + static_cast<int>(i), lines[i], {});
@@ -884,18 +935,18 @@ void SettingsScreen::refresh_remote()
             form = tile.form.get();
     if (form == nullptr)
         return;
-    std::string code = "Off";
-    std::string state = "Off";
+    std::string code = tr("Off");
+    std::string state = tr("Off");
     if (context_.settings.remote_control && context_.lounge != nullptr)
     {
         const yt::Lounge::Status status = context_.lounge->status();
         code = !status.code.empty()   ? status.code
-               : status.error.empty() ? "Getting a code..."
+               : status.error.empty() ? tr("Getting a code...")
                                       : "-";
         state = status.connected
-                    ? "Linked" + (status.remote.empty() ? std::string() : ": " + status.remote)
+                    ? tr("Linked") + (status.remote.empty() ? std::string() : ": " + status.remote)
                 : !status.error.empty() ? status.error
-                                        : "Waiting for a phone";
+                                        : tr("Waiting for a phone");
     }
     if (form->value_text(kRemoteCode) != code)
         form->set_value_text(kRemoteCode, code);
@@ -928,7 +979,8 @@ void SettingsScreen::apply(int id, ui::Feedback &feedback)
         if (!on && enabled <= 1)
         {
             form().set_toggle(id, true);
-            context_.toasts.push(ui::StatusKind::warning, "At least one codec must stay enabled");
+            context_.toasts.push(ui::StatusKind::warning,
+                                 tr("At least one codec must stay enabled"));
             ui::play_cue(feedback, form().style, form().style.sounds.refuse);
             return;
         }
@@ -993,7 +1045,8 @@ void SettingsScreen::activate(int id)
     if (id == kAddAccount)
     {
         if (context_.service.saved_accounts().size() >= kMaxAccounts)
-            context_.toasts.push(ui::StatusKind::warning, "Up to 3 accounts", "Sign one out first");
+            context_.toasts.push(ui::StatusKind::warning, tr("Up to 3 accounts"),
+                                 tr("Sign one out first"));
         else
             context_.nav.add_account = true;
         return;
@@ -1001,7 +1054,7 @@ void SettingsScreen::activate(int id)
     if (id == kSignIn)
     {
         if (context_.service.signed_in())
-            context_.toasts.push(ui::StatusKind::info, "Already signed in");
+            context_.toasts.push(ui::StatusKind::info, tr("Already signed in"));
         else
             context_.nav.start_login = true;
         return;
@@ -1022,11 +1075,11 @@ void SettingsScreen::activate(int id)
         // this writes the second copy the user can carry to a new install.
         std::string where;
         if (!context_.service.signed_in())
-            context_.toasts.push(ui::StatusKind::warning, "Not signed in");
+            context_.toasts.push(ui::StatusKind::warning, tr("Not signed in"));
         else if (context_.service.export_token(&where))
-            context_.toasts.push(ui::StatusKind::success, "Account backed up", where);
+            context_.toasts.push(ui::StatusKind::success, tr("Account backed up"), where);
         else
-            context_.toasts.push(ui::StatusKind::warning, "Copy not possible", where);
+            context_.toasts.push(ui::StatusKind::warning, tr("Copy not possible"), where);
         return;
     }
     if (id == kBackupSettings)
@@ -1037,7 +1090,7 @@ void SettingsScreen::activate(int id)
     if (id == kDevClearCache)
     {
         context_.service.clear_feed_cache();
-        context_.toasts.push(ui::StatusKind::info, "Saved feeds cleared", {}, 2.0f);
+        context_.toasts.push(ui::StatusKind::info, tr("Saved feeds cleared"), {}, 2.0f);
         return;
     }
     if (id == kButtonsAll || id == kButtonsFew || id == kButtonsNone)
@@ -1046,17 +1099,17 @@ void SettingsScreen::activate(int id)
         constexpr int kAll = (1 << Settings::kPlayerButtonCount) - 1;
         constexpr int kFew = kAll & ~((1 << 0) | (1 << 5) | (1 << 8) | (1 << 9));
         set_buttons(id == kButtonsAll ? 0 : id == kButtonsFew ? kFew : kAll);
-        context_.toasts.push(ui::StatusKind::info, "Player buttons",
-                             id == kButtonsAll   ? "Every button shown"
-                             : id == kButtonsFew ? "Just a few shown"
-                                                 : "All hidden",
+        context_.toasts.push(ui::StatusKind::info, tr("Player buttons"),
+                             id == kButtonsAll   ? tr("Every button shown")
+                             : id == kButtonsFew ? tr("Just a few shown")
+                                                 : tr("All hidden"),
                              2.0f);
         return;
     }
     if (id == kDevClearSearches)
     {
         context_.service.clear_search_history();
-        context_.toasts.push(ui::StatusKind::info, "Search history cleared", {}, 2.0f);
+        context_.toasts.push(ui::StatusKind::info, tr("Search history cleared"), {}, 2.0f);
         return;
     }
     if (id == kDevReset)
@@ -1080,15 +1133,15 @@ void SettingsScreen::activate(int id)
         context_.sb_excluded.clear();
         context_.sb_excluded_changed = true;
         context_.toasts.push(ui::StatusKind::info, "SponsorBlock",
-                             count == 0 ? std::string("No channels were excluded")
-                                        : std::to_string(count) + " channels skip again",
+                             count == 0 ? std::string(tr("No channels were excluded"))
+                                        : trf("{} channels skip again", std::to_string(count)),
                              2.5f);
         return;
     }
     if (id == kNetTest)
     {
-        context_.toasts.push(ui::StatusKind::info, "Network test running",
-                             "Results appear one by one", 4.0f);
+        context_.toasts.push(ui::StatusKind::info, tr("Network test running"),
+                             tr("Results appear one by one"), 4.0f);
         start_net_test();
         return;
     }
@@ -1109,7 +1162,8 @@ void SettingsScreen::activate(int id)
         return;
     const bool was_signed_in = context_.service.signed_in();
     context_.nav.sign_out = true;
-    context_.toasts.push(ui::StatusKind::info, was_signed_in ? "Signed out" : "Not signed in");
+    context_.toasts.push(ui::StatusKind::info,
+                         was_signed_in ? tr("Signed out") : tr("Not signed in"));
 }
 
 void SettingsScreen::update_grid(const InputFrame &input, ui::Feedback &feedback)
@@ -1225,26 +1279,26 @@ void SettingsScreen::update(const InputFrame &input, float dt, ui::Feedback &fee
         break; // still working
     case yt::update::State::up_to_date:
         update_watching_ = false;
-        context_.toasts.push(ui::StatusKind::success, "Up to date",
+        context_.toasts.push(ui::StatusKind::success, tr("Up to date"),
                              snapshot.current_version.empty()
-                                 ? std::string("This is the newest version")
-                                 : "Version " + snapshot.current_version);
+                                 ? std::string(tr("This is the newest version"))
+                                 : trf("Version {}", snapshot.current_version));
         break;
     case yt::update::State::no_release:
         // The repository has no published release yet: nothing to update to, and
         // nothing to retry - report it once, like "up to date".
         update_watching_ = false;
-        context_.toasts.push(ui::StatusKind::success, "No release published yet",
-                             "Nothing to update to");
+        context_.toasts.push(ui::StatusKind::success, tr("No release published yet"),
+                             tr("Nothing to update to"));
         break;
     case yt::update::State::available:
         update_watching_ = false;
-        context_.toasts.push(ui::StatusKind::info, "Update available",
-                             "Version " + snapshot.latest_version);
+        context_.toasts.push(ui::StatusKind::info, tr("Update available"),
+                             trf("Version {}", snapshot.latest_version));
         break;
     case yt::update::State::failed:
         update_watching_ = false;
-        context_.toasts.push(ui::StatusKind::warning, "Update check failed", snapshot.error);
+        context_.toasts.push(ui::StatusKind::warning, tr("Update check failed"), snapshot.error);
         break;
     default: // downloading or staged: the app's own card owns that
         update_watching_ = false;
@@ -1384,8 +1438,8 @@ void SettingsScreen::draw(const Context &context, Frame &frame) const
         tile.form->draw(canvas);
         if (tile.icon == Icon::accounts)
             ui::text(list, context.fonts.regular,
-                     context.service.signed_in() ? "Signed in" : "Not signed in", 480.0f, 1000.0f,
-                     22.0f, gfx::Color::rgb(0x999999));
+                     context.service.signed_in() ? tr("Signed in") : tr("Not signed in"), 480.0f,
+                     1000.0f, 22.0f, gfx::Color::rgb(0x999999));
         return;
     }
     // SmartTube's tiles: dark squares, a white icon, the name under it; the

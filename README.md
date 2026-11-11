@@ -49,11 +49,24 @@ The app checks for a newer release on startup and can download and install it it
 | Left (at the left edge) | Focus the sidebar |
 | Touchpad | Focus or collapse the sidebar |
 | Square | Pin the sidebar open; on the login screen: new code |
+| L3 | On the keyboard: next language |
 | Options | Quit |
 
 In the sidebar, Up/Down moves between Home, Subscriptions and Settings, and X opens the section.
 
 On a channel page, Left/Right switches between the tabs the channel offers.
+
+### App language
+
+The menus, settings and messages come in English, Italian, Spanish, Russian, Simplified Chinese and Japanese. The app follows the console's system language; pick another in Settings > General > App language (it applies the next time the app starts). Video titles, channel names and the feeds themselves come from YouTube, in the language of Settings > General > Language/Country. Chinese, Japanese and Korean titles show in their own letters (about 13,000 everyday characters, from Noto Sans CJK). The Developer settings stay in English. To translate a phrase, see `src/core/i18n.hpp`.
+
+### Keyboard languages
+
+The on-screen keyboard types English by default. Turn on more languages in Settings > Search > Keyboard languages: English, Russian, Italian, Spanish and Japanese. With more than one on, the keyboard gets a globe key: it, or L3, switches to the next language, and the keyboard opens in the language you used last. To add a language, see `src/app/keyboard_languages.hpp`.
+
+- Italian and Spanish are QWERTY with their accented letters (è é ò à ù ì, ñ á í ó ú ü ¿) on keys of their own.
+- Japanese types hiragana, laid out like the kana table (あかさたな…). Shift types katakana, and the ゛゜小 key changes the kana before it: か to が, は to ば to ぱ, つ to っ. There is no kanji conversion: search in kana, and YouTube's suggestions above the keyboard offer the kanji.
+- There's no Chinese keyboard yet. Typing Chinese needs pinyin with a dictionary of characters to pick from.
 
 ## Signing in
 

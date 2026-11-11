@@ -58,6 +58,14 @@ bool local_date(int *weekday, int *month, int *day)
     return true;
 }
 
+// The host has no console setting: HUI_CONSOLE_LANGUAGE (a SceSystemParamLang
+// number) lets a snapshot run show another language; English otherwise.
+int console_language()
+{
+    const char *value = std::getenv("HUI_CONSOLE_LANGUAGE");
+    return value != nullptr && value[0] != '\0' ? std::atoi(value) : 1;
+}
+
 void sleep_us(std::uint32_t microseconds)
 {
     usleep(microseconds);
