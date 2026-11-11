@@ -66,6 +66,7 @@ class HomeScreen final : public Screen
     std::uint64_t seen_subscriptions_ = 0;
     std::uint64_t seen_history_ = 0;
     bool extras_requested_ = false;
+    std::string row_more_key_; // the row (and its length) last asked to grow
     bool more_requested_ = false;
     float clock_ = 0.0f;
 };

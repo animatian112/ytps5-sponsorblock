@@ -198,6 +198,18 @@ void HomeScreen::update(const InputFrame &input, float dt, ui::Feedback &feedbac
             context_.nav.video_id = rows_.activated();
             rows_.clear_activation();
         }
+        // Near the end of a row: more of it (SmartTube's long rows), once
+        // per row length.
+        {
+            std::size_t count = 0;
+            const std::string row = rows_.row_near_end(6, &count);
+            const std::string key = row + "#" + std::to_string(count);
+            if (!row.empty() && key != row_more_key_)
+            {
+                row_more_key_ = key;
+                context_.service.request_shelf_more(yt::FeedKind::home, row);
+            }
+        }
         if (!more_requested_ && view.more && rows_.near_end())
         {
             more_requested_ = true;

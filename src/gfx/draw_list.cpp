@@ -356,13 +356,23 @@ void DrawList::pop_opacity()
     }
 }
 
+namespace
+{
+float g_screen_share = 1.0f;
+} // namespace
+
+void set_screen_size(float share)
+{
+    g_screen_share = std::clamp(share, 0.8f, 1.0f);
+}
+
 Viewport fit_viewport(int surface_width, int surface_height, float virtual_width,
                       float virtual_height)
 {
     Viewport viewport;
     const float sx = static_cast<float>(surface_width) / virtual_width;
     const float sy = static_cast<float>(surface_height) / virtual_height;
-    viewport.scale = std::min(sx, sy);
+    viewport.scale = std::min(sx, sy) * g_screen_share;
     viewport.offset_x = (static_cast<float>(surface_width) - virtual_width * viewport.scale) * 0.5f;
     viewport.offset_y =
         (static_cast<float>(surface_height) - virtual_height * viewport.scale) * 0.5f;

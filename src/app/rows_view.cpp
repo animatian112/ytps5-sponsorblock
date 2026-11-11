@@ -279,6 +279,18 @@ bool RowsView::near_end() const
     return !rows_.empty() && focus_row_ >= static_cast<int>(rows_.size()) - 2;
 }
 
+std::string RowsView::row_near_end(int within, std::size_t *count) const
+{
+    if (focus_row_ < 0 || focus_row_ >= static_cast<int>(rows_.size()))
+        return {};
+    const Row &row = *rows_[static_cast<std::size_t>(focus_row_)];
+    if (row.shelf.focus() + within < static_cast<int>(row.items.size()))
+        return {};
+    if (count != nullptr)
+        *count = row.items.size();
+    return row.title;
+}
+
 void RowsView::update(float dt, const Context &context)
 {
     // The focus row sits at the top of the view; the rows glide there.

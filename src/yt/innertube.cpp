@@ -1289,6 +1289,19 @@ void walk_feed(yyjson_val *value, FeedPage *page, std::string *continuation)
                 page->current_shelf = outer;
                 continue;
             }
+            if (std::strcmp(name, "horizontalListRenderer") == 0 && !page->current_shelf.empty())
+            {
+                // A row's own next page (more of this shelf to the right).
+                yyjson_val *next =
+                    yyjson_obj_get(yyjson_arr_get_first(yyjson_obj_get(child, "continuations")),
+                                   "nextContinuationData");
+                const std::string token = string_field(next, "continuation");
+                bool known = false;
+                for (const auto &entry : page->shelf_continuations)
+                    known = known || entry.first == page->current_shelf;
+                if (!token.empty() && !known)
+                    page->shelf_continuations.emplace_back(page->current_shelf, token);
+            }
             if (std::strcmp(name, "continuationCommand") == 0)
             {
                 yyjson_val *token = yyjson_obj_get(child, "token");
@@ -2126,6 +2139,7 @@ bool parse_feed_page(std::string_view json, FeedPage *page)
         return false;
     page->items.clear();
     page->channels.clear();
+    page->shelf_continuations.clear();
     page->continuation.clear();
     page->error.clear();
     page->date_text.clear();
@@ -2158,8 +2172,9 @@ bool parse_feed_page(std::string_view json, FeedPage *page)
     // answer and in the continuation answers alike.
     // A playlist page pages its own video list the same way (the TV client
     // hands out a playlist 15-25 videos at a time), and so do grids.
-    for (const char *list : {"playlistVideoListContinuation", "playlistVideoListRenderer",
-                             "sectionListContinuation", "sectionListRenderer", "gridContinuation"})
+    for (const char *list :
+         {"playlistVideoListContinuation", "playlistVideoListRenderer", "sectionListContinuation",
+          "sectionListRenderer", "gridContinuation", "horizontalListContinuation"})
     {
         yyjson_val *section = find_object(root, list);
         yyjson_val *next = yyjson_obj_get(
@@ -3061,9 +3076,9 @@ struct InnerTube::Impl
     // only when that was the TV client and it refused the request (400/401/
     // 403/410) or answered without items - exactly one retry as WEB.
     bool feed_call(const char *endpoint, const std::string &extra, const std::string &target,
-                   FeedPage *page)
+                   FeedPage *page, const Client *force = nullptr)
     {
-        const Client &primary = selected_client();
+        const Client &primary = force != nullptr ? *force : selected_client();
         const bool signed_in_client = std::strcmp(primary.name, kWebClientName) != 0;
 
         Attempt attempt = post_once(endpoint, extra, primary);
@@ -3285,6 +3300,14 @@ bool InnerTube::home(FeedPage *page, const std::string &continuation)
     const std::string extra = fresh ? field_string("browseId", "FEwhat_to_watch")
                                     : field_string("continuation", continuation);
     const std::string target = fresh ? "FEwhat_to_watch" : "continuation";
+    // Signed out the web Home is empty now ("Try searching to get started");
+    // the TV client still gives a guest its rows, as SmartTube shows them.
+    if (impl_->access_token.empty())
+    {
+        if (impl_->feed_call("browse", extra, target, page, &kTvClient) && !page->items.empty())
+            return true;
+        *page = FeedPage{};
+    }
     const bool parsed = impl_->feed_call("browse", extra, target, page);
     if (!parsed)
         page->error = impl_->error;

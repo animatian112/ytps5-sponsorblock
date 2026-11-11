@@ -995,10 +995,14 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         (input.nav == Direction::up || input.nav == Direction::down))
     {
         swiped = true;
-        if (input.nav == Direction::down && next_suggestion() != nullptr)
+        yt::FeedItem short_item;
+        if (input.nav == Direction::down && next_short(&short_item))
         {
             feedback.play(audio::Cue::focus);
-            play_next();
+            yt::log::line("player: next Short -> %s", short_item.video_id.c_str());
+            if (!playing_id_.empty())
+                played_.push_back(playing_id_);
+            request_video(short_item.video_id);
             chrome_.hide();
             shorts_swipe_s_ = clock_;
             shorts_swipe_down_ = true;
@@ -1413,6 +1417,47 @@ const yt::VideoView &PlayerScreen::video_view() const
         view_cache_ = context_.service.video();
     }
     return view_cache_;
+}
+
+// Shorts: the next Short, not the next suggested video. From the list the
+// Short was opened from (a row, the Shorts tab), else a Short among the
+// suggestions. Kept in the screen (copied) since the feeds change under it.
+bool PlayerScreen::next_short(yt::FeedItem *out) const
+{
+    const std::string current = playing_id_.empty() ? requested_id_ : playing_id_;
+    const auto pick = [&](const std::vector<yt::FeedItem> &list, bool need_flag) -> bool
+    {
+        const auto at = std::find_if(list.begin(), list.end(), [&](const yt::FeedItem &item)
+                                     { return item.video_id == current; });
+        if (at == list.end())
+            return false;
+        for (auto it = at + 1; it != list.end(); ++it)
+            if (it->video_id.size() == 11 && (!need_flag || it->short_form) &&
+                !already_played(it->video_id))
+            {
+                *out = *it;
+                return true;
+            }
+        return false;
+    };
+    if (pick(context_.section, true))
+        return true;
+    if (context_.service.topic_id() == "FEshorts")
+    {
+        const yt::FeedView shorts = context_.service.feed(yt::FeedKind::topic);
+        if (pick(shorts.items, false))
+            return true;
+        if (shorts.items.size() > 3)
+            context_.service.request_more(yt::FeedKind::topic);
+    }
+    for (const yt::FeedItem &item : related_items_)
+        if (item.short_form && item.video_id.size() == 11 && item.video_id != current &&
+            !already_played(item.video_id))
+        {
+            *out = item;
+            return true;
+        }
+    return false;
 }
 
 const yt::FeedItem *PlayerScreen::next_suggestion() const

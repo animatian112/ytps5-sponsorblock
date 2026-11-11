@@ -65,6 +65,7 @@ struct Settings
     bool channel_speed = true;     // a speed picked for a video is kept for its channel
     bool live_chat = true;         // a live stream shows its chat beside the picture
     bool trigger_chapters = false; // L2 / R2 jump chapters in the player (easy to hit by accident)
+    int screen_size = 100;         // % of the screen the picture fills (TV overscan cuts edges)
     bool start_screen = true;      // at start: who's watching, or the QR sign-in without accounts
     // The player's lower buttons, a bit per kPlayerButtonNames entry that is
     // hidden (default: Screen dimming and Stats for nerds).

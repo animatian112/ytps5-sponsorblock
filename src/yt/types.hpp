@@ -239,6 +239,9 @@ struct FeedPage
     std::string error;
     // While parsing: the shelf being walked, stamped on its items.
     std::string current_shelf;
+    // Each shelf's own "more of this row" token (the TV client's rows come
+    // 5-8 videos at a time), by shelf title, in order.
+    std::vector<std::pair<std::string, std::string>> shelf_continuations;
     // A watch page (/next) also says how the account stands to the video:
     // its channel, whether it is subscribed, and "LIKE" / "DISLIKE" /
     // "INDIFFERENT". meta_known is false when the answer named none of it.

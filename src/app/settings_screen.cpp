@@ -278,6 +278,9 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
     add_steps(ui_form, "Layout", &S::ui_layout, {0, 1}, {"SmartTube", "Glow"},
               "Glow: the focused video fills the screen behind its title, with rounded cards");
     add_steps(ui_form, "Card title lines", &S::title_lines, {1, 2, 3}, {"1", "2", "3"});
+    add_steps(ui_form, "Screen size", &S::screen_size, {100, 97, 95, 93, 90, 87, 85},
+              {"100%", "97%", "95%", "93%", "90%", "87%", "85%"},
+              "Smaller when the TV cuts off the edges (the app and the video alike)");
     add_flag(ui_form, "Rounded card corners", &S::rounded_cards);
     add_flag(ui_form, "Home: top right corner clock", &S::corner_clock);
     add_flag(ui_form, "24-hour clock", &S::time_24h);

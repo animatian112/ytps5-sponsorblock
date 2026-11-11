@@ -68,6 +68,7 @@ class TopicScreen final : public Screen
     bool use_rows_ = false;
     bool shorts_ = false; // the Shorts section: one portrait grid
     std::uint64_t seen_revision_ = 0;
+    std::string row_more_key_; // the row (and its length) last asked to grow
     bool more_requested_ = false;
     float clock_ = 0.0f;
 };

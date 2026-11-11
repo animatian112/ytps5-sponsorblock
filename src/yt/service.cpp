@@ -135,6 +135,8 @@ struct Service::Impl
         bool library = false;
         bool more = false;
         FeedKind more_kind = FeedKind::home;
+        // Rows wanting more, oldest first.
+        std::vector<std::pair<FeedKind, std::string>> shelf_more;
         bool channel = false;
         std::string channel_id;
         bool channel_tab = false;
@@ -1252,6 +1254,22 @@ struct Service::Impl
         }
         items.insert(items.end(), page.items.begin(), page.items.end());
         publish(kind, Load::ready, std::move(items), page.continuation, {});
+        {
+            // The rows' own tokens: a fresh feed starts over, a later page adds
+            // its new rows.
+            std::lock_guard<std::mutex> lock(mutex);
+            FeedView &view = *slot(kind);
+            if (!more)
+                view.shelf_more.clear();
+            for (auto &entry : page.shelf_continuations)
+            {
+                bool known = false;
+                for (const auto &have : view.shelf_more)
+                    known = known || have.first == entry.first;
+                if (!known)
+                    view.shelf_more.push_back(std::move(entry));
+            }
+        }
         if (kind == FeedKind::history && !more)
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -1262,6 +1280,61 @@ struct Service::Impl
             std::lock_guard<std::mutex> lock(mutex);
             slot(kind)->channels = std::move(page.channels);
         }
+    }
+
+    // More of one row: its token's page goes in after the row's last video,
+    // so the row grows to the right (SmartTube's long rows).
+    void do_shelf_more(FeedKind kind, const std::string &shelf)
+    {
+        std::string token;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            for (auto &entry : slot(kind)->shelf_more)
+                if (entry.first == shelf)
+                {
+                    token = entry.second;
+                    entry.second.clear(); // one request at a time
+                }
+        }
+        if (token.empty())
+            return;
+        FeedPage page;
+        if (!tube.home(&page, token))
+        {
+            log::line("feed: more of \"%s\" failed: %s", shelf.c_str(), tube.last_error().c_str());
+            std::lock_guard<std::mutex> lock(mutex);
+            for (auto &entry : slot(kind)->shelf_more)
+                if (entry.first == shelf)
+                    entry.second = token; // try again when asked
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mutex);
+        FeedView &view = *slot(kind);
+        std::size_t end = view.items.size();
+        for (std::size_t i = 0; i < view.items.size(); ++i)
+            if (view.items[i].shelf == shelf)
+                end = i + 1;
+        if (end == view.items.size() && (view.items.empty() || view.items.back().shelf != shelf))
+            return; // the row is gone (Home reloaded)
+        std::vector<FeedItem> fresh;
+        for (FeedItem &item : page.items)
+        {
+            bool seen = item.video_id.empty();
+            for (const FeedItem &have : view.items)
+                seen = seen || (have.shelf == shelf && have.video_id == item.video_id);
+            if (seen)
+                continue;
+            item.shelf = shelf;
+            fresh.push_back(std::move(item));
+        }
+        view.items.insert(view.items.begin() + static_cast<std::ptrdiff_t>(end), fresh.begin(),
+                          fresh.end());
+        for (auto &entry : view.shelf_more)
+            if (entry.first == shelf)
+                entry.second = fresh.empty() ? std::string() : page.continuation;
+        log::line("feed: \"%s\" +%zu videos%s", shelf.c_str(), fresh.size(),
+                  page.continuation.empty() || fresh.empty() ? " (end)" : "");
+        view.revision++;
     }
 
     bool refresh_token_locked()
@@ -1608,6 +1681,31 @@ struct Service::Impl
                                        ? std::string("no_stream (no formats in the client answer)")
                                        : player_error);
             return;
+        }
+        if (variants.front().title.empty())
+        {
+            // Some answers (the TV client's for an age-restricted video)
+            // carry no details: the card it was opened from has them.
+            std::lock_guard<std::mutex> lock(mutex);
+            for (const FeedView *view : {&home, &subscriptions, &search, &related, &channel_feed,
+                                         &history, &topic, &library})
+            {
+                for (const FeedItem &item : view->items)
+                    if (item.video_id == video_id && !item.title.empty())
+                    {
+                        for (VideoInfo &variant : variants)
+                        {
+                            variant.title = item.title;
+                            if (variant.author.empty())
+                                variant.author = item.author;
+                            if (variant.channel_id.empty())
+                                variant.channel_id = item.channel_id;
+                        }
+                        break;
+                    }
+                if (!variants.front().title.empty())
+                    break;
+            }
         }
         log::line("video: player info ok id=%s title=%s clients=%zu", video_id.c_str(),
                   variants.front().title.c_str(), variants.size());
@@ -2349,6 +2447,8 @@ struct Service::Impl
                 }
                 do_feed(FeedKind::search, taken.search_query, false);
             }
+            for (const auto &[kind, shelf] : taken.shelf_more)
+                do_shelf_more(kind, shelf);
             if (taken.more)
                 do_feed(taken.more_kind, taken.search_query, true);
             if (taken.rate)
@@ -2468,11 +2568,11 @@ struct Service::Impl
     bool any_request()
     {
         return job.home || job.subscriptions || job.history || job.topic || job.library ||
-               job.more || job.search || job.channel || job.channel_tab || job.video ||
-               job.close_video || job.sign_in || job.cancel_sign_in || job.sign_out ||
-               job.refresh || job.import_token || job.rate || job.subscribe ||
-               !job.actions.empty() || job.add_account || job.switch_account || restore_previous ||
-               job.resolve || job.comments || job.clear_cache;
+               job.more || !job.shelf_more.empty() || job.search || job.channel ||
+               job.channel_tab || job.video || job.close_video || job.sign_in ||
+               job.cancel_sign_in || job.sign_out || job.refresh || job.import_token || job.rate ||
+               job.subscribe || !job.actions.empty() || job.add_account || job.switch_account ||
+               restore_previous || job.resolve || job.comments || job.clear_cache;
     }
 };
 
@@ -2831,6 +2931,16 @@ void Service::request_more(FeedKind kind)
     impl_->job.more = true;
     impl_->job.more_kind = kind;
     impl_->job.search_query = impl_->search_query;
+    impl_->wake.notify_all();
+}
+
+void Service::request_shelf_more(FeedKind kind, std::string shelf)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    for (const auto &queued : impl_->job.shelf_more)
+        if (queued.first == kind && queued.second == shelf)
+            return;
+    impl_->job.shelf_more.emplace_back(kind, std::move(shelf));
     impl_->wake.notify_all();
 }
 

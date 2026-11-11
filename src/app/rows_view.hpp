@@ -56,6 +56,9 @@ class RowsView
     }
     // The focus is on one of the last rows: time to ask for more.
     bool near_end() const;
+    // The focused row's title while its focus is within `within` cards of the
+    // row's end, and how many cards it has; empty otherwise.
+    std::string row_near_end(int within, std::size_t *count) const;
     // The card the focus sits on, or nullptr.
     const yt::FeedItem *focused_item() const;
     bool empty() const

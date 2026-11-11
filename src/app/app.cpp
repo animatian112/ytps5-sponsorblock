@@ -1363,10 +1363,14 @@ void App::apply_card_pick(int pick)
 void App::handle_global(const InputFrame &input, float dt)
 {
     (void)dt;
-    // Options leaves the app.
+    // Options leaves the app - except on the sign-in screen, where it leaves
+    // the sign-in like Circle (people pressed it to skip signing in).
     if (input.is_pressed(Action::menu))
     {
-        nav_.quit = true;
+        if (current_ == kLoginScreen)
+            nav_.cancel_login = true;
+        else
+            nav_.quit = true;
         return;
     }
     // The update card holds the focus: the section keys wait for it to be
@@ -1398,7 +1402,7 @@ void App::decide_start()
     if (accounts.empty() && !service_.signed_in())
     {
         service_.request_sign_in();
-        login_return_ = current_;
+        login_return_ = current_ == kLoginScreen ? previous_tab() : current_;
         show(kLoginScreen);
         return;
     }
@@ -1567,6 +1571,7 @@ const InputFrame &App::gate_input(const InputFrame &input, float dt)
 void App::update(const InputFrame &raw_input, float dt)
 {
     feedback_.clear();
+    gfx::set_screen_size(static_cast<float>(settings_.screen_size) / 100.0f);
     const InputFrame &input = gate_input(raw_input, dt);
     clock_ += dt;
     context_.settings_changed = false;
@@ -1927,7 +1932,14 @@ void App::update(const InputFrame &raw_input, float dt)
         toasts_.push(ui::StatusKind::info, "Switching account", {}, 2.0f);
     }
     if (ask.cancel_login)
+    {
+        // Circle on the sign-in: the app goes on without an account, back
+        // where the sign-in was opened from (it stayed on the QR code).
         service_.cancel_sign_in();
+        if (current_ == kLoginScreen)
+            show(login_return_ < screens_.size() && login_return_ != kLoginScreen ? login_return_
+                                                                                  : previous_tab());
+    }
     if (ask.sign_out)
     {
         service_.sign_out();

@@ -256,5 +256,8 @@ struct Viewport
 };
 Viewport fit_viewport(int surface_width, int surface_height, float virtual_width = kVirtualWidth,
                       float virtual_height = kVirtualHeight);
+// Settings > User interface > Screen size: the share of the screen the
+// picture fills, centred (0.8-1; a TV that crops its edges wants less).
+void set_screen_size(float share);
 
 } // namespace hui::gfx

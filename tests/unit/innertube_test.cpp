@@ -682,3 +682,31 @@ TEST(InnerTubeLiveChat, ReadsTheStartTheMessagesAndThePace)
     EXPECT_EQ(messages[0].text, "hello ❤️");
     EXPECT_EQ(messages[1].text, ":wave:");
 }
+
+TEST(InnerTubeFeed, ReadsEachRowsOwnMoreToken)
+{
+    // A TV Home shelf carries its own "more of this row" token; the answer to
+    // it (horizontalListContinuation) has the next videos and the next token.
+    const std::string home =
+        R"({"contents":{"tvBrowseRenderer":{"content":{"tvSurfaceContentRenderer":
+      {"content":{"sectionListRenderer":{"contents":[{"shelfRenderer":{
+        "headerRenderer":{"shelfHeaderRenderer":{"title":{"simpleText":"Gaming"}}},
+        "content":{"horizontalListRenderer":{"items":[
+          {"tileRenderer":{"contentId":"ROWVIDEO001","onSelectCommand":{"watchEndpoint":{"videoId":"ROWVIDEO001"}},
+            "metadata":{"tileMetadataRenderer":{"title":{"simpleText":"One"}}}}}],
+          "continuations":[{"nextContinuationData":{"continuation":"ROWMORE1"}}]}}}}]}}}}}}})";
+    yt::FeedPage page;
+    ASSERT_TRUE(yt::parse_feed_page(home, &page)) << page.error;
+    ASSERT_EQ(page.shelf_continuations.size(), 1u);
+    EXPECT_EQ(page.shelf_continuations[0].second, "ROWMORE1");
+    EXPECT_FALSE(page.shelf_continuations[0].first.empty());
+
+    const std::string more = R"({"continuationContents":{"horizontalListContinuation":{"items":[
+        {"tileRenderer":{"contentId":"ROWVIDEO002","onSelectCommand":{"watchEndpoint":{"videoId":"ROWVIDEO002"}},
+          "metadata":{"tileMetadataRenderer":{"title":{"simpleText":"Two"}}}}}],
+      "continuations":[{"nextContinuationData":{"continuation":"ROWMORE2"}}]}}})";
+    ASSERT_TRUE(yt::parse_feed_page(more, &page)) << page.error;
+    ASSERT_EQ(page.items.size(), 1u);
+    EXPECT_EQ(page.items[0].video_id, "ROWVIDEO002");
+    EXPECT_EQ(page.continuation, "ROWMORE2");
+}

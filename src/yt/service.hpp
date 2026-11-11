@@ -43,6 +43,8 @@ struct FeedView
     std::string continuation;
     std::string error;
     std::string clear_history_token; // History only: "Clear all watch history"
+    // More of a row: each shelf's next-page token (empty once it has no more).
+    std::vector<std::pair<std::string, std::string>> shelf_more;
     std::uint64_t revision = 0;
 };
 
@@ -154,6 +156,8 @@ class Service
     // The browse id the topic feed holds (or is loading).
     std::string topic_id() const;
     void request_more(FeedKind kind);
+    // More videos for one row (shelf) of a feed, when it has more to give.
+    void request_shelf_more(FeedKind kind, std::string shelf);
     void request_search(std::string query);
     // Opens a channel page (channel_id "UC..."): header, tabs and the videos
     // of its first tab. The videos land in the channel feed, not in search.

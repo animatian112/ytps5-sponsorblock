@@ -135,6 +135,7 @@ class PlayerScreen final : public Screen
     // Shorts: the last swipe (for the slide-in) and its direction.
     float shorts_swipe_s_ = -10.0f;
     bool shorts_swipe_down_ = true;
+    bool next_short(yt::FeedItem *out) const;
     bool shorts_view() const
     {
         return texture_width_ > 0 && texture_height_ > texture_width_;
