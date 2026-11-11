@@ -97,6 +97,9 @@ class SearchScreen final : public Screen
     Context &context_;
     ui::SearchField field_;
     ui::Keyboard keys_;
+    // The language the keyboard's letters are for (i18n::language()).
+    std::string keys_language_;
+    void set_keyboard_language(const std::string &language);
     FeedView results_;
     ui::Carousel channels_; // the channel row of the current answer
     ui::TabBar tabs_;       // the tabs of the open channel page

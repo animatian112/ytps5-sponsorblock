@@ -60,6 +60,7 @@ struct Nav
     bool restore_settings = false; // ... and Restore
     bool new_tv_code = false;      // Settings > Remote control > New TV code
     bool reset_settings = false;   // Settings > Developer > Reset all settings
+    bool show_log_qr = false;      // Settings > General > Send yt.log to a phone
     bool quit = false;             // leave the app
 };
 

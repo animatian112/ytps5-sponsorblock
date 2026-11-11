@@ -36,6 +36,7 @@ struct CardItem
     bool selected = false;         // draws the check
     bool disabled = false;         // dimmed; containers refuse confirm on it
     int tag = 0;                   // yours
+    bool verbatim = false;         // title and subtitle are content, never translated
 };
 
 enum class CardText : std::uint8_t

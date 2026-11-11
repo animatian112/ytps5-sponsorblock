@@ -65,8 +65,26 @@ struct Settings
     bool channel_speed = true;     // a speed picked for a video is kept for its channel
     bool live_chat = true;         // a live stream shows its chat beside the picture
     bool trigger_chapters = false; // L2 / R2 jump chapters in the player (easy to hit by accident)
-    int screen_size = 100;         // % of the screen the picture fills (TV overscan cuts edges)
-    bool start_screen = true;      // at start: who's watching, or the QR sign-in without accounts
+    int language = 0;              // index into kLanguages: the app's own words (0: the console's)
+    static constexpr int kLanguageCount = 11;
+    // Code and the language's own name; 0 follows the console's system language.
+    // (The word joiner after "English" keeps the name from being translated.)
+    static constexpr const char *kLanguages[kLanguageCount][2] = {
+        {"", "System"},
+        {"en", "English\xE2\x81\xA0"},
+        {"es", "Espa\xC3\xB1ol"},
+        {"pt-BR", "Portugu\xC3\xAAs (Brasil)"},
+        {"fr", "Fran\xC3\xA7"
+               "ais"},
+        {"de", "Deutsch"},
+        {"it", "Italiano"},
+        {"ru", "\xD0\xA0\xD1\x83\xD1\x81\xD1\x81\xD0\xBA\xD0\xB8\xD0\xB9"},
+        {"pl", "Polski"},
+        {"tr", "T\xC3\xBCrk\xC3\xA7"
+               "e"},
+        {"nl", "Nederlands"}};
+    int screen_size = 100;    // % of the screen the picture fills (TV overscan cuts edges)
+    bool start_screen = true; // at start: who's watching, or the QR sign-in without accounts
     // The player's lower buttons, a bit per kPlayerButtonNames entry that is
     // hidden (default: Screen dimming and Stats for nerds).
     int hidden_buttons = (1 << 11) | (1 << 14);

@@ -14,6 +14,38 @@ namespace hui::gfx
 
 namespace ff = font_format;
 
+namespace
+{
+
+TextFilter g_filter = nullptr;
+thread_local int t_verbatim = 0;
+
+} // namespace
+
+void set_text_filter(TextFilter filter)
+{
+    g_filter = filter;
+}
+
+std::string_view shown_text(std::string_view text)
+{
+    if (g_filter == nullptr || t_verbatim > 0 || text.empty())
+        return text;
+    return g_filter(text);
+}
+
+VerbatimText::VerbatimText(bool on) : on_(on)
+{
+    if (on_)
+        ++t_verbatim;
+}
+
+VerbatimText::~VerbatimText()
+{
+    if (on_)
+        --t_verbatim;
+}
+
 std::uint32_t next_codepoint(std::string_view text, std::size_t *index)
 {
     const auto byte = [&](std::size_t at) { return static_cast<unsigned char>(text[at]); };
@@ -127,7 +159,8 @@ float Font::kern(std::uint32_t first, std::uint32_t second) const
 
 std::string Font::fit(std::string_view text, float size, float max_width, float tracking) const
 {
-    if (measure(text, size, tracking) <= max_width)
+    text = shown_text(text);
+    if (measure_raw(text, size, tracking) <= max_width)
         return std::string(text);
     constexpr std::string_view kEllipsis = "\xE2\x80\xA6";
     const std::string_view mark = has_glyph(0x2026) ? kEllipsis : std::string_view("...");
@@ -140,7 +173,7 @@ std::string Font::fit(std::string_view text, float size, float max_width, float 
         while (!candidate.empty() && candidate.back() == ' ')
             candidate.pop_back();
         candidate.append(mark);
-        if (measure(candidate, size, tracking) > max_width)
+        if (measure_raw(candidate, size, tracking) > max_width)
             break;
         best = std::move(candidate);
     }
@@ -173,6 +206,11 @@ Font::Resolved Font::resolve(std::uint32_t *codepoint) const
 }
 
 float Font::measure(std::string_view text, float size, float tracking) const
+{
+    return measure_raw(shown_text(text), size, tracking);
+}
+
+float Font::measure_raw(std::string_view text, float size, float tracking) const
 {
     float width = 0.0f;
     std::uint32_t previous = 0;
@@ -211,7 +249,8 @@ float Font::measure(std::string_view text, float size, float tracking) const
 float Font::layout(std::string_view text, float x, float y, float size, Align align,
                    std::vector<GlyphQuad> &quads, float tracking) const
 {
-    const float width = measure(text, size, tracking);
+    text = shown_text(text);
+    const float width = measure_raw(text, size, tracking);
     float pen = x;
     if (align == Align::center)
         pen -= width * 0.5f;
@@ -279,6 +318,7 @@ float Font::layout(std::string_view text, float x, float y, float size, Align al
 
 std::vector<std::string> Font::wrap(std::string_view text, float size, float max_width) const
 {
+    text = shown_text(text);
     std::vector<std::string> lines;
     std::string line;
     std::size_t index = 0;
@@ -297,7 +337,7 @@ std::vector<std::string> Font::wrap(std::string_view text, float size, float max
             const std::string_view word = paragraph.substr(word_start, word_end - word_start);
             std::string candidate =
                 line.empty() ? std::string(word) : line + " " + std::string(word);
-            if (measure(candidate, size) <= max_width)
+            if (measure_raw(candidate, size) <= max_width)
             {
                 line = std::move(candidate);
             }
@@ -308,14 +348,14 @@ std::vector<std::string> Font::wrap(std::string_view text, float size, float max
                 // The word starts a line of its own. One wider than the line
                 // gives up as many code points as fit, line after line.
                 std::size_t start = 0;
-                while (measure(word.substr(start), size) > max_width)
+                while (measure_raw(word.substr(start), size) > max_width)
                 {
                     std::size_t end = start;
                     next_codepoint(word, &end);
                     for (std::size_t next = end; next < word.size(); end = next)
                     {
                         next_codepoint(word, &next);
-                        if (measure(word.substr(start, next - start), size) > max_width)
+                        if (measure_raw(word.substr(start, next - start), size) > max_width)
                             break;
                     }
                     if (end >= word.size())

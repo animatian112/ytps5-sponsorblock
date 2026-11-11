@@ -43,6 +43,7 @@ class Font
 
     // Width in pixels of one line of UTF-8 text at the given pixel size.
     // tracking is extra space between glyphs, in pixels.
+    // The text measured and drawn is what the text filter (below) shows for it.
     float measure(std::string_view text, float size, float tracking = 0.0f) const;
     // text, or its longest prefix plus an ellipsis that fits max_width.
     std::string fit(std::string_view text, float size, float max_width,
@@ -124,6 +125,7 @@ class Font
     // draws '?' (and *codepoint becomes '?'). glyph is null when even that is
     // missing.
     Resolved resolve(std::uint32_t *codepoint) const;
+    float measure_raw(std::string_view text, float size, float tracking = 0.0f) const;
 
     font_format::Header header_{};
     std::vector<font_format::Glyph> glyphs_;
@@ -131,6 +133,27 @@ class Font
     std::vector<std::uint8_t> atlas_;
     std::vector<Fallback> fallbacks_;
     std::string error_;
+};
+
+// What every font shows in place of a string: the app's translation of an
+// interface text. The view it returns stays valid until the filter's next
+// call on this thread. Null (the default) shows text as given.
+using TextFilter = std::string_view (*)(std::string_view text);
+void set_text_filter(TextFilter filter);
+std::string_view shown_text(std::string_view text);
+
+// While one lives on this thread, text is shown as given: names, titles and
+// what the user typed are not interface text.
+class VerbatimText
+{
+  public:
+    explicit VerbatimText(bool on = true);
+    ~VerbatimText();
+    VerbatimText(const VerbatimText &) = delete;
+    VerbatimText &operator=(const VerbatimText &) = delete;
+
+  private:
+    bool on_;
 };
 
 // Decodes the next UTF-8 codepoint from text at *index (advancing it);

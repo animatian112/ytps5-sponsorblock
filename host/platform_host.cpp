@@ -58,6 +58,13 @@ bool local_date(int *weekday, int *month, int *day)
     return true;
 }
 
+const char *system_language()
+{
+    // The host run reads it from the environment, so snapshots can show a language.
+    const char *value = std::getenv("HUI_LANGUAGE");
+    return value != nullptr && value[0] != '\0' ? value : "en";
+}
+
 void sleep_us(std::uint32_t microseconds)
 {
     usleep(microseconds);

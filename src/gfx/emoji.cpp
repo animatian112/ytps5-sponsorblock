@@ -197,7 +197,8 @@ std::string_view png(int id)
 bool invisible(std::uint32_t codepoint)
 {
     return codepoint == 0xfe0f || codepoint == 0xfe0e || codepoint == 0x200d ||
-           codepoint == 0x20e3 || (codepoint >= 0x1f3fb && codepoint <= 0x1f3ff) ||
+           codepoint == 0x2060 || codepoint == 0x20e3 ||
+           (codepoint >= 0x1f3fb && codepoint <= 0x1f3ff) ||
            (codepoint >= 0xe0020 && codepoint <= 0xe007f);
 }
 

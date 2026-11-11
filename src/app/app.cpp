@@ -4,12 +4,15 @@
 
 #include "app/app.hpp"
 
+#include "yt/qr.hpp"
+
 #include "app/icons.hpp"
 
 #include "app/screens.hpp"
 #include "app/theme.hpp"
 #include "platform/ps5/system.hpp"
 #include "app/thumbs.hpp"
+#include "core/i18n.hpp"
 #include "core/save_file.hpp"
 #include "core/version.hpp"
 #include "update/update_check.h"
@@ -17,6 +20,7 @@
 #include "gfx/renderer.hpp"
 #include "ui/components.hpp"
 #include "yt/innertube.hpp"
+#include "yt/log.hpp"
 #include "yt/tuning.hpp"
 #include "yt/service.hpp"
 
@@ -857,6 +861,18 @@ std::vector<yt::FeedItem> App::current_section(const std::string &video_id, Sect
     return {};
 }
 
+// Settings > General > Language: System follows the console's language.
+void App::apply_language()
+{
+    if (settings_.language == language_applied_)
+        return;
+    language_applied_ = settings_.language;
+    const int index = std::clamp(settings_.language, 0, Settings::kLanguageCount - 1);
+    const char *code = index == 0 ? sys::system_language() : Settings::kLanguages[index][0];
+    const std::string now = i18n::set_language(code);
+    yt::log::line("language: %s (asked for %s)", now.c_str(), code);
+}
+
 yt::Service::Preferences App::preferences() const
 {
     yt::Service::Preferences p;
@@ -872,6 +888,10 @@ yt::Service::Preferences App::preferences() const
     const int region = std::clamp(settings_.region, 0, Settings::kRegionCount - 1);
     p.gl = Settings::kRegions[region][0];
     p.hl = Settings::kRegions[region][1];
+    // Settings > General > Language: YouTube's own words (section names,
+    // "views", dates) in the app's language too.
+    if (i18n::language() != "en")
+        p.hl = i18n::youtube_code(i18n::language());
     p.search_params =
         yt::search_params(settings_.search_sort, settings_.search_date, settings_.search_duration);
     return p;
@@ -1389,6 +1409,83 @@ void App::handle_global(const InputFrame &input, float dt)
     }
 }
 
+// yt.log to a phone (touchpad + Options, or Settings > General): the app
+// serves the file on the home network and shows the address as a QR code.
+void App::open_log_qr()
+{
+    log_qr_open_ = true;
+    log_qr_error_.clear();
+    log_qr_texture_ = 0;
+    if (!log_share_.start(&log_qr_error_))
+    {
+        yt::log::line("logshare: %s", log_qr_error_.c_str());
+        return;
+    }
+    const std::string &url = log_share_.url();
+    const int modules = yt::qr_modules(url);
+    const int scale = modules > 0 ? std::max(1, 440 / (modules + 8)) : 1;
+    yt::QrImage qr;
+    if (thumbs_ != nullptr && yt::make_qr(url, scale, &qr) && qr.valid())
+    {
+        log_qr_texture_ = thumbs_->upload("qr:log:" + url, qr.rgba.data(), qr.width, qr.height);
+        log_qr_size_ = qr.width;
+    }
+}
+
+void App::handle_log_qr(const InputFrame &input)
+{
+    if (input.is_pressed(Action::back) || input.is_pressed(Action::confirm) ||
+        input.is_pressed(Action::menu))
+    {
+        log_qr_open_ = false;
+        log_share_.stop();
+        feedback_.play(audio::Cue::back);
+    }
+}
+
+void App::draw_log_qr(ui::Canvas &canvas) const
+{
+    if (!log_qr_open_)
+        return;
+    gfx::DrawList &list = canvas.list;
+    list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
+                      gfx::Color::rgb(0x000000, 0.85f));
+    const gfx::Rect box{360.0f, 190.0f, 1200.0f, 700.0f};
+    list.rounded_rect(box, 24.0f, gfx::Color::rgb(0x1c1c1c));
+    const float qr_x = box.x + 60.0f;
+    const float qr_y = box.y + 90.0f;
+    const float qr_side = 520.0f;
+    list.rounded_rect({qr_x, qr_y, qr_side, qr_side}, 16.0f, gfx::Color::rgb(0xffffff));
+    if (log_qr_texture_ != 0)
+        list.image(log_qr_texture_, {qr_x + 20.0f, qr_y + 20.0f, qr_side - 40.0f, qr_side - 40.0f},
+                   gfx::kFullUv, gfx::Color::rgb(0xffffff), 4.0f);
+    const float tx = qr_x + qr_side + 60.0f;
+    const float width = box.x + box.w - tx - 50.0f;
+    ui::text(list, fonts_.semibold, i18n::tr("Send yt.log to your phone"), tx, box.y + 130.0f,
+             36.0f, gfx::Color::rgb(0xffffff));
+    if (!log_qr_error_.empty())
+    {
+        ui::paragraph(list, fonts_.regular,
+                      i18n::tr("The log could not be shared:") + " " + log_qr_error_, tx,
+                      box.y + 200.0f, 24.0f, width, 34.0f, gfx::Color::rgb(0xff8a80), 6);
+    }
+    else
+    {
+        ui::paragraph(
+            list, fonts_.regular,
+            i18n::tr("Scan the code with your phone's camera and tap Download. The phone has "
+                     "to be on the same Wi-Fi as the console."),
+            tx, box.y + 200.0f, 24.0f, width, 34.0f, gfx::Color::rgb(0xbbbbbb), 6);
+        ui::paragraph(list, fonts_.mono, log_share_.url(), tx, box.y + 430.0f, 22.0f, width, 30.0f,
+                      gfx::Color::rgb(0x3ea6ff), 2);
+        if (log_share_.downloads() > 0)
+            ui::text(list, fonts_.semibold, i18n::tr("Sent to the phone"), tx, box.y + 520.0f,
+                     26.0f, gfx::Color::rgb(0x81c995));
+    }
+    ui::text(list, fonts_.regular, i18n::tr("Circle: close"), tx, box.y + box.h - 50.0f, 22.0f,
+             gfx::Color::rgb(0x777777));
+}
+
 // Settings > General > Start screen: with no account saved, the QR sign-in
 // (Circle carries on without one); with accounts, "Who's watching?".
 void App::decide_start()
@@ -1527,6 +1624,21 @@ void App::draw_picker(ui::Canvas &canvas) const
 
 const InputFrame &App::gate_input(const InputFrame &input, float dt)
 {
+    // Touchpad held + Options: the log's QR code, from anywhere.
+    if (!log_qr_open_ && input.is_held(Action::touch) && input.is_pressed(Action::menu))
+    {
+        open_log_qr();
+        locked_input_ = InputFrame{};
+        locked_input_.connected = input.connected;
+        return locked_input_;
+    }
+    if (log_qr_open_)
+    {
+        handle_log_qr(input);
+        locked_input_ = InputFrame{};
+        locked_input_.connected = input.connected;
+        return locked_input_;
+    }
     decide_start();
     if (picker_open_)
     {
@@ -1572,6 +1684,7 @@ void App::update(const InputFrame &raw_input, float dt)
 {
     feedback_.clear();
     gfx::set_screen_size(static_cast<float>(settings_.screen_size) / 100.0f);
+    apply_language();
     const InputFrame &input = gate_input(raw_input, dt);
     clock_ += dt;
     context_.settings_changed = false;
@@ -1841,6 +1954,8 @@ void App::update(const InputFrame &raw_input, float dt)
         menu_item_ = ask.playlist_item;
         apply_card_pick(kPickPlaylist);
     }
+    if (ask.show_log_qr)
+        open_log_qr();
     if (ask.quit)
         quit_ = true;
     if (ask.open_video && ask.video_id.size() == 24 && ask.video_id.rfind("UC", 0) == 0)
@@ -2252,9 +2367,15 @@ void App::draw_chrome(Frame &frame)
             static const char *const kDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
             static const char *const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-            char text[32];
-            std::snprintf(text, sizeof(text), "%s %s %d", kDays[weekday % 7], kMonths[month - 1],
-                          day);
+            char text[64];
+            const std::string name = i18n::tr(kDays[weekday % 7]);
+            const std::string month_name = i18n::tr(kMonths[month - 1]);
+            if (i18n::language() == "en")
+                std::snprintf(text, sizeof(text), "%s %s %d", name.c_str(), month_name.c_str(),
+                              day);
+            else
+                std::snprintf(text, sizeof(text), "%s %d %s", name.c_str(), day,
+                              month_name.c_str());
             ui::text(overlay.list, fonts_.semibold, text, kClockX, 136.0f, 24.0f,
                      gfx::Color::rgb(0xffffff), gfx::Align::center);
         }
@@ -2285,6 +2406,7 @@ void App::draw_chrome(Frame &frame)
     card_menu_.draw(overlay, fonts_);
     draw_prompt(overlay);
     draw_picker(overlay);
+    draw_log_qr(overlay);
     toasts_.draw(overlay);
 }
 

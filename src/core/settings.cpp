@@ -105,6 +105,7 @@ constexpr Extra kExtras[] = {
     {94, &Settings::hidden_buttons, nullptr, 0, 0x7fff},
     {95, nullptr, &Settings::trigger_chapters, 0, 1},
     {96, &Settings::screen_size, nullptr, 80, 100},
+    {97, &Settings::language, nullptr, 0, Settings::kLanguageCount - 1},
 };
 // 60 + i: Settings::sb_act[i].
 constexpr std::uint8_t kSbActionKey = 60;

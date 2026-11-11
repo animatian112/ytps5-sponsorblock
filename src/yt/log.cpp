@@ -50,6 +50,15 @@ std::vector<std::string> &recent_lines()
 
 } // namespace
 
+namespace
+{
+std::string &stored_path()
+{
+    static std::string value;
+    return value;
+}
+} // namespace
+
 void open(const char *path)
 {
     if (path == nullptr || path[0] == '\0')
@@ -66,6 +75,36 @@ void open(const char *path)
         std::fclose(existing);
     }
     file() = std::fopen(path, size > kMaxBytes ? "w" : "a");
+    stored_path() = path;
+}
+
+std::string path()
+{
+    std::lock_guard<std::mutex> lock(mutex());
+    return stored_path();
+}
+
+std::string read_all(std::size_t max_bytes)
+{
+    std::string text;
+    std::string where;
+    {
+        std::lock_guard<std::mutex> lock(mutex());
+        if (file() != nullptr)
+            std::fflush(file());
+        where = stored_path();
+    }
+    if (where.empty())
+        return text;
+    FILE *in = std::fopen(where.c_str(), "rb");
+    if (in == nullptr)
+        return text;
+    char buffer[16384];
+    std::size_t got = 0;
+    while ((got = std::fread(buffer, 1, sizeof buffer, in)) > 0 && text.size() < max_bytes)
+        text.append(buffer, got);
+    std::fclose(in);
+    return text;
 }
 
 void capture_stderr()

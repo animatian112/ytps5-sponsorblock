@@ -4,6 +4,8 @@
 
 #include "app/player_chrome.hpp"
 
+#include "core/i18n.hpp"
+
 #include "core/settings.hpp"
 
 #include "app/icons.hpp"
@@ -731,7 +733,12 @@ void PlayerChrome::draw_icon(gfx::DrawList &list, const ui::Fonts &fonts, Button
     case Button::channel: // the channel's initial in a round avatar
     {
         list.circle(cx, cy, 22.0f, gfx::Color::rgb(0x3a3a3a));
-        const std::string initial = subtitle_.empty() ? std::string("?") : subtitle_.substr(0, 1);
+        // (The line starts with the marker that keeps it untranslated.)
+        std::string_view name = subtitle_;
+        if (name.substr(0, i18n::kVerbatim.size()) == i18n::kVerbatim)
+            name.remove_prefix(i18n::kVerbatim.size());
+        const std::string initial =
+            name.empty() ? std::string("?") : std::string(name.substr(0, 1));
         if (fonts.semibold.font != nullptr)
             ui::text(list, fonts.semibold, initial, cx, cy + 8.0f, 24.0f, kInk, gfx::Align::center);
         break;

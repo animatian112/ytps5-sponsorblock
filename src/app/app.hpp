@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "yt/log_share.hpp"
+
 #include "app/card_menu.hpp"
 #include "app/frame.hpp"
 #include "app/glow.hpp"
@@ -178,6 +180,18 @@ class App
     // locked (Circle held 2 s unlocks).
     const InputFrame &gate_input(const InputFrame &input, float dt);
     InputFrame locked_input_;
+    // yt.log to a phone: the QR code of the console's little web server.
+    yt::LogShare log_share_;
+    bool log_qr_open_ = false;
+    std::string log_qr_error_;
+    std::uint32_t log_qr_texture_ = 0;
+    int log_qr_size_ = 0;
+    // Settings > General > Language, as applied (-1: not yet).
+    int language_applied_ = -1;
+    void apply_language();
+    void open_log_qr();
+    void handle_log_qr(const InputFrame &input);
+    void draw_log_qr(ui::Canvas &canvas) const;
     // The start screen (YouTube TV's): decided once, a moment after start.
     bool start_decided_ = false;
     bool picker_open_ = false; // "Who's watching?"

@@ -543,6 +543,7 @@ void SearchField::draw_field(Canvas &canvas, Painter &paint) const
     float end = 0.0f;
     if (!text_.empty())
     {
+        const gfx::VerbatimText verbatim; // what the player typed
         end = paint.body(shown(paint, room), text_x, baseline, style.text_size, ink);
     }
     else if (!placeholder_.empty())
@@ -632,6 +633,7 @@ void SearchField::draw_list(Canvas &canvas, Painter &paint) const
         }
 
         const float baseline = rect.cy() + style.row_size * 0.35f;
+        const gfx::VerbatimText verbatim; // a search, not interface text
         const std::string cut =
             fit_body(paint, row.text, style.row_size, std::max(right - x, 24.0f));
         const std::size_t at = showing_recent_ ? std::string_view::npos : find_match(cut, text_);

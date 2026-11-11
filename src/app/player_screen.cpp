@@ -9,6 +9,8 @@
 
 #include "app/player_screen.hpp"
 
+#include "core/i18n.hpp"
+
 #include "yt/comments.hpp"
 
 #include "yt/chapters.hpp"
@@ -75,19 +77,31 @@ std::string upload_line(const yt::VideoView &view)
         static const char *const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
         char text[64];
-        std::snprintf(text, sizeof(text), "%s %d, %d", kMonths[m - 1], d, y);
+        const std::string month = i18n::tr(kMonths[m - 1]);
+        if (i18n::language() == "en")
+            std::snprintf(text, sizeof(text), "%s %d, %d", month.c_str(), d, y);
+        else
+            std::snprintf(text, sizeof(text), "%d %s %d", d, month.c_str(), y);
         std::string out = text;
         const long long now = static_cast<long long>(std::time(nullptr)) / 86400;
         const long long days = now - days_from_civil(y, m, d);
         if (days >= 0 && now > 19000) // a console clock that was never set says nothing
         {
-            const auto ago = [](long long n, const char *unit)
-            { return std::to_string(n) + " " + unit + (n == 1 ? "" : "s") + " ago"; };
-            const std::string age = days == 0    ? std::string("today")
-                                    : days < 7   ? ago(days, "day")
-                                    : days < 31  ? ago(days / 7, "week")
-                                    : days < 365 ? ago(days / 30 > 0 ? days / 30 : 1, "month")
-                                                 : ago(days / 365, "year");
+            // "%d days ago" and the rest are strings of the language tables.
+            const auto ago = [](long long n, const char *one, const char *many)
+            {
+                std::string line = i18n::tr(n == 1 ? one : many);
+                const std::size_t at = line.find("%d");
+                if (at != std::string::npos)
+                    line.replace(at, 2, std::to_string(n));
+                return line;
+            };
+            const std::string age =
+                days == 0    ? i18n::tr("today")
+                : days < 7   ? ago(days, "%d day ago", "%d days ago")
+                : days < 31  ? ago(days / 7, "%d week ago", "%d weeks ago")
+                : days < 365 ? ago(days / 30 > 0 ? days / 30 : 1, "%d month ago", "%d months ago")
+                             : ago(days / 365, "%d year ago", "%d years ago");
             out += " (" + age + ")";
         }
         return out;
@@ -139,8 +153,11 @@ std::string clock_line(bool hours24)
     int month = 0;
     int day = 0;
     if (sys::local_date(&weekday, &month, &day) && month >= 1 && month <= 12)
-        line = std::string(kDays[weekday % 7]) + " " + kMonths[month - 1] + " " +
-               std::to_string(day) + "  ";
+        line = i18n::language() == "en"
+                   ? i18n::tr(kDays[weekday % 7]) + " " + i18n::tr(kMonths[month - 1]) + " " +
+                         std::to_string(day) + "  "
+                   : i18n::tr(kDays[weekday % 7]) + " " + std::to_string(day) + " " +
+                         i18n::tr(kMonths[month - 1]) + "  ";
     int hour = 0;
     int minute = 0;
     bool twelve = true;
@@ -813,6 +830,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         for (const yt::FeedItem &item : related_items_)
         {
             ui::CardItem card;
+            card.verbatim = true;
             card.title = item.title.empty() ? item.video_id : item.title;
             // The channel, then the views and how long ago it went up.
             card.subtitle = item.author;
@@ -888,7 +906,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + view.subscribers;
         if (!view.info.view_count.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") +
-                    grouped_digits(view.info.view_count) + " views";
+                    grouped_digits(view.info.view_count) + i18n::tr(" views");
         // When it was uploaded.
         if (const std::string uploaded = upload_line(view); !uploaded.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + uploaded;
@@ -906,7 +924,9 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         }
         const CardBrand brand = card_brand(playing_id_, context_.settings);
         const std::string &title = !brand.title.empty() ? brand.title : view.info.title;
-        chrome_.set_info(title.empty() ? playing_id_ : title, meta,
+        // The title and the channel are the video's own words.
+        chrome_.set_info(i18n::kVerbatim + (title.empty() ? playing_id_ : title),
+                         meta.empty() ? meta : i18n::kVerbatim + meta,
                          player_ != nullptr ? player_->quality_label() : std::string());
         chrome_.set_clock(clock_line(context_.settings.time_24h));
     }
@@ -1338,6 +1358,7 @@ void PlayerScreen::fill_chapter_row()
         for (const yt::Chapter &chapter : chapters_)
         {
             ui::CardItem card;
+            card.verbatim = true;
             card.title = chapter.title;
             card.subtitle = chapter_time(chapter.start_s);
             card.image_aspect = 16.0f / 9.0f;
@@ -1773,15 +1794,18 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
                     grouped += ',';
                 grouped += digits[i];
             }
-            head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + grouped + " views";
+            head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + grouped + i18n::tr(" views");
         }
         if (const std::string uploaded = upload_line(view); !uploaded.empty())
             head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + uploaded;
         if (view.likes >= 0 && view.dislikes >= 0)
             head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + yt::compact_count(view.likes) +
-                    " likes / " + yt::compact_count(view.dislikes) + " dislikes";
+                    i18n::tr(" likes / ") + yt::compact_count(view.dislikes) +
+                    i18n::tr(" dislikes");
+        // The video's own words (names, the description) are shown as written.
+        const gfx::VerbatimText verbatim;
         if (!head.empty())
-            lines.push_back(head);
+            lines.push_back(i18n::kVerbatim + head);
         const std::string text =
             view.info.description.empty() ? std::string("No description.") : view.info.description;
         std::size_t at = 0;
@@ -1795,13 +1819,14 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
             else
                 for (const std::string &line :
                      context_.fonts.regular.font->wrap(paragraph, 26.0f, 440.0f))
-                    lines.push_back(line);
+                    lines.push_back(i18n::kVerbatim + line);
             if (end == std::string::npos || lines.size() > 400)
                 break;
             at = end + 1;
         }
         chrome_.open_panel(PlayerChrome::Panel::info,
-                           view.info.title.empty() ? std::string("Info") : view.info.title,
+                           view.info.title.empty() ? std::string("Info")
+                                                   : i18n::kVerbatim + view.info.title,
                            std::move(lines), -1);
         break;
     }
@@ -1978,14 +2003,16 @@ std::vector<std::string> PlayerScreen::comment_lines() const
     std::vector<std::string> lines;
     for (const yt::Comment &comment : view.items)
     {
-        std::string head = comment.author.empty() ? std::string("Someone") : comment.author;
+        std::string head = comment.author.empty() ? i18n::tr("Someone") : comment.author;
         if (!comment.published.empty())
             head += "  \xE2\x80\xA2  " + comment.published;
         if (!comment.likes.empty())
-            head += "  \xE2\x80\xA2  " + comment.likes + " likes";
+            head += "  \xE2\x80\xA2  " + comment.likes + i18n::tr(" likes");
         if (!comment.replies.empty())
-            head += "  \xE2\x80\xA2  " + comment.replies + " replies";
-        lines.push_back(head);
+            head += "  \xE2\x80\xA2  " + comment.replies + i18n::tr(" replies");
+        // The comment's own words are shown as written.
+        const gfx::VerbatimText verbatim;
+        lines.push_back(i18n::kVerbatim + head);
         std::size_t at = 0;
         const std::string &text = comment.text;
         while (at <= text.size() && context_.fonts.regular.font != nullptr)
@@ -1996,7 +2023,7 @@ std::vector<std::string> PlayerScreen::comment_lines() const
             if (!paragraph.empty())
                 for (const std::string &line :
                      context_.fonts.regular.font->wrap(paragraph, 26.0f, 440.0f))
-                    lines.push_back("    " + line);
+                    lines.push_back(i18n::kVerbatim + "    " + line);
             if (end == std::string::npos)
                 break;
             at = end + 1;

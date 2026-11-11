@@ -4,6 +4,8 @@
 
 #include "ui/components/keyboard.hpp"
 
+#include "core/i18n.hpp"
+#include "gfx/font.hpp"
 #include "ui/components/action_glyph.hpp"
 
 #include <algorithm>
@@ -180,13 +182,18 @@ void draw_icon(gfx::DrawList &list, KeyKind kind, float cx, float cy, float s, C
 
 KeyboardLayout &KeyboardLayout::add_row(std::string_view characters)
 {
+    // One key a code point: letters of any script the fonts carry, with
+    // their capitals under shift ("ä" "Ä", "ж" "Ж").
     std::vector<KeyboardKey> row;
-    for (char c : characters)
+    for (std::size_t index = 0; index < characters.size();)
     {
+        const std::size_t start = index;
+        gfx::next_codepoint(characters, &index);
         KeyboardKey key;
-        key.text = std::string(1, c);
-        if (c >= 'a' && c <= 'z')
-            key.shifted = std::string(1, static_cast<char>(c - 'a' + 'A'));
+        key.text = std::string(characters.substr(start, index - start));
+        const std::string capital = i18n::upper(key.text);
+        if (capital != key.text)
+            key.shifted = capital;
         row.push_back(std::move(key));
     }
     rows.push_back(std::move(row));

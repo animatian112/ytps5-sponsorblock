@@ -115,6 +115,7 @@ void FeedView::set_items(const std::vector<yt::FeedItem> &items, const Context &
     for (const yt::FeedItem &item : items)
     {
         ui::CardItem card;
+        card.verbatim = true;
         card.title = item.title.empty() ? item.video_id : item.title;
         // SmartTube's info line: channel, views and age.
         card.subtitle = item.author;

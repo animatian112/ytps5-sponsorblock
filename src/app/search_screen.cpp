@@ -10,6 +10,7 @@
 
 #include "app/theme.hpp"
 #include "app/thumbs.hpp"
+#include "core/i18n.hpp"
 #include "yt/log.hpp"
 #include "yt/service.hpp"
 #include "ui/components.hpp"
@@ -71,7 +72,148 @@ constexpr float kChannelTabH = 60.0f;
 constexpr float kChannelResultsY = 452.0f;
 constexpr float kChannelResultsH = 560.0f;
 
+// The letters of the app's language on the search keyboard: its own layout
+// (QWERTZ, AZERTY, ЙЦУКЕН...), the letters with accents it writes on a page
+// of their own, then the symbols. Russian keeps a Latin page for names.
+struct KeyRows
+{
+    const char *code;
+    const char *name;    // the page's name on the key that switches to it
+    const char *row1;    // 11 keys under the digits
+    const char *row2;    // 11 keys
+    const char *row3;    // 10 keys after shift
+    const char *accents; // a page of accented letters ("" for none)
+};
+
+constexpr KeyRows kKeyRows[] = {
+    {"en", "abc", "qwertyuiop-", "asdfghjkl'&", "zxcvbnm,.?", ""},
+    {"es", "abc", "qwertyuiop-", "asdfghjkl\xC3\xB1'", "zxcvbnm,.?",
+     "\xC3\xA1\xC3\xA9\xC3\xAD\xC3\xB3\xC3\xBA\xC3\xBC\xC3\xB1\xC2\xBF\xC2\xA1"},
+    {"pt-BR", "abc", "qwertyuiop-", "asdfghjkl\xC3\xA7'", "zxcvbnm,.?",
+     "\xC3\xA1\xC3\xA0\xC3\xA2\xC3\xA3\xC3\xA9\xC3\xAA\xC3\xAD\xC3\xB3\xC3\xB4"
+     "\xC3\xB5\xC3\xBA\xC3\xA7"},
+    {"fr", "abc", "azertyuiop-", "qsdfghjklm'", "wxcvbn,.?!",
+     "\xC3\xA0\xC3\xA2\xC3\xA6\xC3\xA7\xC3\xA9\xC3\xA8\xC3\xAA\xC3\xAB\xC3\xAE"
+     "\xC3\xAF\xC3\xB4\xC5\x93\xC3\xB9\xC3\xBB\xC3\xBC\xC3\xBF"},
+    {"de", "abc", "qwertzuiop\xC3\xBC", "asdfghjkl\xC3\xB6\xC3\xA4", "yxcvbnm\xC3\x9F.-", ""},
+    {"it", "abc", "qwertyuiop-", "asdfghjkl'&", "zxcvbnm,.?",
+     "\xC3\xA0\xC3\xA8\xC3\xA9\xC3\xAC\xC3\xB2\xC3\xB9"},
+    {"ru", "\xD0\xB0\xD0\xB1\xD0\xB2",
+     "\xD0\xB9\xD1\x86\xD1\x83\xD0\xBA\xD0\xB5\xD0\xBD\xD0\xB3\xD1\x88\xD1\x89"
+     "\xD0\xB7\xD1\x85",
+     "\xD1\x84\xD1\x8B\xD0\xB2\xD0\xB0\xD0\xBF\xD1\x80\xD0\xBE\xD0\xBB\xD0\xB4"
+     "\xD0\xB6\xD1\x8D",
+     "\xD1\x8F\xD1\x87\xD1\x81\xD0\xBC\xD0\xB8\xD1\x82\xD1\x8C\xD0\xB1\xD1\x8E"
+     "\xD1\x91",
+     "\xD1\x8A"},
+    {"pl", "abc", "qwertyuiop-", "asdfghjkl'&", "zxcvbnm,.?",
+     "\xC4\x85\xC4\x87\xC4\x99\xC5\x82\xC5\x84\xC3\xB3\xC5\x9B\xC5\xBA\xC5\xBC"},
+    {"tr", "abc", "qwertyu\xC4\xB1op\xC4\x9F", "asdfghjkl\xC5\x9Fi", "zxcvbnm\xC3\xB6\xC3\xA7.",
+     "\xC3\xBC"},
+    {"nl", "abc", "qwertyuiop-", "asdfghjkl'&", "zxcvbnm,.?",
+     "\xC3\xA1\xC3\xA9\xC3\xAB\xC3\xAF\xC3\xB3\xC3\xB6\xC3\xBC"},
+};
+
+// A page of the search keyboard: the digits, three rows of letters with
+// shift before the last, then the page switch, space and Done.
+ui::KeyboardLayout letter_page(const char *name, const char *row1, const char *row2,
+                               const char *row3, const std::string &next)
+{
+    using ui::KeyboardKey;
+    using ui::KeyKind;
+    ui::KeyboardLayout page;
+    page.name = name;
+    page.columns = 11;
+    page.add_row("1234567890");
+    page.rows.back().push_back({KeyKind::backspace, {}, {}, 1, {}});
+    page.add_row(row1);
+    page.add_row(row2);
+    for (KeyboardKey &key : page.rows.back())
+    {
+        if (key.text == "'")
+            key.shifted = "\"";
+    }
+    ui::KeyboardLayout last;
+    last.add_row(row3);
+    page.add_row(std::vector<KeyboardKey>{{KeyKind::shift, {}, {}, 1, {}}});
+    for (KeyboardKey &key : last.rows.back())
+        page.rows.back().push_back(std::move(key));
+    page.add_row(std::vector<KeyboardKey>{{KeyKind::layout, {}, {}, 2, next},
+                                          {KeyKind::space, {}, {}, 6, {}},
+                                          {KeyKind::done, {}, {}, 3, {}}});
+    return page;
+}
+
+// The accented letters, 11 a row, under the digits.
+ui::KeyboardLayout accent_page(std::string_view letters, const std::string &next)
+{
+    using ui::KeyboardKey;
+    using ui::KeyKind;
+    ui::KeyboardLayout page;
+    page.name = "\xC3\xA0\xC3\xA9\xC3\xBC";
+    page.columns = 11;
+    page.add_row("1234567890");
+    page.rows.back().push_back({KeyKind::backspace, {}, {}, 1, {}});
+    ui::KeyboardLayout all;
+    all.add_row(letters);
+    std::vector<KeyboardKey> keys = std::move(all.rows.back());
+    page.add_row(std::vector<KeyboardKey>{{KeyKind::shift, {}, {}, 1, {}}});
+    for (KeyboardKey &key : keys)
+    {
+        if (page.rows.back().size() >= 11)
+            page.add_row(std::vector<KeyboardKey>{});
+        page.rows.back().push_back(std::move(key));
+    }
+    page.add_row(std::vector<KeyboardKey>{{KeyKind::layout, {}, {}, 2, next},
+                                          {KeyKind::space, {}, {}, 6, {}},
+                                          {KeyKind::done, {}, {}, 3, {}}});
+    return page;
+}
+
+std::vector<ui::KeyboardLayout> keyboard_pages(std::string_view language)
+{
+    const KeyRows *rows = &kKeyRows[0];
+    for (const KeyRows &candidate : kKeyRows)
+    {
+        if (language == candidate.code)
+            rows = &candidate;
+    }
+    constexpr const char *kSymbols = "@#:";
+    const bool latin = std::string_view(rows->name) != "abc";
+    const bool accents = rows->accents[0] != '\0';
+    // Each page's switch key names the page it goes to.
+    std::vector<std::string> names{rows->name};
+    if (latin)
+        names.emplace_back("abc");
+    if (accents)
+        names.emplace_back("\xC3\xA0\xC3\xA9\xC3\xBC");
+    names.emplace_back(kSymbols);
+    std::vector<ui::KeyboardLayout> pages;
+    std::size_t at = 1;
+    pages.push_back(letter_page(rows->name, rows->row1, rows->row2, rows->row3, names[at]));
+    if (latin)
+    {
+        ++at;
+        pages.push_back(letter_page("abc", "qwertyuiop-", "asdfghjkl'&", "zxcvbnm,.?", names[at]));
+    }
+    if (accents)
+    {
+        ++at;
+        pages.push_back(accent_page(rows->accents, names[at]));
+    }
+    ui::KeyboardLayout symbols = ui::KeyboardLayout::symbols();
+    symbols.name = kSymbols;
+    pages.push_back(std::move(symbols));
+    return pages;
+}
+
 } // namespace
+
+void SearchScreen::set_keyboard_language(const std::string &language)
+{
+    keys_language_ = language;
+    keys_.set_layouts(keyboard_pages(language));
+}
 
 SearchScreen::SearchScreen(Context &context) : context_(context)
 {
@@ -119,33 +261,7 @@ SearchScreen::SearchScreen(Context &context) : context_(context)
     keys_.style.gap = 10.0f;
     keys_.style.label_size = 32.0f;
     keys_.style.bindings = ui::KeyboardBindings::standard();
-    {
-        using ui::KeyboardKey;
-        using ui::KeyKind;
-        ui::KeyboardLayout letters;
-        letters.name = "abc";
-        letters.columns = 11;
-        letters.add_row("1234567890");
-        letters.rows.back().push_back({KeyKind::backspace, {}, {}, 1, {}});
-        letters.add_row("qwertyuiop-");
-        letters.add_row("asdfghjkl'&");
-        letters.rows[2][9].shifted = "\"";
-        letters.add_row(std::vector<KeyboardKey>{{KeyKind::shift, {}, {}, 1, {}}});
-        for (const char ch : std::string("zxcvbnm,.?"))
-        {
-            KeyboardKey key;
-            key.text = std::string(1, ch);
-            if (ch >= 'a' && ch <= 'z')
-                key.shifted = std::string(1, static_cast<char>(ch - 'a' + 'A'));
-            letters.rows.back().push_back(std::move(key));
-        }
-        letters.add_row(std::vector<KeyboardKey>{{KeyKind::layout, {}, {}, 2, "@#:"},
-                                                 {KeyKind::space, {}, {}, 6, {}},
-                                                 {KeyKind::done, {}, {}, 3, {}}});
-        ui::KeyboardLayout symbols = ui::KeyboardLayout::symbols();
-        symbols.name = "@#:";
-        keys_.set_layouts({letters, symbols});
-    }
+    set_keyboard_language(i18n::language());
     keys_.set_bounds({300.0f, 640.0f, 1320.0f, 410.0f});
     // Up from the top row leaves for the suggestion row above it.
     keys_.style.exits.up = true;
@@ -460,6 +576,7 @@ void SearchScreen::refresh_results()
     for (const yt::ChannelItem &channel : channel_items_)
     {
         ui::CardItem card;
+        card.verbatim = true;
         card.title = channel.name.empty() ? channel.channel_id : channel.name;
         card.subtitle = channel.subscribers;
         card.texture = context_.thumbs.texture(channel.thumbnail_url);
@@ -760,6 +877,8 @@ void SearchScreen::update_channel(const InputFrame &input, ui::Feedback &feedbac
 void SearchScreen::update(const InputFrame &input, float dt, ui::Feedback &feedback)
 {
     clock_ += dt;
+    if (keys_language_ != i18n::language())
+        set_keyboard_language(i18n::language());
     keys_.set_length(field_.length());
 
     if (in_channel_)

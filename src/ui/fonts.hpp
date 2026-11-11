@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/i18n.hpp"
 #include "gfx/draw_list.hpp"
 #include "gfx/font.hpp"
 
@@ -48,16 +49,11 @@ inline float text(gfx::DrawList &list, const FontRef &font, std::string_view val
     return list.text(*font.font, font.texture, value, x, baseline, size, color, align, tracking);
 }
 
-// ASCII upper case, for small tracked labels ("CONTINUE PLAYING").
+// Upper case, for small tracked labels ("CONTINUE PLAYING"): Latin, Greek
+// and Cyrillic, as the app's language writes them.
 inline std::string upper(std::string_view value)
 {
-    std::string result(value);
-    for (char &c : result)
-    {
-        if (c >= 'a' && c <= 'z')
-            c = static_cast<char>(c - 'a' + 'A');
-    }
-    return result;
+    return i18n::upper(value);
 }
 
 // Draws word-wrapped text from its first baseline at y, at most max_lines

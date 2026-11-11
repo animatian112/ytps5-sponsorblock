@@ -15,6 +15,7 @@ src/audio/mixer.cpp
 src/audio/music.cpp
 src/audio/wav.cpp
 src/core/frame_stats.cpp
+src/core/i18n.cpp
 src/core/input.cpp
 src/core/save_file.cpp
 src/core/settings.cpp
@@ -49,6 +50,7 @@ src/yt/innertube.cpp
 src/yt/live_chat.cpp
 src/yt/qr.cpp
 src/yt/log.cpp
+src/yt/log_share.cpp
 src/yt/service.cpp
 src/yt/sponsorblock.cpp
 src/yt/dns.c

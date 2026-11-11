@@ -56,6 +56,7 @@ void style_shelf(ui::Carousel &shelf)
 ui::CardItem card_for(const yt::FeedItem &item, const Context &context)
 {
     ui::CardItem card;
+    card.verbatim = true;
     card.title = item.title.empty() ? item.video_id : item.title;
     card.subtitle = item.author;
     if (!item.detail.empty())

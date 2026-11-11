@@ -88,6 +88,21 @@ bool local_date(int *weekday, int *month, int *day)
     return true;
 }
 
+const char *system_language()
+{
+    // System parameter 1: the language the console's menus use.
+    static const char *const kCodes[] = {"ja", "en",    "fr",    "es",    "de", "it", "nl", "pt",
+                                         "ru", "ko",    "zh-TW", "zh-CN", "fi", "sv", "da", "no",
+                                         "pl", "pt-BR", "en",    "tr",    "es", "ar", "fr", "cs",
+                                         "hu", "el",    "ro",    "th",    "vi", "id"};
+    constexpr int kLanguage = 1;
+    int value = 1;
+    if (sceSystemServiceParamGetInt(kLanguage, &value) != 0 || value < 0 ||
+        value >= static_cast<int>(sizeof kCodes / sizeof kCodes[0]))
+        return "en";
+    return kCodes[value];
+}
+
 void log(const char *format, ...)
 {
     // klog lines are short; longer messages are truncated rather than split.

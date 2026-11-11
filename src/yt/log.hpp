@@ -20,6 +20,9 @@ namespace yt::log
 // Opens (and truncates when it grew past its cap) the file; empty path or a
 // path that cannot be opened leaves the log silent.
 void open(const char *path);
+// The open log's path ("" before open), and its whole text (flushed first).
+std::string path();
+std::string read_all(std::size_t max_bytes);
 void close();
 
 // One timestamped line. Safe from the frame thread and the worker thread.

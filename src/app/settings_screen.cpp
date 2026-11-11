@@ -111,6 +111,7 @@ enum : int
     kAddAccount,
     kSbClearExcluded,
     kBackupSettings,
+    kShareLog,
     kRestoreSettings,
     kRemoteNewCode,
     kDevClearCache,
@@ -426,6 +427,17 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
         add_steps(general, "Language/Country", &S::region, values, labels,
                   "The country and language YouTube picks Home, Trending and search results for");
     }
+    {
+        std::vector<int> values;
+        std::vector<std::string> labels;
+        for (int i = 0; i < S::kLanguageCount; ++i)
+        {
+            values.push_back(i);
+            labels.emplace_back(S::kLanguages[i][1]);
+        }
+        add_steps(general, "Language", &S::language, values, labels,
+                  "The app's menus and buttons (System: the console's language)");
+    }
     add_flag(general, "History", &S::history_enabled,
              "Off pauses history: YouTube is not told what you watch");
     add_steps(general, "Screen dimming", &S::dim_minutes, {0, 1, 3, 5, 10, 30},
@@ -433,6 +445,9 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
               "Darken the screen when nothing happens (not while a video plays)");
     general.add_toggle(kHaptics, "Haptics", context_.settings.haptics).description =
         "Rumble on clicks and drags";
+    general.add_action(kShareLog, "Send the log to your phone").description =
+        "A QR code for your phone's camera downloads yt.log. Anywhere: hold the touchpad and "
+        "press Options";
     general.add_header("Backup");
     general.add_action(kBackupSettings, "Back up settings").description =
         "Copy all settings to /download0/hui/backup";
@@ -1032,6 +1047,11 @@ void SettingsScreen::activate(int id)
     if (id == kBackupSettings)
     {
         context_.nav.backup_settings = true;
+        return;
+    }
+    if (id == kShareLog)
+    {
+        context_.nav.show_log_qr = true;
         return;
     }
     if (id == kDevClearCache)

@@ -313,6 +313,7 @@ void draw_card(Canvas &canvas, const ComponentStyle &style, const CardLook &look
     const float words = tween::clamp01(state.text);
     if (look.text == CardText::over && !item.title.empty() && words > 0.0f)
     {
+        const gfx::VerbatimText verbatim(item.verbatim);
         list.push_opacity(words);
         const bool two = look.subtitle_size > 0.0f && !item.subtitle.empty();
         const float block = look.title_size * 1.15f + (two ? look.subtitle_size * 1.3f : 0.0f);
@@ -413,6 +414,7 @@ void draw_card(Canvas &canvas, const ComponentStyle &style, const CardLook &look
     // ---- text under the art ----
     if (look.info_box && look.text == CardText::below && words > 0.0f)
     {
+        const gfx::VerbatimText verbatim(item.verbatim);
         const float box_top = bed.y + bed.h;
         const Rect box{bed.x, box_top, bed.w, std::max(card.y + card.h - box_top, 0.0f)};
         // SmartTube: light text on the dark box, dark text once the box
@@ -451,6 +453,7 @@ void draw_card(Canvas &canvas, const ComponentStyle &style, const CardLook &look
     }
     else if (look.text == CardText::below && !item.title.empty() && words > 0.0f)
     {
+        const gfx::VerbatimText verbatim(item.verbatim);
         list.push_opacity(words);
         const Color ink = look.plate || look.on_panel ? theme.text : paint.page_text();
         const Color quiet =
