@@ -9,6 +9,7 @@
 #include "app/context.hpp"
 #include "app/player_chrome.hpp"
 #include "app/screen.hpp"
+#include "app/stats_overlay.hpp"
 #include "gfx/video_upload.hpp"
 #include "yt/captions.hpp"
 #include "yt/player.hpp"
@@ -158,6 +159,10 @@ class PlayerScreen final : public Screen
     const yt::VideoView &video_view() const;
     mutable yt::VideoView view_cache_;
     mutable std::uint64_t view_cache_revision_ = ~0ull;
+    // Settings > Developer > Stats for nerds: the lines other than the clock,
+    // rebuilt in update() a few times a second instead of on every frame.
+    void refresh_stats(float dt);
+    StatsOverlay stats_;
     float waiting_s_ = 0.0f;     // how long the current video has been loading
     float back_armed_ = 0.0f;    // "double back": seconds the second Circle still exits
     float sleep_left_s_ = -1.0f; // the sleep timer (-1: off)
