@@ -139,8 +139,10 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
     rail_.style.current_plate = true;
     rail_.style.icon_size = 34.0f;
     load_pins();
+    load_channel_groups();
+    context_.channel_groups = &channel_groups_;
     rebuild_rail();
-    // The name prompt's keyboard (Add to new playlist).
+    // The name prompt's keyboard (Add to new playlist, New group).
     prompt_keys_.style.theme = youtube_theme();
     prompt_keys_.style.bindings = ui::KeyboardBindings::standard();
     prompt_keys_.set_layouts({ui::KeyboardLayout::letters(), ui::KeyboardLayout::numeric()});
@@ -168,6 +170,26 @@ App::App(const ui::Fonts &fonts, Settings settings, std::string data_root, gfx::
         prompt_active_ = false;
         if (prompt_text_.empty())
             return;
+        if (prompt_for_ == PromptFor::group)
+        {
+            // The group is made with the channel the menu was opened on in
+            // it: an empty group would show nothing and could not be removed.
+            const ChannelGroups::Channel channel = channel_of(menu_item_);
+            const int group = channel_groups_.add_group(prompt_text_);
+            if (group < 0)
+            {
+                toasts_.push(ui::StatusKind::warning, "No room for another group",
+                             "Remove a channel from a group first", 3.0f);
+                return;
+            }
+            const std::size_t index = static_cast<std::size_t>(group);
+            if (!channel_groups_.contains(index, channel))
+                channel_groups_.toggle(index, channel);
+            save_channel_groups();
+            toasts_.push(ui::StatusKind::success,
+                         "Added to " + channel_groups_.groups()[index].name, channel.name, 2.0f);
+            return;
+        }
         service_.create_playlist(prompt_text_, prompt_video_, "Created " + prompt_text_);
     };
     rail_.icon = [this](ui::Canvas &canvas, const gfx::Rect &box, const ui::NavEntry &entry, int,
@@ -590,6 +612,9 @@ enum CardPick
     kPickNewPlaylist,
     kPickShuffle,
     kPickSbExclude,
+    kPickGroups,
+    kPickNewGroup,
+    kPickGroupBase = 4000,    // + the index of a channel group
     kPickUnblockBase = 3000,  // + the index of a blocked channel
     kPickPlaylistBase = 1000, // + the index into menu_playlists_
     kPickAccountBase = 2000,  // + the index into the saved accounts
@@ -689,6 +714,12 @@ void App::open_card_menu(const yt::FeedItem &item)
         entries.push_back({"Remove channel from the sidebar", kPickUnpin});
     else
         entries.push_back({"Add channel to the sidebar", kPickPin});
+    // Subscriptions can show one group of channels at a time (issue #18).
+    {
+        const ChannelGroups::Channel member = channel_of(item);
+        if (!member.id.empty() || !member.name.empty())
+            entries.push_back({"Add channel to a group", kPickGroups});
+    }
     if (current_ == kHistoryScreen &&
         !service_.feed(yt::FeedKind::history).clear_history_token.empty())
         entries.push_back({"Clear history", kPickClearHistory});
@@ -718,6 +749,21 @@ void App::open_playlist_menu()
             break;
     }
     card_menu_.open("Add to playlist", std::move(entries));
+}
+
+void App::open_group_menu()
+{
+    const ChannelGroups::Channel channel = channel_of(menu_item_);
+    std::vector<CardMenu::Entry> entries;
+    const std::vector<ChannelGroups::Group> &groups = channel_groups_.groups();
+    for (std::size_t i = 0; i < groups.size(); ++i)
+        entries.push_back(
+            {(channel_groups_.contains(i, channel) ? "Remove from " : "Add to ") + groups[i].name,
+             kPickGroupBase + static_cast<int>(i)});
+    if (groups.size() < ChannelGroups::kMaxGroups)
+        entries.push_back({"New group", kPickNewGroup});
+    card_menu_.open(channel.name.empty() ? std::string("Channel groups") : channel.name,
+                    std::move(entries));
 }
 
 void App::open_account_menu()
@@ -1029,6 +1075,25 @@ void App::save_sb_excluded() const
     (void)save::write_atomic(data_root_ + "/sb_excluded.txt", data);
 }
 
+void App::load_channel_groups()
+{
+    std::string data;
+    if (data_root_.empty() ||
+        !save::read_file(data_root_ + "/channel_groups.txt", &data, 256u << 10))
+    {
+        channel_groups_.parse({});
+        return;
+    }
+    channel_groups_.parse(data);
+}
+
+void App::save_channel_groups() const
+{
+    if (data_root_.empty())
+        return;
+    (void)save::write_atomic(data_root_ + "/channel_groups.txt", channel_groups_.serialize());
+}
+
 void App::load_pins()
 {
     pins_.clear();
@@ -1126,6 +1191,7 @@ void App::open_blocked_menu()
 
 void App::open_name_prompt(const std::string &video_id)
 {
+    prompt_for_ = PromptFor::playlist;
     prompt_video_ = video_id;
     prompt_text_.clear();
     prompt_active_ = true;
@@ -1141,8 +1207,9 @@ void App::draw_prompt(ui::Canvas &canvas) const
     gfx::DrawList &list = canvas.list;
     list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
                       gfx::Color::rgb(0x000000, 0.75f));
-    ui::text(list, fonts_.semibold, "New playlist name", 560.0f, 300.0f, 40.0f,
-             gfx::Color::rgb(0xffffff));
+    const bool group = prompt_for_ == PromptFor::group;
+    ui::text(list, fonts_.semibold, group ? "New group name" : "New playlist name", 560.0f, 300.0f,
+             40.0f, gfx::Color::rgb(0xffffff));
     const gfx::Rect field{560.0f, 340.0f, 1080.0f, 84.0f};
     list.rounded_rect(field, 12.0f, gfx::Color::rgb(0x262626));
     const bool blink = static_cast<int>(clock_ * 2.0f) % 2 == 0;
@@ -1153,8 +1220,10 @@ void App::draw_prompt(ui::Canvas &canvas) const
             : prompt_text_,
         field.x + 24.0f, field.cy() + 12.0f, 34.0f, gfx::Color::rgb(0xffffff));
     prompt_keys_.draw(canvas);
-    ui::text(list, fonts_.regular, "Done creates the playlist   Circle cancels", 560.0f, 1030.0f,
-             22.0f, gfx::Color::rgb(0x9e9e9e));
+    ui::text(list, fonts_.regular,
+             group ? "Done creates the group   Circle cancels"
+                   : "Done creates the playlist   Circle cancels",
+             560.0f, 1030.0f, 22.0f, gfx::Color::rgb(0x9e9e9e));
 }
 
 void App::refresh_home()
@@ -1170,6 +1239,21 @@ void App::refresh_home()
 
 void App::apply_card_pick(int pick)
 {
+    // Checked before the other bases: it is the highest of them.
+    if (pick >= kPickGroupBase)
+    {
+        const std::size_t index = static_cast<std::size_t>(pick - kPickGroupBase);
+        if (index < channel_groups_.groups().size())
+        {
+            const std::string name = channel_groups_.groups()[index].name;
+            const ChannelGroups::Channel channel = channel_of(menu_item_);
+            const bool added = channel_groups_.toggle(index, channel);
+            save_channel_groups();
+            toasts_.push(ui::StatusKind::info, (added ? "Added to " : "Removed from ") + name,
+                         channel.name, 2.0f);
+        }
+        return;
+    }
     if (pick >= kPickUnblockBase)
     {
         const auto blocked = service_.blocked_channels();
@@ -1265,6 +1349,13 @@ void App::apply_card_pick(int pick)
         break;
     case kPickNewPlaylist:
         open_name_prompt(item.video_id);
+        break;
+    case kPickGroups:
+        open_group_menu();
+        break;
+    case kPickNewGroup:
+        open_name_prompt(item.video_id);
+        prompt_for_ = PromptFor::group;
         break;
     case kPickClearHistory:
         card_menu_.open("Clear all watch history?",
@@ -2108,13 +2199,15 @@ void App::update(const InputFrame &raw_input, float dt)
     if (ask.backup_settings || ask.restore_settings)
     {
         // SmartTube's settings backup: the settings file, the pinned
-        // channels and the SponsorBlock exclusions, copied as they are.
+        // channels, the SponsorBlock exclusions and the channel groups,
+        // copied as they are.
         const std::string backup = data_root_ + "/backup";
         (void)save::ensure_directory(backup);
         if (ask.backup_settings)
             save_settings(); // the file on disk is what gets copied: make it current
         int copied = 0;
-        for (const char *name : {kSettingsFile, "/pins.txt", "/sb_excluded.txt"})
+        for (const char *name :
+             {kSettingsFile, "/pins.txt", "/sb_excluded.txt", "/channel_groups.txt"})
         {
             const std::string from = (ask.backup_settings ? data_root_ : backup) + name;
             const std::string to = (ask.backup_settings ? backup : data_root_) + name;
@@ -2132,6 +2225,7 @@ void App::update(const InputFrame &raw_input, float dt)
             settings_ = load_settings(data_root_);
             load_pins();
             load_sb_excluded();
+            load_channel_groups();
             rebuild_rail();
             toasts_.push(ui::StatusKind::success, "Settings restored",
                          "Some pages show the new values after a restart", 3.5f);
