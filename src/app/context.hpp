@@ -35,6 +35,7 @@ namespace app
 {
 
 class ThumbCache;
+class ChannelGroups;
 
 // What a screen asks the app to do; the app clears it after every update.
 struct Nav
@@ -141,6 +142,9 @@ struct Context
     // The player's "Lock controls": every button is ignored until Circle is
     // held (a DualSense left on for its headphone jack).
     bool controls_locked = false;
+    // The viewer's channel groups (Subscriptions shows one group's videos);
+    // the app owns them and stores them after every edit. Null: none (tests).
+    const ChannelGroups *channel_groups = nullptr;
 };
 
 } // namespace hui::app

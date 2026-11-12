@@ -8,6 +8,7 @@
 #include "yt/log_share.hpp"
 
 #include "app/card_menu.hpp"
+#include "app/channel_groups.hpp"
 #include "app/frame.hpp"
 #include "app/glow.hpp"
 #include "app/screen.hpp"
@@ -124,6 +125,9 @@ class App
     void filter_card_hold(InputFrame &input, float dt);
     void open_card_menu(const yt::FeedItem &item);
     void open_playlist_menu();
+    // "Add channel to a group": the groups, each to put the channel in or
+    // take it out of, and "New group".
+    void open_group_menu();
     void apply_card_pick(int pick);
     void refresh_home();
     void save_settings();
@@ -167,6 +171,9 @@ class App
     std::vector<std::string> sb_excluded_;    // <data>/sb_excluded.txt, one channel id a line
     void load_sb_excluded();
     void save_sb_excluded() const;
+    ChannelGroups channel_groups_; // <data>/channel_groups.txt
+    void load_channel_groups();
+    void save_channel_groups() const;
     // The videos of the section the focus is in (for Shuffle).
     struct SectionInfo
     {
@@ -250,6 +257,14 @@ class App
     bool prompt_active_ = false;
     std::string prompt_text_;
     std::string prompt_video_;
+    // What the typed name is for: a new playlist, or a new channel group
+    // (that menu_item_'s channel is put in).
+    enum class PromptFor : std::uint8_t
+    {
+        playlist,
+        group,
+    };
+    PromptFor prompt_for_ = PromptFor::playlist;
     void open_name_prompt(const std::string &video_id);
     void draw_prompt(ui::Canvas &canvas) const;
     static constexpr std::size_t kMaxPins = 8;

@@ -55,6 +55,8 @@ In the sidebar, Up/Down moves between Home, Subscriptions and Settings, and X op
 
 On a channel page, Left/Right switches between the tabs the channel offers.
 
+Channel groups sort your subscriptions into your own feeds (Science, Games, ...). Hold X on a video (or press Square) and pick **Add channel to a group**, then a group or **New group**. Subscriptions then shows a tab for each group, and Triangle switches between All and each group, newest videos first. Taking a group's last channel out removes the group. Groups are kept on the console only, in `channel_groups.txt` next to the settings.
+
 ## Signing in
 
 You don't have to sign in. Home, search and settings work as a guest.
