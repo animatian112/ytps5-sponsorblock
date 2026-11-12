@@ -163,6 +163,10 @@ void RowsView::set_items(const std::vector<yt::FeedItem> &items, const Context &
         row->title = groups[g].title;
         row->items = std::move(groups[g].items);
         style_shelf(row->shelf);
+        // The settings' look from the start: place() below measures the
+        // rows, and a row that grew or shrank afterwards would no longer sit
+        // where the scroll expects it.
+        style_cards(row->shelf.style.card, context.settings);
         row->shelf.title = row->title;
         std::vector<ui::CardItem> cards;
         cards.reserve(row->items.size());
@@ -187,15 +191,22 @@ void RowsView::set_items(const std::vector<yt::FeedItem> &items, const Context &
         rows_[i]->shelf.set_focus(std::min(focus_card, std::max(0, count - 1)));
         break;
     }
+    place();
     // The view stays where it was when the focus row kept its place.
     if (focus_row_ != before)
-        scroll_ = static_cast<float>(focus_row_) * row_height();
-    place();
+        scroll_.jump_to(focus_row_);
+}
+
+void RowsView::style_rows(const Settings &settings)
+{
+    for (auto &row : rows_)
+        style_cards(row->shelf.style.card, settings);
 }
 
 void RowsView::place()
 {
-    const float pitch = row_height();
+    scroll_.set_pitch(row_height());
+    const float pitch = scroll_.pitch();
     for (std::size_t i = 0; i < rows_.size(); ++i)
     {
         Row &row = *rows_[i];
@@ -294,11 +305,14 @@ std::string RowsView::row_near_end(int within, std::size_t *count) const
 
 void RowsView::update(float dt, const Context &context)
 {
+    // Settings > User interface: title lines, corners and the layout's look.
+    // When that changes a row's height, the rows are placed again at the new
+    // pitch: the scroll below must step by the pitch they sit at.
+    style_rows(context.settings);
+    if (!rows_.empty() && scroll_.set_pitch(row_height()))
+        place();
     // The focus row sits at the top of the view; the rows glide there.
-    const float target = static_cast<float>(focus_row_) * row_height();
-    scroll_ += (target - scroll_) * (1.0f - std::exp(-14.0f * dt));
-    if (std::fabs(target - scroll_) < 0.5f)
-        scroll_ = target;
+    scroll_.glide(focus_row_, dt);
     // Thumbnails only for the cards on (or next to) the screen: the rows
     // around the focused one, the cards around each row's focus. Asking for
     // every card of every row queued hundreds of downloads ahead of the ones
@@ -308,8 +322,6 @@ void RowsView::update(float dt, const Context &context)
     {
         auto &row = rows_[r];
         const int index = static_cast<int>(r);
-        // Settings > User interface: title lines, corners and the layout's look.
-        style_cards(row->shelf.style.card, context.settings);
         if (index >= focus_row_ - 1 && index <= focus_row_ + 2)
         {
             const int focus = std::max(0, row->shelf.focus());
@@ -326,12 +338,13 @@ void RowsView::draw(ui::Canvas &canvas) const
 {
     // The focused card grows past its row: the clip leaves room above.
     canvas.list.push_clip({0.0f, bounds_.y - 20.0f, gfx::kVirtualWidth, bounds_.h + 20.0f});
-    canvas.list.push_transform(1.0f, 0.0f, 0.0f, 0.0f, -scroll_);
+    const float scroll = scroll_.offset();
+    canvas.list.push_transform(1.0f, 0.0f, 0.0f, 0.0f, -scroll);
     for (std::size_t i = 0; i < rows_.size(); ++i)
     {
         const auto &row = rows_[i];
         const gfx::Rect &at = row->shelf.bounds();
-        if (at.y + at.h - scroll_ < bounds_.y - 40.0f || at.y - scroll_ > bounds_.y + bounds_.h)
+        if (at.y + at.h - scroll < bounds_.y - 40.0f || at.y - scroll > bounds_.y + bounds_.h)
             continue;
         // Leanback dims every row but the one with the focus.
         const bool lit = !active_ || static_cast<int>(i) == focus_row_;
