@@ -674,5 +674,7 @@ today	hoje
 %d months ago	há %d meses
 %d year ago	há %d ano
 %d years ago	há %d anos
+Uploading the log...	Enviando o log...
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on dpaste.com and is deleted after 7 days.	Leia o código com a câmera do celular: ele abre o yt.log, pronto para salvar ou compartilhar. O log fica no dpaste.com e é apagado após 7 dias.
 )TSV"
 // clang-format on

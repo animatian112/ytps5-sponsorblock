@@ -4,6 +4,7 @@
 
 #include "yt/log_share.hpp"
 
+#include "yt/http.hpp"
 #include "yt/log.hpp"
 
 #include <arpa/inet.h>
@@ -12,6 +13,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <random>
@@ -30,10 +32,91 @@ struct LogShare::State
     std::string token;
 };
 
+struct LogShare::Upload
+{
+    mutable std::mutex mutex;
+    bool done = false;
+    std::string url;
+    std::string error;
+};
+
 namespace
 {
 
 constexpr std::size_t kMaxLog = 8u << 20;
+// dpaste takes up to 1,000,000 characters: the end of a longer log.
+constexpr std::size_t kMaxPaste = 900u << 10;
+
+std::string form_escape(std::string_view text)
+{
+    static const char kHex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(text.size() + text.size() / 8);
+    for (const char c : text)
+    {
+        const auto byte = static_cast<unsigned char>(c);
+        if ((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
+            (byte >= '0' && byte <= '9') || byte == '-' || byte == '_' || byte == '.' ||
+            byte == '~')
+        {
+            out.push_back(c);
+        }
+        else if (byte == ' ')
+        {
+            out.push_back('+');
+        }
+        else
+        {
+            out.push_back('%');
+            out.push_back(kHex[byte >> 4]);
+            out.push_back(kHex[byte & 15]);
+        }
+    }
+    return out;
+}
+
+void *upload_entry(void *argument)
+{
+    std::unique_ptr<std::shared_ptr<LogShare::Upload>> holder(
+        static_cast<std::shared_ptr<LogShare::Upload> *>(argument));
+    const std::shared_ptr<LogShare::Upload> upload = *holder;
+    http::Request request;
+    request.method = "POST";
+    request.url = "https://dpaste.com/api/v2/";
+    request.headers = {{"Content-Type", "application/x-www-form-urlencoded"},
+                       {"User-Agent", "TubeBlock-PS5"}};
+    std::string text = log::read_all(kMaxLog);
+    if (text.size() > kMaxPaste)
+    {
+        // The start (versions, the console) and the end (what just went wrong).
+        const std::size_t head = 100u << 10;
+        text = text.substr(0, head) + "\n[... the middle of the log was left out ...]\n" +
+               text.substr(text.size() - (kMaxPaste - head));
+    }
+    request.body = log_paste_form(text);
+    request.timeout_s = 30;
+    request.max_bytes = 4096;
+    const http::Response response = http::perform(request);
+    std::string url = response.body;
+    while (!url.empty() && (url.back() == '\n' || url.back() == '\r' || url.back() == ' '))
+        url.pop_back();
+    std::string error;
+    if (!response.ok())
+        error = response.error;
+    else if (!response.http_ok() || url.rfind("https://", 0) != 0)
+        error = "dpaste.com answered " + std::to_string(response.status);
+    else
+        url += ".txt"; // the raw log, which a phone saves or shares as it is
+    log::line("logshare: upload -> %ld %s", response.status,
+              error.empty() ? url.c_str() : error.c_str());
+    const std::lock_guard<std::mutex> lock(upload->mutex);
+    upload->done = true;
+    if (error.empty())
+        upload->url = url;
+    else
+        upload->error = error;
+    return nullptr;
+}
 
 std::string header(int status, const char *reason, const char *type, std::size_t length,
                    const char *extra)
@@ -269,7 +352,61 @@ void LogShare::stop()
         log::line("logshare: stopped (%d downloads)", state_->downloads.load());
     }
     state_.reset();
+    upload_.reset(); // a running upload finishes on its own and is forgotten
     url_.clear();
+}
+
+std::string log_paste_form(const std::string &log_text)
+{
+    return "content=" + form_escape(log_text) +
+           "&syntax=text&expiry_days=7&title=" + form_escape("TubeBlock yt.log");
+}
+
+void LogShare::upload()
+{
+    upload_ = std::make_shared<Upload>();
+    auto *argument = new std::shared_ptr<Upload>(upload_);
+    pthread_attr_t attributes;
+    pthread_t thread;
+    bool created = false;
+    if (pthread_attr_init(&attributes) == 0)
+    {
+        pthread_attr_setstacksize(&attributes, 512u << 10);
+        pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+        created = pthread_create(&thread, &attributes, upload_entry, argument) == 0;
+        pthread_attr_destroy(&attributes);
+    }
+    if (!created)
+    {
+        delete argument;
+        const std::lock_guard<std::mutex> lock(upload_->mutex);
+        upload_->done = true;
+        upload_->error = "no thread";
+    }
+}
+
+bool LogShare::uploading() const
+{
+    if (upload_ == nullptr)
+        return false;
+    const std::lock_guard<std::mutex> lock(upload_->mutex);
+    return !upload_->done;
+}
+
+std::string LogShare::uploaded_url() const
+{
+    if (upload_ == nullptr)
+        return {};
+    const std::lock_guard<std::mutex> lock(upload_->mutex);
+    return upload_->url;
+}
+
+std::string LogShare::upload_error() const
+{
+    if (upload_ == nullptr)
+        return {};
+    const std::lock_guard<std::mutex> lock(upload_->mutex);
+    return upload_->error;
 }
 
 bool LogShare::running() const

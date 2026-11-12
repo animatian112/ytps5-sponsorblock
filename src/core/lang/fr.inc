@@ -676,5 +676,7 @@ today	aujourd'hui
 %d months ago	il y a %d mois
 %d year ago	il y a %d an
 %d years ago	il y a %d ans
+Uploading the log...	Envoi du journal...
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on dpaste.com and is deleted after 7 days.	Scanne le code avec l'appareil photo du téléphone : il ouvre yt.log, prêt à enregistrer ou partager. Le journal est sur dpaste.com et sera supprimé au bout de 7 jours.
 )TSV"
 // clang-format on

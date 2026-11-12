@@ -186,10 +186,12 @@ class App
     std::string log_qr_error_;
     std::uint32_t log_qr_texture_ = 0;
     int log_qr_size_ = 0;
+    std::string log_qr_url_; // what the code opens ("" while the upload runs)
     // Settings > General > Language, as applied (-1: not yet).
     int language_applied_ = -1;
     void apply_language();
     void open_log_qr();
+    void make_log_qr(const std::string &url);
     void handle_log_qr(const InputFrame &input);
     void draw_log_qr(ui::Canvas &canvas) const;
     // The start screen (YouTube TV's): decided once, a moment after start.

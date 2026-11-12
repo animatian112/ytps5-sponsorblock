@@ -681,5 +681,7 @@ today	сегодня
 %d months ago	%d мес. назад
 %d year ago	%d г. назад
 %d years ago	%d г. назад
+Uploading the log...	Загрузка журнала...
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on dpaste.com and is deleted after 7 days.	Отсканируйте код камерой телефона: откроется yt.log, его можно сохранить или отправить. Журнал лежит на dpaste.com и удаляется через 7 дней.
 )TSV"
 // clang-format on

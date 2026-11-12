@@ -681,5 +681,7 @@ today	bugün
 %d months ago	%d ay önce
 %d year ago	%d yıl önce
 %d years ago	%d yıl önce
+Uploading the log...	Kayıt yükleniyor...
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on dpaste.com and is deleted after 7 days.	Kodu telefonunun kamerasıyla tara: yt.log açılır, kaydetmeye ya da paylaşmaya hazır. Kayıt dpaste.com'da durur ve 7 gün sonra silinir.
 )TSV"
 // clang-format on

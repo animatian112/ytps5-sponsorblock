@@ -40,4 +40,12 @@ TEST(LogShare, AWrongTokenFindsNothing)
     EXPECT_EQ(answer.find("secret"), std::string::npos);
 }
 
+TEST(LogShare, ThePasteFormEscapesTheLog)
+{
+    const std::string form = yt::log_paste_form("a b&c=d\n");
+    EXPECT_EQ(form.rfind("content=a+b%26c%3Dd%0A&", 0), 0u);
+    EXPECT_NE(form.find("expiry_days=7"), std::string::npos);
+    EXPECT_NE(form.find("syntax=text"), std::string::npos);
+}
+
 } // namespace

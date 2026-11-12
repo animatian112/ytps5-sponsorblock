@@ -1416,12 +1416,22 @@ void App::open_log_qr()
     log_qr_open_ = true;
     log_qr_error_.clear();
     log_qr_texture_ = 0;
-    if (!log_share_.start(&log_qr_error_))
+    log_qr_url_.clear();
+    std::string refused;
+    if (!log_share_.start(&refused))
     {
-        yt::log::line("logshare: %s", log_qr_error_.c_str());
+        // The PS5 keeps apps from listening ("permission denied"): the log
+        // goes to dpaste.com instead and the code opens it there.
+        yt::log::line("logshare: %s; uploading instead", refused.c_str());
+        log_share_.upload();
         return;
     }
-    const std::string &url = log_share_.url();
+    make_log_qr(log_share_.url());
+}
+
+void App::make_log_qr(const std::string &url)
+{
+    log_qr_url_ = url;
     const int modules = yt::qr_modules(url);
     const int scale = modules > 0 ? std::max(1, 440 / (modules + 8)) : 1;
     yt::QrImage qr;
@@ -1434,6 +1444,14 @@ void App::open_log_qr()
 
 void App::handle_log_qr(const InputFrame &input)
 {
+    // The upload's answer, when the code waits on it.
+    if (log_qr_url_.empty() && !log_share_.running() && !log_share_.uploading())
+    {
+        if (const std::string url = log_share_.uploaded_url(); !url.empty())
+            make_log_qr(url);
+        else if (log_qr_error_.empty())
+            log_qr_error_ = log_share_.upload_error();
+    }
     if (input.is_pressed(Action::back) || input.is_pressed(Action::confirm) ||
         input.is_pressed(Action::menu))
     {
@@ -1468,6 +1486,21 @@ void App::draw_log_qr(ui::Canvas &canvas) const
         ui::paragraph(list, fonts_.regular,
                       i18n::tr("The log could not be shared:") + " " + log_qr_error_, tx,
                       box.y + 200.0f, 24.0f, width, 34.0f, gfx::Color::rgb(0xff8a80), 6);
+    }
+    else if (log_qr_url_.empty())
+    {
+        ui::paragraph(list, fonts_.regular, i18n::tr("Uploading the log..."), tx, box.y + 200.0f,
+                      24.0f, width, 34.0f, gfx::Color::rgb(0xbbbbbb), 6);
+    }
+    else if (!log_share_.running())
+    {
+        ui::paragraph(list, fonts_.regular,
+                      i18n::tr("Scan the code with your phone's camera: it opens yt.log, ready to "
+                               "save or share. The log is on dpaste.com and is deleted after 7 "
+                               "days."),
+                      tx, box.y + 200.0f, 24.0f, width, 34.0f, gfx::Color::rgb(0xbbbbbb), 6);
+        ui::paragraph(list, fonts_.mono, log_qr_url_, tx, box.y + 430.0f, 22.0f, width, 30.0f,
+                      gfx::Color::rgb(0x3ea6ff), 2);
     }
     else
     {

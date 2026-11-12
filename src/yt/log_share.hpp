@@ -6,7 +6,9 @@
 // its QR code is shown: the phone scans http://<console>:<port>/<token>,
 // gets a small page with a download button, saves yt.log and shares it like
 // any file. The token is random per opening, so only the phone that sees the
-// code finds the file, and the server stops when the code is closed.
+// code finds the file, and the server stops when the code is closed. Where
+// the console refuses to listen, the log is pasted to dpaste.com (deleted
+// after 7 days) and the code opens that.
 
 #pragma once
 
@@ -34,13 +36,28 @@ class LogShare
     // How many times the log was downloaded since start().
     int downloads() const;
 
+    // When the console will not let the app listen (the PS5's sandbox says
+    // "permission denied"): the log goes up to dpaste.com instead, kept 7
+    // days, and the code points there. Runs on a thread of its own.
+    void upload();
+    bool uploading() const;
+    // The paste's address once it is up (the raw file: ...txt), else "".
+    std::string uploaded_url() const;
+    // Why the upload failed, else "".
+    std::string upload_error() const;
+
     // What the server thread shares with the object (defined in the .cpp).
     struct State;
+    struct Upload;
 
   private:
     std::shared_ptr<State> state_;
+    std::shared_ptr<Upload> upload_;
     std::string url_;
 };
+
+// dpaste's form body for a log (exposed for the tests).
+std::string log_paste_form(const std::string &log_text);
 
 // The HTTP answer for a request line's path (exposed for the tests):
 // the page, the file, or 404.
