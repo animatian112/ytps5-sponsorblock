@@ -67,10 +67,10 @@ bool open_context()
 }
 
 bool load_font(hui::gfx::Renderer &renderer, const std::string &path, hui::gfx::Font *font,
-               hui::ui::FontRef *ref)
+               hui::ui::FontRef *ref, std::size_t max_bytes = 4u << 20)
 {
     std::string data;
-    if (!hui::save::read_file(path, &data) || !font->load(data))
+    if (!hui::save::read_file(path, &data, max_bytes) || !font->load(data))
     {
         std::fprintf(stderr, "cannot load font %s\n", path.c_str());
         return false;
@@ -279,6 +279,15 @@ int main(int argc, char **argv)
                    &fonts.display) ||
         !load_font(renderer, assets + "/fonts/dejavu-sans-mono.huifont", &mono, &fonts.mono))
         return 1;
+    // The Chinese, Japanese and Korean face every face falls back on, as on
+    // the console (src/main.cpp).
+    hui::gfx::Font cjk;
+    hui::ui::FontRef cjk_ref;
+    if (load_font(renderer, assets + "/fonts/noto-sans-cjk.huifont", &cjk, &cjk_ref, 32u << 20))
+    {
+        for (hui::gfx::Font *face : {&regular, &semibold, &display, &mono})
+            face->add_fallback(&cjk, cjk_ref.texture);
+    }
 
     const std::string data_root = output + "/.data";
     hui::save::ensure_directory(output);
