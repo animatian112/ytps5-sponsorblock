@@ -33,4 +33,10 @@ GoogleSansFlex-Medium.ttf google-sans-medium 56 8 Inter-Medium.ttf 0.95
 GoogleSansFlex-Bold.ttf google-sans-bold 56 8 Inter-SemiBold.ttf 0.95
 DejaVuSansMono.ttf dejavu-sans-mono 52 8
 FONTS
+# Chinese, Japanese and Korean: one face every face above falls back on
+# (src/main.cpp), from Noto Sans CJK cut down to some 13,000 everyday
+# characters (tools/subset-cjk-font.py). `all` bakes each one the subset
+# holds; 28 pixels is what lets them share one 4096 atlas.
+"$root/build/host/bake_font" "$root/third_party/fonts/NotoSansCJKsc-Regular-Subset.ttf" \
+    "$root/assets/fonts/noto-sans-cjk.huifont" 28 4 4096 all 2>/dev/null
 cp "$root"/third_party/fonts/*-LICENSE.txt "$root/assets/fonts/"
