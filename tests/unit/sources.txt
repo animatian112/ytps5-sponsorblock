@@ -70,3 +70,4 @@ src/yt/lounge.cpp
 src/yt/lounge_chunks.cpp
 src/app/resume_store.cpp
 src/app/stats_overlay.cpp
+src/app/rail_focus.cpp

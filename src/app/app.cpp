@@ -7,6 +7,7 @@
 #include "yt/qr.hpp"
 
 #include "app/icons.hpp"
+#include "app/rail_focus.hpp"
 
 #include "app/screens.hpp"
 #include "app/theme.hpp"
@@ -959,7 +960,11 @@ void App::activate_rail(int position)
     const int tag = entries[static_cast<std::size_t>(position)].tag;
     if (tag >= 0)
     {
-        show(static_cast<std::size_t>(tag)); // the rail keeps the focus
+        show(static_cast<std::size_t>(tag)); // the rail keeps the focus...
+        // ...except on Search, which is opened to type: the keyboard takes
+        // the next press without a Circle to leave the rail first (#22).
+        if (rail_confirm_enters_content(static_cast<std::size_t>(tag)))
+            rail_focused_ = false;
         return;
     }
     if (tag == kRailMyVideos)
@@ -1834,7 +1839,19 @@ void App::update(const InputFrame &raw_input, float dt)
             }
             const ui::Event event = rail_.handle(input, feedback_);
             if (event == ui::Event::activated)
+            {
                 activate_rail(rail_.focus()); // a section keeps the rail; actions act
+                if (!rail_focused_)
+                {
+                    // The entry handed the focus to the content (Search, a
+                    // pinned channel): the Cross that picked it must not also
+                    // type a key or press a card, and the rail collapses
+                    // after one more frame as on Right.
+                    rail_keep_expanded = true;
+                    rail_settle_ = -1.0f;
+                    focus_moved = true;
+                }
+            }
             else if (event == ui::Event::moved)
                 rail_settle_ = 0.0f; // SmartTube opens a section as the focus rests on it
             else if (event == ui::Event::cancelled || input.nav == Direction::right)
