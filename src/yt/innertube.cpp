@@ -2235,7 +2235,7 @@ bool parse_feed_page(std::string_view json, FeedPage *page)
     // line ("Channel • 1.2M views • 3 years ago") ends with the age.
     if (page->date_text.empty())
     {
-        const std::string line = text_of(
+        const std::string line = full_text(
             yyjson_obj_get(find_object(root, "playerOverlayVideoDetailsRenderer"), "subtitle"));
         const std::string dot = "\xE2\x80\xA2";
         const std::size_t first = line.find(dot);
