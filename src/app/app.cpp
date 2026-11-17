@@ -1525,17 +1525,21 @@ void App::open_log_qr()
     make_log_qr(log_share_.url());
 }
 
-void App::make_log_qr(const std::string &url)
+std::uint32_t App::qr_texture(const std::string &url, int *size)
 {
-    log_qr_url_ = url;
     const int modules = yt::qr_modules(url);
     const int scale = modules > 0 ? std::max(1, 440 / (modules + 8)) : 1;
     yt::QrImage qr;
-    if (thumbs_ != nullptr && yt::make_qr(url, scale, &qr) && qr.valid())
-    {
-        log_qr_texture_ = thumbs_->upload("qr:log:" + url, qr.rgba.data(), qr.width, qr.height);
-        log_qr_size_ = qr.width;
-    }
+    if (thumbs_ == nullptr || !yt::make_qr(url, scale, &qr) || !qr.valid())
+        return 0;
+    *size = qr.width;
+    return thumbs_->upload("qr:log:" + url, qr.rgba.data(), qr.width, qr.height);
+}
+
+void App::make_log_qr(const std::string &url)
+{
+    log_qr_url_ = url;
+    log_qr_texture_ = qr_texture(url, &log_qr_size_);
 }
 
 void App::handle_log_qr(const InputFrame &input)
@@ -1555,6 +1559,136 @@ void App::handle_log_qr(const InputFrame &input)
         log_share_.stop();
         feedback_.play(audio::Cue::back);
     }
+}
+
+void App::open_diagnostics()
+{
+    diag_open_ = true;
+    diag_uploading_ = false;
+    diag_url_.clear();
+    diag_error_.clear();
+    diag_texture_ = 0;
+    diag_scroll_ = 0;
+    DiagInput input;
+    input.version = yt::update::snapshot().current_version.empty()
+                        ? version_
+                        : yt::update::snapshot().current_version;
+    input.data_root = data_root_;
+    input.language = i18n::language();
+    input.console_language = sys::system_language();
+    const yt::Service::Preferences preferences = this->preferences();
+    input.gl = preferences.gl;
+    input.hl = preferences.hl;
+    input.signed_in = service_.signed_in();
+    const char *const kDecode[] = {"auto", "software", "hardware"};
+    const int decode = static_cast<int>(settings_.decode_mode);
+    input.settings = std::string("decode ") + (decode >= 0 && decode < 3 ? kDecode[decode] : "?") +
+                     ", max " + std::to_string(settings_.max_height) + "p, codecs" +
+                     (settings_.codec_avc ? " avc" : "") + (settings_.codec_vp9 ? " vp9" : "") +
+                     (settings_.codec_av1 ? " av1" : "") +
+                     (settings_.prefer_avc ? ", prefer avc" : "");
+    input.last_video = !context_.active_video.empty() ? context_.active_video : last_video_;
+    diagnostics_.start(std::move(input));
+}
+
+void App::handle_diagnostics(const InputFrame &input)
+{
+    // The pass is over: its report goes up, and its address becomes a code.
+    if (!diagnostics_.running() && !diag_uploading_ && diag_url_.empty() && diag_error_.empty())
+    {
+        diag_share_.upload_text(diagnostics_.report());
+        diag_uploading_ = true;
+    }
+    if (diag_uploading_ && !diag_share_.uploading())
+    {
+        diag_uploading_ = false;
+        diag_url_ = diag_share_.uploaded_url();
+        diag_error_ = diag_share_.upload_error();
+        int size = 0;
+        if (!diag_url_.empty())
+            diag_texture_ = qr_texture(diag_url_, &size);
+    }
+    if (input.is_pressed(Action::up))
+        ++diag_scroll_;
+    if (input.is_pressed(Action::down) && diag_scroll_ > 0)
+        --diag_scroll_;
+    if (input.is_pressed(Action::west) && !diagnostics_.running() && !diag_uploading_)
+        open_diagnostics();
+    else if (input.is_pressed(Action::back) || input.is_pressed(Action::menu))
+    {
+        diag_open_ = false;
+        feedback_.play(audio::Cue::back);
+    }
+}
+
+void App::draw_diagnostics(ui::Canvas &canvas) const
+{
+    if (!diag_open_)
+        return;
+    gfx::DrawList &list = canvas.list;
+    list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
+                      gfx::Color::rgb(0x000000, 0.9f));
+    const gfx::Rect box{80.0f, 70.0f, 1760.0f, 940.0f};
+    list.rounded_rect(box, 24.0f, gfx::Color::rgb(0x1c1c1c));
+    ui::text(list, fonts_.semibold, i18n::tr("Diagnostics"), box.x + 50.0f, box.y + 70.0f, 40.0f,
+             gfx::Color::rgb(0xffffff));
+    ui::text(list, fonts_.regular,
+             diagnostics_.running() ? i18n::tr("Running...")
+             : diag_uploading_      ? i18n::tr("Uploading the report...")
+                                    : i18n::tr("Done"),
+             box.x + 330.0f, box.y + 66.0f, 26.0f, gfx::Color::rgb(0xbbbbbb));
+
+    // The lines, newest at the bottom; Up scrolls back.
+    const std::vector<DiagLine> lines = diagnostics_.lines();
+    const float list_x = box.x + 50.0f;
+    const float list_w = 1120.0f;
+    constexpr int kRows = 22;
+    const int last = std::max(0, static_cast<int>(lines.size()) - diag_scroll_);
+    const int first = std::max(0, last - kRows);
+    float y = box.y + 130.0f;
+    const gfx::VerbatimText verbatim; // names, hosts and errors as they are
+    for (int i = first; i < last; ++i)
+    {
+        const DiagLine &line = lines[static_cast<std::size_t>(i)];
+        gfx::Color color = gfx::Color::rgb(0x9a9a9a);
+        if (line.status == DiagStatus::ok)
+            color = gfx::Color::rgb(0x6ad48a);
+        else if (line.status == DiagStatus::warn)
+            color = gfx::Color::rgb(0xffc857);
+        else if (line.status == DiagStatus::fail)
+            color = gfx::Color::rgb(0xff6b6b);
+        ui::text(list, fonts_.mono, diag_status_word(line.status), list_x, y, 20.0f, color);
+        const std::string text = line.section + " / " + line.name + ": " + line.detail;
+        ui::text(list, fonts_.regular, fonts_.regular.font->fit(text, 22.0f, list_w - 80.0f),
+                 list_x + 80.0f, y, 22.0f, gfx::Color::rgb(0xe0e0e0));
+        y += 36.0f;
+    }
+
+    // The report's code.
+    const float qr_x = box.x + box.w - 520.0f;
+    const float qr_y = box.y + 130.0f;
+    const float qr_side = 460.0f;
+    const float tw = 460.0f;
+    if (diag_texture_ != 0)
+    {
+        list.rounded_rect({qr_x, qr_y, qr_side, qr_side}, 16.0f, gfx::Color::rgb(0xffffff));
+        list.image(diag_texture_, {qr_x + 20.0f, qr_y + 20.0f, qr_side - 40.0f, qr_side - 40.0f},
+                   gfx::kFullUv, gfx::Color::rgb(0xffffff), 4.0f);
+        ui::paragraph(list, fonts_.regular,
+                      i18n::tr("Scan to open the report on your phone, then share it."), qr_x,
+                      qr_y + qr_side + 40.0f, 24.0f, tw, 32.0f, gfx::Color::rgb(0xbbbbbb), 4);
+        ui::paragraph(list, fonts_.mono, diag_url_, qr_x, qr_y + qr_side + 180.0f, 20.0f, tw, 28.0f,
+                      gfx::Color::rgb(0x3ea6ff), 2);
+    }
+    else if (!diag_error_.empty())
+    {
+        ui::paragraph(list, fonts_.regular,
+                      i18n::tr("The report could not be uploaded:") + " " + diag_error_ + ". " +
+                          i18n::tr("It is in yt.log too."),
+                      qr_x, qr_y, 24.0f, tw, 34.0f, gfx::Color::rgb(0xff8a80), 10);
+    }
+    ui::text(list, fonts_.regular, i18n::tr("Circle: close   Up/Down: scroll   Square: run again"),
+             box.x + 50.0f, box.y + box.h - 40.0f, 24.0f, gfx::Color::rgb(0x9a9a9a));
 }
 
 void App::draw_log_qr(ui::Canvas &canvas) const
@@ -1768,6 +1902,13 @@ const InputFrame &App::gate_input(const InputFrame &input, float dt)
     if (log_qr_open_)
     {
         handle_log_qr(input);
+        locked_input_ = InputFrame{};
+        locked_input_.connected = input.connected;
+        return locked_input_;
+    }
+    if (diag_open_)
+    {
+        handle_diagnostics(input);
         locked_input_ = InputFrame{};
         locked_input_.connected = input.connected;
         return locked_input_;
@@ -2101,6 +2242,10 @@ void App::update(const InputFrame &raw_input, float dt)
     }
     if (ask.show_log_qr)
         open_log_qr();
+    if (ask.run_diagnostics)
+        open_diagnostics();
+    if (ask.open_video && !ask.video_id.empty())
+        last_video_ = ask.video_id;
     if (ask.quit)
         quit_ = true;
     if (ask.open_video && ask.video_id.size() == 24 && ask.video_id.rfind("UC", 0) == 0)
@@ -2555,6 +2700,7 @@ void App::draw_chrome(Frame &frame)
     draw_prompt(overlay);
     draw_picker(overlay);
     draw_log_qr(overlay);
+    draw_diagnostics(overlay);
     toasts_.draw(overlay);
 }
 

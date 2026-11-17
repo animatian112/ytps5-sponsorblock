@@ -697,5 +697,13 @@ All	Tümü
 No recent videos from this group	Bu gruptan yeni video yok
 Triangle next group   Circle back   Left: menu	Üçgen sonraki grup   Daire geri   Sol: menü
 Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on paste.rs, where anyone with the link can read it.	Kodu telefonunun kamerasıyla tara: yt.log açılır, kaydetmeye ya da paylaşmaya hazır. Kayıt paste.rs'te durur; bağlantıya sahip herkes okuyabilir.
+Run diagnostics	Tanılamayı çalıştır
+Checks the console, the network, YouTube and log sharing, then shows a QR code of the report for your phone	Konsolu, ağı, YouTube'u ve kayıt paylaşımını denetler, sonra telefonun için raporun QR kodunu gösterir
+Running...	Çalışıyor...
+Uploading the report...	Rapor yükleniyor...
+Scan to open the report on your phone, then share it.	Raporu telefonunda açmak için tara, sonra paylaş.
+The report could not be uploaded:	Rapor yüklenemedi:
+It is in yt.log too.	yt.log'da da var.
+Circle: close   Up/Down: scroll   Square: run again	Daire: kapat   Yukarı/Aşağı: kaydır   Kare: tekrar
 )TSV"
 // clang-format on

@@ -40,6 +40,8 @@ class LogShare
     // "permission denied"): the log goes up to dpaste.com instead, kept 7
     // days, and the code points there. Runs on a thread of its own.
     void upload();
+    // The same, for a text of the caller's (the diagnostics report).
+    void upload_text(std::string text);
     bool uploading() const;
     // The paste's address once it is up (the raw file: ...txt), else "".
     std::string uploaded_url() const;

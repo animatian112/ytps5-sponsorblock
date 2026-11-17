@@ -689,5 +689,13 @@ All	Todos
 No recent videos from this group	No hay vídeos recientes de este grupo
 Triangle next group   Circle back   Left: menu	Triángulo siguiente grupo   Círculo volver   Izquierda: menú
 Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on paste.rs, where anyone with the link can read it.	Escanea el código con la cámara del teléfono: abre yt.log, listo para guardar o compartir. El registro está en paste.rs, donde cualquiera con el enlace puede leerlo.
+Run diagnostics	Ejecutar diagnóstico
+Checks the console, the network, YouTube and log sharing, then shows a QR code of the report for your phone	Comprueba la consola, la red, YouTube y el envío del registro, y luego muestra un código QR del informe para tu teléfono
+Running...	En curso...
+Uploading the report...	Subiendo el informe...
+Scan to open the report on your phone, then share it.	Escanea para abrir el informe en tu teléfono y compártelo.
+The report could not be uploaded:	No se pudo subir el informe:
+It is in yt.log too.	También está en yt.log.
+Circle: close   Up/Down: scroll   Square: run again	Círculo: cerrar   Arriba/Abajo: desplazar   Cuadrado: repetir
 )TSV"
 // clang-format on

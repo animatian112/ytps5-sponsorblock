@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <utility>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <random>
@@ -34,6 +35,7 @@ struct LogShare::State
 
 struct LogShare::Upload
 {
+    std::string text; // what to paste; empty: the log
     mutable std::mutex mutex;
     bool done = false;
     std::string url;
@@ -77,9 +79,10 @@ std::string form_escape(std::string_view text)
 
 // The start (versions, the console) and the end (what just went wrong) of
 // a log too long for one paste.
-std::string trimmed_log(std::size_t limit)
+std::string trimmed_log(std::string text, std::size_t limit)
 {
-    std::string text = log::read_all(kMaxLog);
+    if (text.empty())
+        text = log::read_all(kMaxLog);
     if (text.size() > limit)
     {
         const std::size_t head = limit / 5;
@@ -97,7 +100,7 @@ std::string trimmed_answer(std::string text)
 }
 
 // One paste service: the raw file's address, or "" with *error set.
-std::string paste_to(const char *service, std::string *error)
+std::string paste_to(const char *service, const std::string &text, std::string *error)
 {
     http::Request request;
     request.method = "POST";
@@ -110,14 +113,14 @@ std::string paste_to(const char *service, std::string *error)
         // dpaste takes 250,000 characters a paste.
         request.url = "https://dpaste.com/api/v2/";
         request.headers.emplace_back("Content-Type", "application/x-www-form-urlencoded");
-        request.body = log_paste_form(trimmed_log(240u << 10));
+        request.body = log_paste_form(trimmed_log(text, 240u << 10));
     }
     else
     {
         // paste.rs: the body is the paste, the answer its address.
         request.url = "https://paste.rs/";
         request.headers.emplace_back("Content-Type", "text/plain; charset=utf-8");
-        request.body = trimmed_log(kMaxPaste);
+        request.body = trimmed_log(text, kMaxPaste);
     }
     const http::Response response = http::perform(request);
     std::string url = trimmed_answer(response.body);
@@ -145,7 +148,7 @@ void *upload_entry(void *argument)
     for (const char *service : {"dpaste.com", "paste.rs"})
     {
         std::string error;
-        url = paste_to(service, &error);
+        url = paste_to(service, upload->text, &error);
         if (!url.empty())
             break;
         errors += (errors.empty() ? "" : "; ") + error;
@@ -405,7 +408,13 @@ std::string log_paste_form(const std::string &log_text)
 
 void LogShare::upload()
 {
+    upload_text({});
+}
+
+void LogShare::upload_text(std::string text)
+{
     upload_ = std::make_shared<Upload>();
+    upload_->text = std::move(text);
     auto *argument = new std::shared_ptr<Upload>(upload_);
     pthread_attr_t attributes;
     pthread_t thread;

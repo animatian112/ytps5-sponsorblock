@@ -112,6 +112,7 @@ enum : int
     kSbClearExcluded,
     kBackupSettings,
     kShareLog,
+    kRunDiagnostics,
     kRestoreSettings,
     kRemoteNewCode,
     kDevClearCache,
@@ -566,6 +567,9 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
               "2: the decoder starts the next picture before the last is out (untested on this "
               "console; 1 if a video will not play). Applies to the next video");
     dev.add_header("Diagnostics");
+    dev.add_action(kRunDiagnostics, "Run diagnostics").description =
+        "Checks the console, the network, YouTube and log sharing, then shows a QR code of the "
+        "report for your phone";
     add_flag(dev, "Show log on screen", &S::dev_log,
              "The log's last lines on the player and on an empty Home");
     dev.add_action(kDevClearCache, "Clear saved feeds").description =
@@ -1052,6 +1056,11 @@ void SettingsScreen::activate(int id)
     if (id == kShareLog)
     {
         context_.nav.show_log_qr = true;
+        return;
+    }
+    if (id == kRunDiagnostics)
+    {
+        context_.nav.run_diagnostics = true;
         return;
     }
     if (id == kDevClearCache)

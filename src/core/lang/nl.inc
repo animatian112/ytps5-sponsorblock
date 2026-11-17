@@ -690,5 +690,13 @@ All	Alle
 No recent videos from this group	Geen recente video's uit deze groep
 Triangle next group   Circle back   Left: menu	Driehoek volgende groep   Cirkel terug   Links: menu
 Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on paste.rs, where anyone with the link can read it.	Scan de code met de camera van je telefoon: hij opent yt.log, klaar om op te slaan of te delen. Het logboek staat op paste.rs, waar iedereen met de link het kan lezen.
+Run diagnostics	Diagnose uitvoeren
+Checks the console, the network, YouTube and log sharing, then shows a QR code of the report for your phone	Controleert de console, het netwerk, YouTube en het delen van het logboek, en toont dan een QR-code van het rapport voor je telefoon
+Running...	Bezig...
+Uploading the report...	Rapport uploaden...
+Scan to open the report on your phone, then share it.	Scan om het rapport op je telefoon te openen en deel het.
+The report could not be uploaded:	Het rapport kon niet worden geüpload:
+It is in yt.log too.	Het staat ook in yt.log.
+Circle: close   Up/Down: scroll   Square: run again	Cirkel: sluiten   Omhoog/Omlaag: scrollen   Vierkant: opnieuw
 )TSV"
 // clang-format on

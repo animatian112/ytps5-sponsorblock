@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "app/diagnostics.hpp"
 #include "yt/log_share.hpp"
 
 #include "app/card_menu.hpp"
@@ -197,6 +198,20 @@ class App
     // Settings > General > Language, as applied (-1: not yet).
     int language_applied_ = -1;
     void apply_language();
+    // Settings > Developer > Run diagnostics: the pass, its report's QR code.
+    Diagnostics diagnostics_;
+    yt::LogShare diag_share_;
+    bool diag_open_ = false;
+    bool diag_uploading_ = false;
+    std::string diag_url_;
+    std::string diag_error_;
+    std::uint32_t diag_texture_ = 0;
+    int diag_scroll_ = 0; // lines scrolled up from the newest
+    std::string last_video_;
+    void open_diagnostics();
+    void handle_diagnostics(const InputFrame &input);
+    void draw_diagnostics(ui::Canvas &canvas) const;
+    std::uint32_t qr_texture(const std::string &url, int *size);
     void open_log_qr();
     void make_log_qr(const std::string &url);
     void handle_log_qr(const InputFrame &input);
