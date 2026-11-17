@@ -630,8 +630,8 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             // The kept stats lines name the previous video's format.
             stats_.invalidate();
             yt::log::line("player: date: publish '%s' page '%s' card '%s'",
-                          video_view().info.publish_date.c_str(),
-                          video_view().date_text.c_str(), card_age_.c_str());
+                          video_view().info.publish_date.c_str(), video_view().date_text.c_str(),
+                          card_age_.c_str());
             // Videos under 5 minutes start over unless the setting keeps them.
             const double length = video_view().info.length_s;
             if (resume_s_ > 0.0 &&
