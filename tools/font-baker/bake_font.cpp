@@ -3,12 +3,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // usage: bake_font <font.ttf> <out.huifont> [pixel_size=56] [sdf_range=8] [atlas=1024]
-//                  [glyphs=basic|european] [fallback.ttf|otf] [fallback_scale=1]
+//                  [glyphs=basic|european|all] [fallback.ttf|otf] [fallback_scale=1]
 // A letter the font lacks is taken from the fallback face when one is given
 // (scaled by fallback_scale so its letters stand as tall as the main face's):
 // how Google Sans, which has no Cyrillic or Greek, gets them from Inter.
 // Bakes printable ASCII plus a few UI symbols into a single-channel signed
 // distance field atlas with metrics and kerning (see src/gfx/font_format.hpp).
+// `all` bakes every code point the font maps instead, without kerning: for a
+// face cut down to the characters it is for (the Chinese and Japanese one,
+// tools/subset-cjk-font.py), whose glyphs each fill their own em.
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "../../third_party/stb/stb_truetype.h"
@@ -102,13 +105,14 @@ int main(int argc, char **argv)
 {
     if (argc < 3)
     {
-        std::fprintf(stderr, "usage: %s font.ttf out.huifont [pixel_size] [sdf_range] [atlas] [basic|european]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s font.ttf out.huifont [pixel_size] [sdf_range] [atlas] [basic|european|all]\n", argv[0]);
         return 2;
     }
     const float pixel_size = argc > 3 ? std::strtof(argv[3], nullptr) : 56.0f;
     const int range = argc > 4 ? std::atoi(argv[4]) : 8;
     const int atlas_size = argc > 5 ? std::atoi(argv[5]) : 1024;
     const bool european = argc > 6 && std::strcmp(argv[6], "european") == 0;
+    const bool every = argc > 6 && std::strcmp(argv[6], "all") == 0;
     const char *fallback_path = argc > 7 ? argv[7] : nullptr;
     const float fallback_scale = argc > 8 ? std::strtof(argv[8], nullptr) : 1.0f;
 
@@ -143,8 +147,18 @@ int main(int argc, char **argv)
     }
     int from_fallback = 0;
 
+    std::vector<int> wanted = codepoints(european);
+    if (every)
+    {
+        // The font decides: whatever it maps from the space up, the
+        // supplementary ideographs (plane 2) included.
+        wanted.clear();
+        for (int c = 32; c <= 0x2FFFF; ++c)
+            if (stbtt_FindGlyphIndex(&font, c) != 0)
+                wanted.push_back(c);
+    }
     std::vector<Baked> glyphs;
-    for (int codepoint : codepoints(european))
+    for (int codepoint : wanted)
     {
         const stbtt_fontinfo *face = &font;
         float face_scale = scale;
@@ -215,6 +229,10 @@ int main(int argc, char **argv)
     std::vector<ff::Kern> kerns;
     for (const Baked &a : glyphs)
     {
+        // Thousands of glyphs would be millions of pairs, and an ideograph
+        // keeps its own em anyway.
+        if (every)
+            break;
         for (const Baked &b : glyphs)
         {
             // Pairs within one face keep that face's kerning; a pair across

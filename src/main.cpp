@@ -246,11 +246,11 @@ bool open_display(hui::ps5::Display &display, int *resolution)
 }
 
 bool load_font(hui::gfx::Renderer &renderer, const char *name, hui::gfx::Font *font,
-               hui::ui::FontRef *ref)
+               hui::ui::FontRef *ref, std::size_t max_bytes = 4u << 20)
 {
     std::string data;
     const std::string path = std::string(kAssets) + "/fonts/" + name;
-    if (!hui::save::read_file(path, &data) || !font->load(data))
+    if (!hui::save::read_file(path, &data, max_bytes) || !font->load(data))
     {
         hui::sys::log("[YTV] font %s failed: %s", name, font->error().c_str());
         return false;
@@ -339,6 +339,16 @@ int main()
     {
         sys::log("[YTV] fatal: renderer init failed");
         sys::park();
+    }
+    // Chinese, Japanese and Korean, which the faces above lack: every face
+    // falls back on this one (some 13,000 characters in a 16 MB atlas).
+    // Without the file only those letters are missing.
+    gfx::Font cjk;
+    ui::FontRef cjk_ref;
+    if (load_font(renderer, "noto-sans-cjk.huifont", &cjk, &cjk_ref, 32u << 20))
+    {
+        for (gfx::Font *face : {&regular, &semibold, &display_font, &mono})
+            face->add_fallback(&cjk, cjk_ref.texture);
     }
 
     ps5::Pad pad;

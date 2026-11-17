@@ -9,6 +9,7 @@
 
 #include <initializer_list>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #ifndef HUI_SOURCE_DIR
@@ -161,6 +162,55 @@ TEST(Font, AsksItsFallbacksForWhatItLacks)
     font.clear_fallbacks();
     EXPECT_FALSE(font.has_glyph(0x4e16));
     EXPECT_FLOAT_EQ(font.measure(mixed, 32), before);
+}
+
+// The Chinese, Japanese and Korean face src/main.cpp hangs behind every other
+// face. It is far bigger than the others (one 4096 atlas), hence the limit.
+TEST(Font, TheCjkFaceDrawsJapaneseChineseAndKoreanTitles)
+{
+    std::string data;
+    ASSERT_TRUE(hui::save::read_file(HUI_SOURCE_DIR "/assets/fonts/noto-sans-cjk.huifont", &data,
+                                     32u << 20));
+    Font cjk;
+    ASSERT_TRUE(cjk.load(data)) << cjk.error();
+    EXPECT_EQ(cjk.atlas_width(), 4096);
+
+    Font font = inter();
+    // Without it, Japanese is the row of question marks users reported (#20).
+    EXPECT_FALSE(font.has_glyph(0x65E5)); // 日
+    font.add_fallback(&cjk, 9);
+
+    // Titles as YouTube sends them: hiragana, katakana, kanji, full-width
+    // punctuation, then Simplified and Traditional Chinese and Hangul.
+    for (const std::string_view title :
+         {"\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x81\xAE\xE3\x82\xBF\xE3\x82\xA4\xE3\x83\x88\xE3"
+          "\x83\xAB\xE3\x80\x90\xE5\x85\xAC\xE5\xBC\x8F\xE3\x80\x91", // 日本語のタイトル【公式】
+          "\xE3\x83\xA9\xE3\x83\xBC\xE3\x83\xA1\xE3\x83\xB3\xE3\x80\x81\xE9\xA3\x9F\xE3\x81\xB9"
+          "\xE3\x81\xBE\xE3\x81\x99\xE3\x80\x82",             // ラーメン、食べます。
+          "\xE5\x91\xA8\xE6\x9D\xB0\xE4\xBC\xA6",             // 周杰伦
+          "\xE7\xB9\x81\xE9\xAB\x94\xE4\xB8\xAD\xE6\x96\x87", // 繁體中文
+          "\xED\x95\x9C\xEA\xB5\xAD\xEC\x96\xB4"})            // 한국어
+    {
+        std::size_t i = 0;
+        while (i < title.size())
+        {
+            const std::uint32_t code = hui::gfx::next_codepoint(title, &i);
+            EXPECT_TRUE(font.has_glyph(code)) << "U+" << std::hex << code;
+        }
+        // Each character is drawn from the CJK atlas, none as '?'.
+        std::vector<GlyphQuad> quads;
+        font.layout(title, 0.0f, 0.0f, 32.0f, Align::left, quads);
+        ASSERT_FALSE(quads.empty());
+        for (const GlyphQuad &q : quads)
+            EXPECT_EQ(q.texture, 9u);
+        EXPECT_GT(font.measure(title, 32), font.measure("?", 32) * 2.0f);
+    }
+    // Latin letters in a mixed title still come from the face itself.
+    std::vector<GlyphQuad> mixed;
+    font.layout("A\xE6\x97\xA5", 0.0f, 0.0f, 32.0f, Align::left, mixed);
+    ASSERT_EQ(mixed.size(), 2u);
+    EXPECT_EQ(mixed[0].texture, 0u);
+    EXPECT_EQ(mixed[1].texture, 9u);
 }
 
 TEST(Font, DecodesUtf8)

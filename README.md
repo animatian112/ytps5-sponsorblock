@@ -75,7 +75,7 @@ While the app is running you can read it over FTP at `/mnt/sandbox/PPSA99350_000
 
 **No device code on the login screen.** The TV client ID may be outdated. The app normally reads a current one at sign-in and only falls back to a built-in value.
 
-**Empty boxes instead of letters.** The built-in fonts cover Latin, Greek and Cyrillic. CJK and emoji aren't supported yet.
+**Question marks instead of letters.** The built-in fonts cover Latin, Greek, Cyrillic, Chinese, Japanese and Korean (about 13,000 everyday characters). Other scripts, such as Arabic and Thai, aren't supported yet.
 
 **Empty home feed.** Without an account, YouTube often returns no recommendations. Sign in to get your feed.
 
