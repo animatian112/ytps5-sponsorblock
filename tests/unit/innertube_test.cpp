@@ -627,8 +627,8 @@ TEST(InnerTube, ReadsUploadDates)
     // The TV client's watch page: the player overlay's line ends with the age.
     const char *tv = R"({"playerOverlays":{"playerOverlayRenderer":{"videoDetails":{
       "playerOverlayVideoDetailsRenderer":{"title":{"simpleText":"A video"},
-      "subtitle":{"runs":[{"text":"Some Channel"},{"text":" â¢ "},{"text":"1.2M views"},
-        {"text":" â¢ "},{"text":"3 years ago"}]}}}}}})";
+      "subtitle":{"runs":[{"text":"Some Channel"},{"text":" • "},{"text":"1.2M views"},
+        {"text":" • "},{"text":"3 years ago"}]}}}}}})";
     yt::FeedPage tv_page;
     yt::parse_feed_page(tv, &tv_page);
     EXPECT_EQ(tv_page.date_text, "3 years ago");
