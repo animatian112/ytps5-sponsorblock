@@ -7,6 +7,7 @@
 #pragma once
 
 #include "app/context.hpp"
+#include "app/row_scroll.hpp"
 #include "yt/types.hpp"
 
 #include "ui/components.hpp"
@@ -74,6 +75,9 @@ class RowsView
         ui::Carousel shelf;
     };
     float row_height() const;
+    // Applies the settings' card look to every row, so their height is the
+    // one they are drawn at.
+    void style_rows(const Settings &settings);
     void place();
 
     std::vector<std::unique_ptr<Row>> rows_;
@@ -82,7 +86,7 @@ class RowsView
     bool active_ = true;
     bool wants_rail_ = false;
     std::string activated_;
-    float scroll_ = 0.0f; // the rows' offset, animated toward the focus row
+    RowScroll scroll_; // the rows' pitch and offset, animated toward the focus row
 };
 
 } // namespace hui::app
