@@ -696,5 +696,6 @@ Remove a channel from a group first	Önce bir gruptan bir kanal çıkar
 All	Tümü
 No recent videos from this group	Bu gruptan yeni video yok
 Triangle next group   Circle back   Left: menu	Üçgen sonraki grup   Daire geri   Sol: menü
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on paste.rs, where anyone with the link can read it.	Kodu telefonunun kamerasıyla tara: yt.log açılır, kaydetmeye ya da paylaşmaya hazır. Kayıt paste.rs'te durur; bağlantıya sahip herkes okuyabilir.
 )TSV"
 // clang-format on

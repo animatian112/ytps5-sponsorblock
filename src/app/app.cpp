@@ -1591,9 +1591,13 @@ void App::draw_log_qr(ui::Canvas &canvas) const
     else if (!log_share_.running())
     {
         ui::paragraph(list, fonts_.regular,
-                      i18n::tr("Scan the code with your phone's camera: it opens yt.log, ready to "
-                               "save or share. The log is on dpaste.com and is deleted after 7 "
-                               "days."),
+                      log_qr_url_.find("paste.rs") != std::string::npos
+                          ? i18n::tr("Scan the code with your phone's camera: it opens yt.log, "
+                                     "ready to save or share. The log is on paste.rs, where "
+                                     "anyone with the link can read it.")
+                          : i18n::tr("Scan the code with your phone's camera: it opens yt.log, "
+                                     "ready to save or share. The log is on dpaste.com and is "
+                                     "deleted after 7 days."),
                       tx, box.y + 200.0f, 24.0f, width, 34.0f, gfx::Color::rgb(0xbbbbbb), 6);
         ui::paragraph(list, fonts_.mono, log_qr_url_, tx, box.y + 430.0f, 22.0f, width, 30.0f,
                       gfx::Color::rgb(0x3ea6ff), 2);

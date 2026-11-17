@@ -67,7 +67,7 @@ long long days_from_civil(int y, int m, int d)
 
 // When the video went up: "May 1, 2024 (2 years ago)" from the player's
 // publish date, else the watch page's own line ("Premiered Oct 3, 2026").
-std::string upload_line(const yt::VideoView &view)
+std::string upload_line(const yt::VideoView &view, const std::string &card_age)
 {
     int y = 0;
     int m = 0;
@@ -107,7 +107,30 @@ std::string upload_line(const yt::VideoView &view)
         }
         return out;
     }
-    return view.date_text;
+    if (!view.date_text.empty())
+        return view.date_text;
+    // Neither the player nor the watch page said: the age the card that
+    // opened the video showed ("3 years ago").
+    return card_age;
+}
+
+// The age at the end of a card's line ("1.2M views • 3 years ago").
+std::string age_of(const std::string &detail)
+{
+    const std::string dot = "\xE2\x80\xA2";
+    const std::size_t at = detail.rfind(dot);
+    if (at == std::string::npos)
+        return {};
+    std::string age = detail.substr(at + dot.size());
+    while (!age.empty() && age.front() == ' ')
+        age.erase(age.begin());
+    while (!age.empty() && age.back() == ' ')
+        age.pop_back();
+    // "3 years ago" has a digit; a views count alone has "views" in it.
+    bool digit = false;
+    for (const char c : age)
+        digit = digit || (c >= '0' && c <= '9');
+    return digit && age.find("view") == std::string::npos ? age : std::string();
 }
 
 // Settings > Developer > Show log on screen: the log's last lines, bottom
@@ -357,6 +380,24 @@ void PlayerScreen::request_video(const std::string &video_id)
     remote.start_s = -1.0;
     remote.start_video.clear();
     requested_id_ = video_id;
+    // The card's own age, for when the watch page carries no date: whichever
+    // feed shows this video (before the related row is replaced).
+    card_age_.clear();
+    for (const yt::FeedKind kind :
+         {yt::FeedKind::related, yt::FeedKind::home, yt::FeedKind::subscriptions,
+          yt::FeedKind::search, yt::FeedKind::channel, yt::FeedKind::topic, yt::FeedKind::history})
+    {
+        const yt::FeedView feed = kind == yt::FeedKind::search ? context_.service.search_feed()
+                                                               : context_.service.feed(kind);
+        for (const yt::FeedItem &item : feed.items)
+        {
+            if (item.video_id == video_id && card_age_.empty())
+                card_age_ = age_of(item.detail);
+        }
+        if (!card_age_.empty())
+            break;
+    }
+    yt::log::line("player: %s card age '%s'", video_id.c_str(), card_age_.c_str());
     // Keep the app's notion of the open video in step, so the divergence check
     // in update() only fires on a video genuinely handed in from outside.
     context_.active_video = video_id;
@@ -588,6 +629,9 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             ended_ = false;
             // The kept stats lines name the previous video's format.
             stats_.invalidate();
+            yt::log::line("player: date: publish '%s' page '%s' card '%s'",
+                          video_view().info.publish_date.c_str(),
+                          video_view().date_text.c_str(), card_age_.c_str());
             // Videos under 5 minutes start over unless the setting keeps them.
             const double length = video_view().info.length_s;
             if (resume_s_ > 0.0 &&
@@ -909,7 +953,7 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
         if (!view.info.view_count.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") +
                     grouped_digits(view.info.view_count) + i18n::tr(" views");
-        if (const std::string uploaded = upload_line(view); !uploaded.empty())
+        if (const std::string uploaded = upload_line(view, card_age_); !uploaded.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + uploaded;
         if (!view.subscribers.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + view.subscribers;
@@ -1800,7 +1844,7 @@ void PlayerScreen::open_menu(PlayerChrome::Command command)
             }
             head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + grouped + i18n::tr(" views");
         }
-        if (const std::string uploaded = upload_line(view); !uploaded.empty())
+        if (const std::string uploaded = upload_line(view, card_age_); !uploaded.empty())
             head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + uploaded;
         if (view.likes >= 0 && view.dislikes >= 0)
             head += (head.empty() ? "" : "  \xE2\x80\xA2  ") + yt::compact_count(view.likes) +

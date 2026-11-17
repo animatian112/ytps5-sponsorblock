@@ -696,5 +696,6 @@ Remove a channel from a group first	Сначала уберите канал и�
 All	Все
 No recent videos from this group	Нет новых видео из этой группы
 Triangle next group   Circle back   Left: menu	Треугольник следующая группа   Круг назад   Влево: меню
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on paste.rs, where anyone with the link can read it.	Отсканируйте код камерой телефона: откроется yt.log, его можно сохранить или отправить. Журнал лежит на paste.rs, его может прочитать любой, у кого есть ссылка.
 )TSV"
 // clang-format on

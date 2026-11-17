@@ -75,46 +75,87 @@ std::string form_escape(std::string_view text)
     return out;
 }
 
+// The start (versions, the console) and the end (what just went wrong) of
+// a log too long for one paste.
+std::string trimmed_log(std::size_t limit)
+{
+    std::string text = log::read_all(kMaxLog);
+    if (text.size() > limit)
+    {
+        const std::size_t head = limit / 5;
+        text = text.substr(0, head) + "\n[... the middle of the log was left out ...]\n" +
+               text.substr(text.size() - (limit - head));
+    }
+    return text;
+}
+
+std::string trimmed_answer(std::string text)
+{
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' '))
+        text.pop_back();
+    return text;
+}
+
+// One paste service: the raw file's address, or "" with *error set.
+std::string paste_to(const char *service, std::string *error)
+{
+    http::Request request;
+    request.method = "POST";
+    request.headers = {{"User-Agent", "TubeBlock-PS5"}};
+    request.timeout_s = 30;
+    request.max_bytes = 4096;
+    const bool dpaste = std::strcmp(service, "dpaste.com") == 0;
+    if (dpaste)
+    {
+        // dpaste takes 250,000 characters a paste.
+        request.url = "https://dpaste.com/api/v2/";
+        request.headers.emplace_back("Content-Type", "application/x-www-form-urlencoded");
+        request.body = log_paste_form(trimmed_log(240u << 10));
+    }
+    else
+    {
+        // paste.rs: the body is the paste, the answer its address.
+        request.url = "https://paste.rs/";
+        request.headers.emplace_back("Content-Type", "text/plain; charset=utf-8");
+        request.body = trimmed_log(kMaxPaste);
+    }
+    const http::Response response = http::perform(request);
+    std::string url = trimmed_answer(response.body);
+    if (!response.ok())
+        *error = std::string(service) + ": " + response.error;
+    else if (!response.http_ok() || url.rfind("https://", 0) != 0)
+        *error = std::string(service) + " answered " + std::to_string(response.status);
+    else
+        error->clear();
+    log::line("logshare: %s -> %ld %s", service, response.status,
+              error->empty() ? url.c_str() : error->c_str());
+    if (!error->empty())
+        return {};
+    // The raw log, which a phone saves or shares as it is.
+    return dpaste ? url + ".txt" : url;
+}
+
 void *upload_entry(void *argument)
 {
     std::unique_ptr<std::shared_ptr<LogShare::Upload>> holder(
         static_cast<std::shared_ptr<LogShare::Upload> *>(argument));
     const std::shared_ptr<LogShare::Upload> upload = *holder;
-    http::Request request;
-    request.method = "POST";
-    request.url = "https://dpaste.com/api/v2/";
-    request.headers = {{"Content-Type", "application/x-www-form-urlencoded"},
-                       {"User-Agent", "TubeBlock-PS5"}};
-    std::string text = log::read_all(kMaxLog);
-    if (text.size() > kMaxPaste)
+    std::string url;
+    std::string errors;
+    for (const char *service : {"dpaste.com", "paste.rs"})
     {
-        // The start (versions, the console) and the end (what just went wrong).
-        const std::size_t head = 100u << 10;
-        text = text.substr(0, head) + "\n[... the middle of the log was left out ...]\n" +
-               text.substr(text.size() - (kMaxPaste - head));
+        std::string error;
+        url = paste_to(service, &error);
+        if (!url.empty())
+            break;
+        errors += (errors.empty() ? "" : "; ") + error;
     }
-    request.body = log_paste_form(text);
-    request.timeout_s = 30;
-    request.max_bytes = 4096;
-    const http::Response response = http::perform(request);
-    std::string url = response.body;
-    while (!url.empty() && (url.back() == '\n' || url.back() == '\r' || url.back() == ' '))
-        url.pop_back();
-    std::string error;
-    if (!response.ok())
-        error = response.error;
-    else if (!response.http_ok() || url.rfind("https://", 0) != 0)
-        error = "dpaste.com answered " + std::to_string(response.status);
-    else
-        url += ".txt"; // the raw log, which a phone saves or shares as it is
-    log::line("logshare: upload -> %ld %s", response.status,
-              error.empty() ? url.c_str() : error.c_str());
     const std::lock_guard<std::mutex> lock(upload->mutex);
     upload->done = true;
-    if (error.empty())
+    if (!url.empty())
         upload->url = url;
     else
-        upload->error = error;
+        upload->error = errors;
     return nullptr;
 }
 

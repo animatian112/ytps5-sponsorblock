@@ -689,5 +689,6 @@ Remove a channel from a group first	Verwijder eerst een kanaal uit een groep
 All	Alle
 No recent videos from this group	Geen recente video's uit deze groep
 Triangle next group   Circle back   Left: menu	Driehoek volgende groep   Cirkel terug   Links: menu
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on paste.rs, where anyone with the link can read it.	Scan de code met de camera van je telefoon: hij opent yt.log, klaar om op te slaan of te delen. Het logboek staat op paste.rs, waar iedereen met de link het kan lezen.
 )TSV"
 // clang-format on

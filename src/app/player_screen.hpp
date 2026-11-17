@@ -85,6 +85,8 @@ class PlayerScreen final : public Screen
     Context &context_;
     std::unique_ptr<yt::Player> player_;
     std::string requested_id_;
+    // "3 years ago" from the card that opened the video (the date's fallback).
+    std::string card_age_;
     std::string playing_id_;
     PlayerChrome chrome_;
     ui::Carousel related_;
