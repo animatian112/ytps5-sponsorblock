@@ -841,7 +841,8 @@ void PlayerChrome::draw(ui::Canvas &canvas, const ui::Fonts &fonts, float rise) 
                            gfx::Color::rgb(0xffffff), 20.0f);
                 x += 54.0f;
             }
-            ui::text(list, fonts.regular, fonts.regular.font->fit(subtitle_, 30.0f, width), x,
+            ui::text(list, fonts.regular,
+                     fonts.regular.font->fit(subtitle_, 30.0f, width - (x - kLeft)), x,
                      kSubtitleY - rise, 30.0f, kInk);
         }
     }

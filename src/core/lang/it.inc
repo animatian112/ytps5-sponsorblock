@@ -676,5 +676,18 @@ today	oggi
 %d years ago	%d anni fa
 Uploading the log...	Caricamento del log...
 Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on dpaste.com and is deleted after 7 days.	Inquadra il codice con la fotocamera del telefono: apre yt.log, pronto da salvare o condividere. Il log è su dpaste.com e viene eliminato dopo 7 giorni.
+Add channel to a group	Aggiungi il canale a un gruppo
+Add to 	Aggiungi a 
+Remove from 	Rimuovi da 
+Removed from 	Rimosso da 
+Channel groups	Gruppi di canali
+New group	Nuovo gruppo
+New group name	Nome del nuovo gruppo
+Done creates the group   Circle cancels	Fine crea il gruppo   Cerchio annulla
+No room for another group	Non c'è posto per un altro gruppo
+Remove a channel from a group first	Rimuovi prima un canale da un gruppo
+All	Tutti
+No recent videos from this group	Nessun video recente da questo gruppo
+Triangle next group   Circle back   Left: menu	Triangolo gruppo successivo   Cerchio indietro   Sinistra: menu
 )TSV"
 // clang-format on

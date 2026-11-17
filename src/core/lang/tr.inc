@@ -683,5 +683,18 @@ today	bugün
 %d years ago	%d yıl önce
 Uploading the log...	Kayıt yükleniyor...
 Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on dpaste.com and is deleted after 7 days.	Kodu telefonunun kamerasıyla tara: yt.log açılır, kaydetmeye ya da paylaşmaya hazır. Kayıt dpaste.com'da durur ve 7 gün sonra silinir.
+Add channel to a group	Kanalı bir gruba ekle
+Add to 	Ekle: 
+Remove from 	Çıkar: 
+Removed from 	Çıkarıldı: 
+Channel groups	Kanal grupları
+New group	Yeni grup
+New group name	Yeni grubun adı
+Done creates the group   Circle cancels	Bitti grubu oluşturur   Daire iptal eder
+No room for another group	Başka bir grup için yer yok
+Remove a channel from a group first	Önce bir gruptan bir kanal çıkar
+All	Tümü
+No recent videos from this group	Bu gruptan yeni video yok
+Triangle next group   Circle back   Left: menu	Üçgen sonraki grup   Daire geri   Sol: menü
 )TSV"
 // clang-format on

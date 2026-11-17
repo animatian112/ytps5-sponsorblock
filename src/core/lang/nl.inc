@@ -676,5 +676,18 @@ today	vandaag
 %d years ago	%d jaar geleden
 Uploading the log...	Logboek uploaden...
 Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on dpaste.com and is deleted after 7 days.	Scan de code met de camera van je telefoon: hij opent yt.log, klaar om op te slaan of te delen. Het logboek staat op dpaste.com en wordt na 7 dagen verwijderd.
+Add channel to a group	Kanaal aan een groep toevoegen
+Add to 	Toevoegen aan 
+Remove from 	Verwijderen uit 
+Removed from 	Verwijderd uit 
+Channel groups	Kanaalgroepen
+New group	Nieuwe groep
+New group name	Naam van de nieuwe groep
+Done creates the group   Circle cancels	Klaar maakt de groep   Cirkel annuleert
+No room for another group	Geen ruimte voor nog een groep
+Remove a channel from a group first	Verwijder eerst een kanaal uit een groep
+All	Alle
+No recent videos from this group	Geen recente video's uit deze groep
+Triangle next group   Circle back   Left: menu	Driehoek volgende groep   Cirkel terug   Links: menu
 )TSV"
 // clang-format on

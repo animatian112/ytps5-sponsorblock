@@ -2231,6 +2231,25 @@ bool parse_feed_page(std::string_view json, FeedPage *page)
         if (!page->date_text.empty())
             break;
     }
+    // The TV client's watch page has none of those: its player overlay's
+    // line ("Channel • 1.2M views • 3 years ago") ends with the age.
+    if (page->date_text.empty())
+    {
+        const std::string line = text_of(
+            yyjson_obj_get(find_object(root, "playerOverlayVideoDetailsRenderer"), "subtitle"));
+        const std::string dot = "\xE2\x80\xA2";
+        const std::size_t first = line.find(dot);
+        const std::size_t last = line.rfind(dot);
+        if (first != std::string::npos && last != first)
+        {
+            std::string age = line.substr(last + dot.size());
+            while (!age.empty() && age.front() == ' ')
+                age.erase(age.begin());
+            while (!age.empty() && age.back() == ' ')
+                age.pop_back();
+            page->date_text = age;
+        }
+    }
 
     // The channel's subscriber line on a watch page (the owner line's, as
     // SmartTube shows it under the title).

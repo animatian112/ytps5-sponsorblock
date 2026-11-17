@@ -903,21 +903,21 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     chrome_.set_audio_only(settings.audio_only);
     chrome_.set_has_next(next_suggestion() != nullptr);
     {
-        // SmartTube's line under the title: channel (and its subscribers),
-        // then the view count.
+        // The line under the title: channel, views and when it went up
+        // first, so a long line loses the extras at its end, not the date.
         std::string meta = view.info.author;
-        if (!view.subscribers.empty())
-            meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + view.subscribers;
         if (!view.info.view_count.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") +
                     grouped_digits(view.info.view_count) + i18n::tr(" views");
-        // When it was uploaded.
         if (const std::string uploaded = upload_line(view); !uploaded.empty())
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + uploaded;
+        if (!view.subscribers.empty())
+            meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + view.subscribers;
         // Return YouTube Dislike's counts.
         if (view.likes >= 0 && view.dislikes >= 0)
             meta += (meta.empty() ? "" : "  \xE2\x80\xA2  ") + yt::compact_count(view.likes) +
-                    " likes / " + yt::compact_count(view.dislikes) + " dislikes";
+                    i18n::tr(" likes / ") + yt::compact_count(view.dislikes) +
+                    i18n::tr(" dislikes");
         // The chapter playing, after the channel and views.
         if (player_ != nullptr && !chapters_.empty())
         {
