@@ -72,3 +72,4 @@ src/app/resume_store.cpp
 src/app/stats_overlay.cpp
 src/app/row_scroll.cpp
 src/app/rail_focus.cpp
+src/app/channel_groups.cpp
