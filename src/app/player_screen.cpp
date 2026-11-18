@@ -743,11 +743,11 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
                               .count();
             ++upload_count_;
             const auto now = std::chrono::steady_clock::now();
-            if (now - last_upload_log_ >= std::chrono::seconds(1))
+            if (now - last_upload_log_ >= std::chrono::seconds(10))
             {
                 last_upload_log_ = now;
                 yt::log::line(
-                    "ffmpeg: texture upload (NV12 buffer) %dx%d (%d in the last second, "
+                    "ffmpeg: texture upload (NV12 buffer) %dx%d (%d in the last 10 seconds, "
                     "%.1f ms avg); player update %.1f ms avg, %.1f ms max over %d frames",
                     frame.width, frame.height, upload_count_,
                     upload_count_ > 0 ? static_cast<double>(upload_us_) / 1000.0 / upload_count_
@@ -809,17 +809,17 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
             texture_height_ = frame.height;
             last_pts_ = frame.pts;
             // The upload reads width*height*4 bytes out of the player's pool
-            // slot. The first one is logged at once and afterwards one line a
-            // second at most, so yt.log's last lines name this step when the
+            // slot. The first one is logged at once and afterwards one line every
+            // 10 seconds at most, so yt.log's last lines name this step when the
             // run dies around it without logging every frame.
             const auto now = std::chrono::steady_clock::now();
-            if (now - last_upload_log_ >= std::chrono::seconds(1))
+            if (now - last_upload_log_ >= std::chrono::seconds(10))
             {
                 last_upload_log_ = now;
                 // Where the frame thread's time goes: the player's own work
                 // (read, decode, convert) and the texture upload.
                 yt::log::line(
-                    "ffmpeg: texture upload (%s) %dx%dx4 (%d in the last second, %.1f ms avg); "
+                    "ffmpeg: texture upload (%s) %dx%dx4 (%d in the last 10 seconds, %.1f ms avg); "
                     "player update %.1f ms avg, %.1f ms max over %d frames",
                     gfx::upload_method_name(uploader_.active_method()), frame.width, frame.height,
                     upload_count_,

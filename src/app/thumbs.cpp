@@ -8,8 +8,10 @@
 #include "gfx/gl_batch.hpp"
 #include "yt/http.hpp"
 #include "yt/image.hpp"
+#include "yt/log.hpp"
 
 #include <pthread.h>
+#include <sys/stat.h>
 
 #include <algorithm>
 #include <atomic>
@@ -37,8 +39,11 @@ constexpr std::uint64_t kRetryFrames = 600;
 constexpr std::uint64_t kStaleFrames = 120;
 // A thumbnail is small; refuse anything that looks like a video.
 constexpr std::size_t kMaxBytes = 2u << 20;
-// Pictures kept on disk; past this many, a slice of them is dropped.
-constexpr std::size_t kDiskFiles = 1500;
+// Pictures kept on disk: the app's storage is 256 MB in all (param.json
+// downloadDataSize), and a full disk keeps the settings from being saved.
+// Past either limit the oldest go, down to three quarters of it.
+constexpr std::size_t kDiskFiles = 800;
+constexpr long long kDiskBytes = 64ll << 20;
 
 // The file a picture is kept in: a hash of its address. A video picture on
 // i.ytimg.com is keyed without its query (the signature part can change
@@ -254,22 +259,60 @@ struct ThumbCache::Impl
     void keep_on_disk(const std::string &directory, const std::string &path,
                       const std::string &body)
     {
-        (void)hui::save::write_atomic(path, body);
-        bool prune = false;
+        const std::string failure = hui::save::write_atomic(path, body);
+        bool prune = !failure.empty(); // a full disk: make room now
         {
             std::lock_guard<std::mutex> lock(mutex);
-            prune = ++disk_writes % 100 == 0;
+            ++disk_writes;
+            // The first write of a run checks what earlier runs left.
+            prune = prune || disk_writes == 1 || disk_writes % 50 == 0;
         }
-        if (!prune)
+        if (prune)
+            prune_disk(directory);
+    }
+
+    // Oldest pictures first, until the cache is under both limits again.
+    static void prune_disk(const std::string &directory)
+    {
+        struct Entry
+        {
+            std::string path;
+            long long bytes;
+            long long when;
+        };
+        std::vector<Entry> entries;
+        long long total = 0;
+        for (const std::string &name : hui::save::list_files(directory))
+        {
+            const std::string path = directory + "/" + name;
+            struct stat info
+            {
+            };
+            if (::stat(path.c_str(), &info) != 0)
+                continue;
+            entries.push_back({path, static_cast<long long>(info.st_size),
+                               static_cast<long long>(info.st_mtime)});
+            total += static_cast<long long>(info.st_size);
+        }
+        if (entries.size() <= kDiskFiles && total <= kDiskBytes)
             return;
-        // Past the limit, a quarter goes (in listing order: arbitrary, which
-        // is fine for a cache of pictures).
-        const std::vector<std::string> names = hui::save::list_files(directory);
-        if (names.size() <= kDiskFiles)
-            return;
-        const std::size_t drop = names.size() - kDiskFiles + kDiskFiles / 4;
-        for (std::size_t i = 0; i < drop && i < names.size(); ++i)
-            std::remove((directory + "/" + names[i]).c_str());
+        std::sort(entries.begin(), entries.end(),
+                  [](const Entry &a, const Entry &b) { return a.when < b.when; });
+        std::size_t count = entries.size();
+        std::size_t removed = 0;
+        for (const Entry &entry : entries)
+        {
+            if (count <= kDiskFiles * 3 / 4 && total <= kDiskBytes * 3 / 4)
+                break;
+            if (std::remove(entry.path.c_str()) == 0)
+            {
+                total -= entry.bytes;
+                --count;
+                ++removed;
+            }
+        }
+        yt::log::line("thumbs: disk cache pruned %zu files, %lld KB left in %zu", removed,
+                      total >> 10, count);
     }
 
     static void *worker_entry(void *argument)

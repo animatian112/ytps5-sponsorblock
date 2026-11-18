@@ -27,6 +27,9 @@ namespace
 
 // A diagnosis file, not a data store: past this size the next open starts over.
 constexpr long kMaxBytes = 256 * 1024;
+// While the app runs: past this size the file moves to yt.log.1 (replacing
+// the one before) and a new one starts. The app's storage is 256 MB in all.
+constexpr long kRotateBytes = 2 * 1024 * 1024;
 // Lines kept in memory for the on-screen tail.
 constexpr std::size_t kRecent = 16;
 
@@ -39,6 +42,18 @@ std::mutex &mutex()
 std::FILE *&file()
 {
     static std::FILE *instance = nullptr;
+    return instance;
+}
+
+bool &stderr_captured()
+{
+    static bool instance = false;
+    return instance;
+}
+
+long &written()
+{
+    static long instance = 0;
     return instance;
 }
 
@@ -75,6 +90,7 @@ void open(const char *path)
         std::fclose(existing);
     }
     file() = std::fopen(path, size > kMaxBytes ? "w" : "a");
+    written() = size > kMaxBytes ? 0 : size;
     stored_path() = path;
 }
 
@@ -116,6 +132,7 @@ void capture_stderr()
     std::fflush(stderr);
     (void)dup2(fileno(file()), 2);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
+    stderr_captured() = true;
 }
 
 void close()
@@ -156,8 +173,20 @@ void line(const char *format, ...)
 
     if (file() == nullptr)
         return;
-    std::fprintf(file(), "[ytv] %s\n", text);
+    const int bytes = std::fprintf(file(), "[ytv] %s\n", text);
     std::fflush(file()); // a crash must not lose the last line
+    written() += bytes > 0 ? bytes : 0;
+    if (written() > kRotateBytes && !stored_path().empty())
+    {
+        std::fclose(file());
+        const std::string old = stored_path() + ".1";
+        std::remove(old.c_str());
+        std::rename(stored_path().c_str(), old.c_str());
+        file() = std::fopen(stored_path().c_str(), "w");
+        written() = 0;
+        if (file() != nullptr && stderr_captured())
+            (void)dup2(fileno(file()), 2); // stderr follows into the new file
+    }
 }
 
 void emergency(const char *text)

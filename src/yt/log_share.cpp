@@ -231,7 +231,7 @@ void *upload_entry(void *argument)
     const std::shared_ptr<LogShare::Upload> upload = *holder;
     std::string url;
     std::string errors;
-    for (const char *service : {"paste.rs", "litterbox", "dpaste.com", "0x0.st"})
+    for (const char *service : {"litterbox", "paste.rs", "0x0.st", "dpaste.com"})
     {
         std::string error;
         url = paste_to(service, upload->text, &error);

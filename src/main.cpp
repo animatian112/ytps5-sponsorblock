@@ -198,11 +198,11 @@ class RingSink final : public yt::AudioSink
     std::size_t write(const float *stereo, std::size_t frames) override
     {
         const std::size_t written = ring_.write(stereo, frames);
-        // The first batch at once, then one line a second at most: the ring's
+        // The first batch at once, then one line every 10 seconds at most: the ring's
         // write and read counts name where it stood when yt.log stops around a
         // crash, without logging every decoded batch.
         const std::int64_t now = hui::sys::monotonic_us();
-        if (now - last_ring_log_us_ >= 1000000)
+        if (now - last_ring_log_us_ >= 10000000)
         {
             last_ring_log_us_ = now;
             yt::log::line("ffmpeg: audio ring write=%llu read=%llu buffered=%zu",

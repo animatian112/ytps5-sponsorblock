@@ -1959,7 +1959,7 @@ void FfmpegPlayer::note_audio_silence(const char *reason)
 void FfmpegPlayer::note_buffer_acquire(int index, std::size_t size)
 {
     const auto now = std::chrono::steady_clock::now();
-    if (now - last_acquire_log_ < std::chrono::seconds(1))
+    if (now - last_acquire_log_ < std::chrono::seconds(10))
     {
         return;
     }
@@ -1971,7 +1971,7 @@ void FfmpegPlayer::note_buffer_acquire(int index, std::size_t size)
 void FfmpegPlayer::note_buffer_release(int index, std::size_t size)
 {
     const auto now = std::chrono::steady_clock::now();
-    if (now - last_release_log_ < std::chrono::seconds(1))
+    if (now - last_release_log_ < std::chrono::seconds(10))
     {
         return;
     }

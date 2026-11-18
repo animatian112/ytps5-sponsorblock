@@ -11,7 +11,9 @@
 #include "yt/log_share.hpp"
 #include "yt/types.hpp"
 
+#include <dirent.h>
 #include <pthread.h>
+#include <sys/stat.h>
 
 #include <algorithm>
 #include <chrono>
@@ -77,6 +79,64 @@ const char *codec_name(yt::Codec codec)
         return "opus";
     default:
         return "?";
+    }
+}
+
+// Bytes under a folder, and how many files.
+long long folder_bytes(const std::string &path, int *files, int depth = 0)
+{
+    long long total = 0;
+    DIR *dir = ::opendir(path.c_str());
+    if (dir == nullptr)
+        return 0;
+    while (const dirent *entry = ::readdir(dir))
+    {
+        const std::string name = entry->d_name;
+        if (name == "." || name == "..")
+            continue;
+        const std::string child = path + "/" + name;
+        struct stat info
+        {
+        };
+        if (::stat(child.c_str(), &info) != 0)
+            continue;
+        if (S_ISDIR(info.st_mode))
+        {
+            if (depth < 4)
+                total += folder_bytes(child, files, depth + 1);
+        }
+        else
+        {
+            total += static_cast<long long>(info.st_size);
+            ++*files;
+        }
+    }
+    ::closedir(dir);
+    return total;
+}
+
+std::string megabytes(long long bytes)
+{
+    char text[32];
+    std::snprintf(text, sizeof text, "%.1f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+    return text;
+}
+
+void check_storage(Diagnostics::State &state, const DiagInput &input)
+{
+    const char *section = "Storage";
+    // The app's storage is 256 MB in all (param.json downloadDataSize).
+    int files = 0;
+    const long long total = folder_bytes(input.data_root, &files);
+    add(state, total > (224ll << 20) ? DiagStatus::warn : DiagStatus::info, section, "App folder",
+        megabytes(total) + " in " + std::to_string(files) + " files, of 256 MB");
+    for (const char *child : {"thumbs", "dev", "backup", "feeds"})
+    {
+        int count = 0;
+        const long long bytes = folder_bytes(input.data_root + "/" + child, &count);
+        if (count > 0)
+            add(state, DiagStatus::info, section, child,
+                megabytes(bytes) + " in " + std::to_string(count) + " files");
     }
 }
 
@@ -315,6 +375,7 @@ void *main_entry(void *argument)
     yt::log::line("diag: start");
     const Clock::time_point start = Clock::now();
     check_console(state, input);
+    check_storage(state, input);
     check_network(state);
     check_youtube(state, input);
     add(state, DiagStatus::info, "Done", "Time", ms_text(start));
