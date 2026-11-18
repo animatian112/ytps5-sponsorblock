@@ -698,5 +698,6 @@ Scan to open the report on your phone, then share it.	Scan om het rapport op je 
 The report could not be uploaded:	Het rapport kon niet worden geüpload:
 It is in yt.log too.	Het staat ook in yt.log.
 Circle: close   Up/Down: scroll   Square: run again	Cirkel: sluiten   Omhoog/Omlaag: scrollen   Vierkant: opnieuw
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on a paste site, where anyone with the link can read it.	Scan de code met de camera van je telefoon: hij opent yt.log, klaar om op te slaan of te delen. Het logboek staat op een plaksite, waar iedereen met de link het kan lezen.
 )TSV"
 // clang-format on

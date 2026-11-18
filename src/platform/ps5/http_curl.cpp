@@ -11,6 +11,7 @@
 // Callers own the worker thread, never the frame.
 
 #include "yt/http.hpp"
+#include "yt/log.hpp"
 
 #include "console_curl.h"
 
@@ -209,13 +210,33 @@ Response perform(const Request &request)
                                static_cast<curl_off_t>(request.body.size()));
     }
 
-    const CURLcode code = curl_easy_perform(handle);
+    // curl's own words for a failure ("SSL certificate problem: ..."): the
+    // short code alone ("tls") cannot tell a certificate from a handshake.
+    char detail[CURL_ERROR_SIZE] = {};
+    (void)curl_easy_setopt(handle, CURLOPT_ERRORBUFFER, detail);
+    CURLcode code = curl_easy_perform(handle);
+    if (code == CURLE_SSL_CONNECT_ERROR)
+    {
+        // OpenSSL 3.5 opens with a post-quantum key share that makes the
+        // first packet large; a few servers and middleboxes drop it. Once
+        // more with the classic curves only.
+        yt::log::line("http: %s: tls handshake failed (%s); retrying with classic curves",
+                      request.url.c_str(), detail);
+        detail[0] = '\0';
+        response.body.clear();
+        (void)curl_easy_setopt(handle, CURLOPT_SSL_EC_CURVES, "X25519:P-256:P-384");
+        code = curl_easy_perform(handle);
+    }
+    (void)curl_easy_setopt(handle, CURLOPT_ERRORBUFFER, nullptr);
 
     long status = 0;
     (void)curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
     response.status = status;
     if (code != CURLE_OK)
+    {
         response.error = describe(code);
+        response.detail = detail;
+    }
 
     // The handle goes back to the pool: unhook the header list before freeing it.
     (void)curl_easy_setopt(handle, CURLOPT_HTTPHEADER, nullptr);

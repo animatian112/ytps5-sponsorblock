@@ -30,6 +30,8 @@ struct Response
     long status = 0;   // HTTP status, 0 when the request never completed
     std::string body;  // response body, truncated at max_bytes
     std::string error; // transport-level failure ("timeout", "connect", ...)
+    // The transport's own words for it ("SSL certificate problem: ..."), when it said any.
+    std::string detail;
 
     bool ok() const
     {

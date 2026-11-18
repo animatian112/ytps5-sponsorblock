@@ -698,5 +698,6 @@ Scan to open the report on your phone, then share it.	Inquadra per aprire il rap
 The report could not be uploaded:	Impossibile caricare il rapporto:
 It is in yt.log too.	È anche in yt.log.
 Circle: close   Up/Down: scroll   Square: run again	Cerchio: chiudi   Su/Giù: scorri   Quadrato: ripeti
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on a paste site, where anyone with the link can read it.	Inquadra il codice con la fotocamera del telefono: apre yt.log, pronto da salvare o condividere. Il log è su un sito di condivisione, dove chiunque abbia il link può leggerlo.
 )TSV"
 // clang-format on

@@ -705,5 +705,6 @@ Scan to open the report on your phone, then share it.	Отсканируйте, 
 The report could not be uploaded:	Не удалось загрузить отчёт:
 It is in yt.log too.	Он есть и в yt.log.
 Circle: close   Up/Down: scroll   Square: run again	Круг: закрыть   Вверх/вниз: прокрутка   Квадрат: повторить
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on a paste site, where anyone with the link can read it.	Отсканируйте код камерой телефона: откроется yt.log, его можно сохранить или отправить. Журнал лежит на сайте для вставок, его может прочитать любой, у кого есть ссылка.
 )TSV"
 // clang-format on

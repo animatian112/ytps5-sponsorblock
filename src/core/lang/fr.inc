@@ -700,5 +700,6 @@ Scan to open the report on your phone, then share it.	Scanne pour ouvrir le rapp
 The report could not be uploaded:	Le rapport n'a pas pu être envoyé :
 It is in yt.log too.	Il est aussi dans yt.log.
 Circle: close   Up/Down: scroll   Square: run again	Rond : fermer   Haut/Bas : défiler   Carré : relancer
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on a paste site, where anyone with the link can read it.	Scanne le code avec l'appareil photo du téléphone : il ouvre yt.log, prêt à enregistrer ou partager. Le journal est sur un site de partage, où toute personne ayant le lien peut le lire.
 )TSV"
 // clang-format on

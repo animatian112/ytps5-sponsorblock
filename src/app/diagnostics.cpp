@@ -4,6 +4,7 @@
 
 #include "app/diagnostics.hpp"
 
+#include "core/save_file.hpp"
 #include "yt/http.hpp"
 #include "yt/innertube.hpp"
 #include "yt/log.hpp"
@@ -98,67 +99,78 @@ void check_console(Diagnostics::State &state, const DiagInput &input)
                          : "could not get " + std::to_string(kMegabytes) + " MB");
     std::free(block);
 
-    // The app's folder: settings, accounts and the log live there.
+    // The app's folder: settings, accounts and the log live there. Written
+    // the way the settings are (open/write/rename), read back the same way.
     const std::string path = input.data_root + "/diag_test.tmp";
     const std::string sample = "diagnostics " + input.version;
-    bool written = false;
-    if (std::FILE *file = std::fopen(path.c_str(), "wb"))
-    {
-        written = std::fwrite(sample.data(), 1, sample.size(), file) == sample.size();
-        written = std::fclose(file) == 0 && written;
-    }
+    const std::string failure = save::write_atomic(path, sample);
     std::string back;
-    if (std::FILE *file = std::fopen(path.c_str(), "rb"))
-    {
-        char buffer[64] = {};
-        back.assign(buffer, std::fread(buffer, 1, sizeof buffer, file));
-        std::fclose(file);
-    }
+    const bool read = failure.empty() && save::read_file(path, &back, 4096);
     std::remove(path.c_str());
-    add(state, written && back == sample ? DiagStatus::ok : DiagStatus::fail, section, "App folder",
-        written ? (back == sample ? input.data_root + " writes and reads"
-                                  : input.data_root + " wrote, read back wrong")
-                : input.data_root + " cannot be written");
+    if (!failure.empty())
+        add(state, DiagStatus::fail, section, "App folder",
+            input.data_root + " cannot be written: " + failure);
+    else if (!read || back != sample)
+        add(state, DiagStatus::fail, section, "App folder",
+            input.data_root + " wrote, but read back " + (read ? "something else" : "nothing"));
+    else
+        add(state, DiagStatus::ok, section, "App folder", input.data_root + " writes and reads");
 }
 
 void check_network(Diagnostics::State &state)
 {
     const char *section = "Network";
-    static const char *const kTargets[][2] = {
-        {"Internet (plain HTTP)", "http://connectivitycheck.gstatic.com/generate_204"},
-        {"Google", "https://www.google.com/generate_204"},
-        {"YouTube", "https://www.youtube.com/generate_204"},
-        {"YouTube API", "https://youtubei.googleapis.com/generate_204"},
-        {"Google sign-in", "https://oauth2.googleapis.com/device/code"},
-        {"SponsorBlock", "https://sponsor.ajay.app/api/skipSegments?videoID=dQw4w9WgXcQ"},
-        {"DeArrow", "https://sponsor.ajay.app/api/branding?videoID=dQw4w9WgXcQ"},
-        {"Return YouTube Dislike", "https://returnyoutubedislikeapi.com/votes?videoId=dQw4w9WgXcQ"},
-        {"Updates (GitHub)", "https://api.github.com/repos/animatian112/ytps5-sponsorblock"},
-        {"dpaste.com (log sharing)", "https://dpaste.com/"},
-        {"paste.rs (log sharing)", "https://paste.rs/"},
-    };
-    for (const auto &target : kTargets)
+    struct Target
     {
-        std::string host = target[1];
+        const char *name;
+        const char *url;
+        long expected; // an answer that means "working" besides 2xx (0: none)
+    };
+    static const Target kTargets[] = {
+        {"Internet (plain HTTP)", "http://connectivitycheck.gstatic.com/generate_204", 0},
+        {"Google", "https://www.google.com/generate_204", 0},
+        {"YouTube", "https://www.youtube.com/generate_204", 0},
+        {"YouTube API", "https://youtubei.googleapis.com/generate_204", 0},
+        // Sign-in takes a POST: a GET answers 404 when the service is up.
+        {"Google sign-in", "https://oauth2.googleapis.com/device/code", 404},
+        // A video without segments answers 404.
+        {"SponsorBlock", "https://sponsor.ajay.app/api/skipSegments?videoID=dQw4w9WgXcQ", 404},
+        {"DeArrow", "https://sponsor.ajay.app/api/branding?videoID=dQw4w9WgXcQ", 0},
+        {"Return YouTube Dislike", "https://returnyoutubedislikeapi.com/votes?videoId=dQw4w9WgXcQ",
+         0},
+        {"Updates (GitHub)",
+         "https://api.github.com/repos/animatian112/ytps5-sponsorblock/releases/latest", 0},
+        {"dpaste.com (log sharing)", "https://dpaste.com/", 0},
+        {"paste.rs (log sharing)", "https://paste.rs/", 0},
+        {"litterbox (log sharing)", "https://litterbox.catbox.moe/", 0},
+        {"0x0.st (log sharing)", "https://0x0.st/", 0},
+    };
+    // GitHub refuses a request without a User-Agent (403).
+    const std::vector<yt::http::Header> headers = {{"User-Agent", "TubeBlock-PS5"},
+                                                   {"Accept", "*/*"}};
+    for (const Target &target : kTargets)
+    {
+        std::string host = target.url;
         host = host.substr(host.find("//") + 2);
         host = host.substr(0, host.find('/'));
         const Clock::time_point start = Clock::now();
-        const yt::http::Response response = yt::http::get(target[1], {}, 12);
-        // Any HTTP answer means the service was reached; 4xx/5xx are noted.
+        const yt::http::Response response = yt::http::get(target.url, headers, 12);
         DiagStatus status = DiagStatus::ok;
         std::string detail;
         if (!response.ok())
         {
             status = DiagStatus::fail;
-            detail = response.error + " - " + yt::http::describe_lookup(host);
+            detail = response.error +
+                     (response.detail.empty() ? std::string() : " (" + response.detail + ")") +
+                     " - " + yt::http::describe_lookup(host);
         }
         else
         {
-            if (response.status >= 400)
+            if (response.status >= 400 && response.status != target.expected)
                 status = DiagStatus::warn;
             detail = "HTTP " + std::to_string(response.status) + ", " + ms_text(start);
         }
-        add(state, status, section, target[0], detail);
+        add(state, status, section, target.name, detail);
     }
 
     // Whether the console lets the app listen (the log's local link).
@@ -186,10 +198,11 @@ std::string feed_detail(const yt::FeedPage &page, Clock::time_point start)
     return text;
 }
 
-void check_video(Diagnostics::State &state, yt::InnerTube &tube, const std::string &video_id)
+void check_video(Diagnostics::State &state, yt::InnerTube &tube, const std::string &video_id,
+                 const std::string &who)
 {
     const char *section = "YouTube";
-    const std::string label = " " + video_id;
+    const std::string label = " " + video_id + who;
     yt::VideoInfo info;
     Clock::time_point start = Clock::now();
     const bool played = tube.player(video_id, &info);
@@ -240,28 +253,53 @@ void check_video(Diagnostics::State &state, yt::InnerTube &tube, const std::stri
             (dated ? std::string() : " - neither has it; the card's age is used"));
 }
 
-void check_youtube(Diagnostics::State &state, const DiagInput &input)
+void check_feeds(Diagnostics::State &state, const DiagInput &input, const std::string &token)
 {
     const char *section = "YouTube";
+    const bool account = !token.empty();
+    const std::string who = account ? " (account)" : " (signed out)";
     yt::InnerTube tube;
     tube.set_timeout(15);
     tube.set_region(input.gl, input.hl);
+    tube.set_access_token(token);
 
     yt::FeedPage home;
     Clock::time_point start = Clock::now();
     tube.home(&home);
-    add(state, !home.items.empty() ? DiagStatus::ok : DiagStatus::fail, section,
-        "Home (signed out)", feed_detail(home, start));
+    add(state, !home.items.empty() ? DiagStatus::ok : DiagStatus::fail, section, "Home" + who,
+        feed_detail(home, start));
 
-    yt::FeedPage search;
-    start = Clock::now();
-    tube.search("music", &search);
-    add(state, !search.items.empty() ? DiagStatus::ok : DiagStatus::fail, section,
-        "Search \"music\"", feed_detail(search, start));
+    if (account)
+    {
+        yt::FeedPage subscriptions;
+        start = Clock::now();
+        tube.subscriptions(&subscriptions);
+        add(state, !subscriptions.items.empty() ? DiagStatus::ok : DiagStatus::warn, section,
+            "Subscriptions" + who, feed_detail(subscriptions, start));
+    }
+    else
+    {
+        yt::FeedPage search;
+        start = Clock::now();
+        tube.search("music", &search);
+        add(state, !search.items.empty() ? DiagStatus::ok : DiagStatus::fail, section,
+            "Search \"music\"" + who, feed_detail(search, start));
+    }
 
-    check_video(state, tube, kKnownVideo);
+    check_video(state, tube, kKnownVideo, who);
     if (!input.last_video.empty() && input.last_video != kKnownVideo)
-        check_video(state, tube, input.last_video);
+        check_video(state, tube, input.last_video, who);
+}
+
+void check_youtube(Diagnostics::State &state, const DiagInput &input)
+{
+    check_feeds(state, input, {});
+    // The signed-in path is the one the app uses for an account: its watch
+    // page is where a missing date would come from.
+    if (!input.access_token.empty())
+        check_feeds(state, input, input.access_token);
+    else if (input.signed_in)
+        add(state, DiagStatus::warn, "YouTube", "Account", "signed in, but no access token yet");
 }
 
 void *main_entry(void *argument)

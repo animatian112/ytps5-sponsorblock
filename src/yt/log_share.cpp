@@ -15,6 +15,7 @@
 #include <cstring>
 #include <mutex>
 #include <utility>
+#include <vector>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <random>
@@ -100,42 +101,127 @@ std::string trimmed_answer(std::string text)
 }
 
 // One paste service: the raw file's address, or "" with *error set.
+// Bytes that are not UTF-8 (a log cut mid-character, a stray binary
+// byte) become '?': some paste sites refuse the whole paste for one.
+std::string valid_utf8(const std::string &text)
+{
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size();)
+    {
+        const auto byte = static_cast<unsigned char>(text[i]);
+        std::size_t length = 0;
+        if (byte < 0x80)
+            length = 1;
+        else if (byte >= 0xc2 && byte <= 0xdf)
+            length = 2;
+        else if (byte >= 0xe0 && byte <= 0xef)
+            length = 3;
+        else if (byte >= 0xf0 && byte <= 0xf4)
+            length = 4;
+        bool good = length > 0 && i + length <= text.size();
+        for (std::size_t k = 1; good && k < length; ++k)
+            good = (static_cast<unsigned char>(text[i + k]) & 0xc0) == 0x80;
+        if (good && length == 1 && byte < 0x20 && byte != '\n' && byte != '\t' && byte != '\r')
+            good = false;
+        if (good)
+        {
+            out.append(text, i, length);
+            i += length;
+        }
+        else
+        {
+            out.push_back('?');
+            ++i;
+        }
+    }
+    return out;
+}
+
+// A multipart form: the fields, then the log as the file field.
+std::string multipart(const std::string &boundary,
+                      const std::vector<std::pair<std::string, std::string>> &fields,
+                      const std::string &file_field, const std::string &content)
+{
+    std::string body;
+    for (const auto &[name, value] : fields)
+    {
+        body += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + name +
+                "\"\r\n\r\n" + value + "\r\n";
+    }
+    body += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + file_field +
+            "\"; filename=\"yt.log.txt\"\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" +
+            content + "\r\n--" + boundary + "--\r\n";
+    return body;
+}
+
+// One paste service: the raw file's address, or "" with *error set.
 std::string paste_to(const char *service, const std::string &text, std::string *error)
 {
     http::Request request;
     request.method = "POST";
     request.headers = {{"User-Agent", "TubeBlock-PS5"}};
-    request.timeout_s = 30;
+    request.timeout_s = 40;
     request.max_bytes = 4096;
-    const bool dpaste = std::strcmp(service, "dpaste.com") == 0;
-    if (dpaste)
+    const std::string name = service;
+    const std::string boundary = "----TubeBlockLog7f3a9c";
+    std::string suffix;
+    if (name == "dpaste.com")
     {
         // dpaste takes 250,000 characters a paste.
         request.url = "https://dpaste.com/api/v2/";
-        request.headers.emplace_back("Content-Type", "application/x-www-form-urlencoded");
-        request.body = log_paste_form(trimmed_log(text, 240u << 10));
+        request.headers.push_back({"Content-Type", "application/x-www-form-urlencoded"});
+        request.body = log_paste_form(valid_utf8(trimmed_log(text, 240u << 10)));
+        suffix = ".txt"; // the raw paste
+    }
+    else if (name == "paste.rs")
+    {
+        // The body is the paste, the answer its address.
+        request.url = "https://paste.rs/";
+        request.headers.push_back({"Content-Type", "text/plain; charset=utf-8"});
+        request.body = valid_utf8(trimmed_log(text, 200u << 10));
+    }
+    else if (name == "litterbox")
+    {
+        // catbox's temporary files: kept 72 hours.
+        request.url = "https://litterbox.catbox.moe/resources/internals/api.php";
+        request.headers.push_back({"Content-Type", "multipart/form-data; boundary=" + boundary});
+        request.body = multipart(boundary, {{"reqtype", "fileupload"}, {"time", "72h"}},
+                                 "fileToUpload", valid_utf8(trimmed_log(text, kMaxPaste)));
     }
     else
     {
-        // paste.rs: the body is the paste, the answer its address.
-        request.url = "https://paste.rs/";
-        request.headers.emplace_back("Content-Type", "text/plain; charset=utf-8");
-        request.body = trimmed_log(text, kMaxPaste);
+        // 0x0.st: kept a week.
+        request.url = "https://0x0.st";
+        request.headers.push_back({"Content-Type", "multipart/form-data; boundary=" + boundary});
+        request.body = multipart(boundary, {{"expires", "168"}}, "file",
+                                 valid_utf8(trimmed_log(text, kMaxPaste)));
     }
     const http::Response response = http::perform(request);
     std::string url = trimmed_answer(response.body);
     if (!response.ok())
-        *error = std::string(service) + ": " + response.error;
+    {
+        *error = name + ": " + response.error +
+                 (response.detail.empty() ? std::string() : " (" + response.detail + ")");
+    }
     else if (!response.http_ok() || url.rfind("https://", 0) != 0)
-        *error = std::string(service) + " answered " + std::to_string(response.status);
+    {
+        // What the site said, shortened: why it refused.
+        std::string said = valid_utf8(url.substr(0, 60));
+        for (char &c : said)
+            c = c == '\n' || c == '\r' ? ' ' : c;
+        *error = name + " answered " + std::to_string(response.status) +
+                 (said.empty() ? std::string() : " (" + said + ")");
+    }
     else
+    {
         error->clear();
+    }
     log::line("logshare: %s -> %ld %s", service, response.status,
               error->empty() ? url.c_str() : error->c_str());
     if (!error->empty())
         return {};
-    // The raw log, which a phone saves or shares as it is.
-    return dpaste ? url + ".txt" : url;
+    return url + suffix;
 }
 
 void *upload_entry(void *argument)
@@ -145,7 +231,7 @@ void *upload_entry(void *argument)
     const std::shared_ptr<LogShare::Upload> upload = *holder;
     std::string url;
     std::string errors;
-    for (const char *service : {"dpaste.com", "paste.rs"})
+    for (const char *service : {"paste.rs", "litterbox", "dpaste.com", "0x0.st"})
     {
         std::string error;
         url = paste_to(service, upload->text, &error);

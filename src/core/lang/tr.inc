@@ -705,5 +705,6 @@ Scan to open the report on your phone, then share it.	Raporu telefonunda açmak 
 The report could not be uploaded:	Rapor yüklenemedi:
 It is in yt.log too.	yt.log'da da var.
 Circle: close   Up/Down: scroll   Square: run again	Daire: kapat   Yukarı/Aşağı: kaydır   Kare: tekrar
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on a paste site, where anyone with the link can read it.	Kodu telefonunun kamerasıyla tara: yt.log açılır, kaydetmeye ya da paylaşmaya hazır. Kayıt bir paylaşım sitesinde durur; bağlantıya sahip herkes okuyabilir.
 )TSV"
 // clang-format on

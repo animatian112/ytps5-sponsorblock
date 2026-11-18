@@ -257,6 +257,8 @@ class Service
     // The player the worker opened, if any. The caller takes ownership.
     std::unique_ptr<Player> take_player();
 
+    // The account's current access token ("" signed out), for diagnostics.
+    std::string access_token() const;
     bool signed_in() const;
     // A remembered account's token is on hand, whether or not its last
     // refresh worked (signed_in() says that).

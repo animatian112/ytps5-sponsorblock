@@ -268,6 +268,17 @@ struct Service::Impl
     std::string home_account;
     std::string last_error;
 
+    // The worker's access token, copied for Settings > Developer > Run
+    // diagnostics (its own InnerTube asks as the account does).
+    mutable std::mutex token_mutex;
+    std::string token_copy;
+    void set_token(const std::string &token)
+    {
+        tube.set_access_token(token);
+        const std::lock_guard<std::mutex> lock(token_mutex);
+        token_copy = token;
+    }
+
     // ---- worker-only ----
     std::string install_root;
     Auth auth;
@@ -701,7 +712,7 @@ struct Service::Impl
     void sign_out_locally()
     {
         auth.sign_out();
-        tube.set_access_token({});
+        set_token({});
         std::lock_guard<std::mutex> lock(mutex);
         signed_in = false;
         token_restored = false;
@@ -1353,13 +1364,13 @@ struct Service::Impl
             if (!auth.signed_in())
             {
                 signed_in = false;
-                tube.set_access_token({});
+                set_token({});
                 login.revision++;
                 reset_account_feeds();
             }
             return false;
         }
-        tube.set_access_token(auth.access_token());
+        set_token(auth.access_token());
         std::lock_guard<std::mutex> lock(mutex);
         signed_in = true;
         // A refresh may hand out a new refresh token: the remembered account
@@ -2237,7 +2248,7 @@ struct Service::Impl
                 continue;
             }
             if (poll == Poll::done)
-                tube.set_access_token(auth.access_token());
+                set_token(auth.access_token());
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 if (poll == Poll::done)
@@ -3471,6 +3482,12 @@ bool Service::has_token() const
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->auth.signed_in();
+}
+
+std::string Service::access_token() const
+{
+    const std::lock_guard<std::mutex> lock(impl_->token_mutex);
+    return impl_->token_copy;
 }
 
 bool Service::signed_in() const

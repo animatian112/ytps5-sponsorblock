@@ -1580,6 +1580,7 @@ void App::open_diagnostics()
     input.gl = preferences.gl;
     input.hl = preferences.hl;
     input.signed_in = service_.signed_in();
+    input.access_token = service_.access_token();
     const char *const kDecode[] = {"auto", "software", "hardware"};
     const int decode = static_cast<int>(settings_.decode_mode);
     input.settings = std::string("decode ") + (decode >= 0 && decode < 3 ? kDecode[decode] : "?") +
@@ -1642,7 +1643,7 @@ void App::draw_diagnostics(ui::Canvas &canvas) const
     const std::vector<DiagLine> lines = diagnostics_.lines();
     const float list_x = box.x + 50.0f;
     const float list_w = 1120.0f;
-    constexpr int kRows = 22;
+    constexpr int kRows = 21;
     const int last = std::max(0, static_cast<int>(lines.size()) - diag_scroll_);
     const int first = std::max(0, last - kRows);
     float y = box.y + 130.0f;
@@ -1725,13 +1726,13 @@ void App::draw_log_qr(ui::Canvas &canvas) const
     else if (!log_share_.running())
     {
         ui::paragraph(list, fonts_.regular,
-                      log_qr_url_.find("paste.rs") != std::string::npos
+                      log_qr_url_.find("dpaste.com") != std::string::npos
                           ? i18n::tr("Scan the code with your phone's camera: it opens yt.log, "
-                                     "ready to save or share. The log is on paste.rs, where "
-                                     "anyone with the link can read it.")
-                          : i18n::tr("Scan the code with your phone's camera: it opens yt.log, "
                                      "ready to save or share. The log is on dpaste.com and is "
-                                     "deleted after 7 days."),
+                                     "deleted after 7 days.")
+                          : i18n::tr("Scan the code with your phone's camera: it opens yt.log, "
+                                     "ready to save or share. The log is on a paste site, where "
+                                     "anyone with the link can read it."),
                       tx, box.y + 200.0f, 24.0f, width, 34.0f, gfx::Color::rgb(0xbbbbbb), 6);
         ui::paragraph(list, fonts_.mono, log_qr_url_, tx, box.y + 430.0f, 22.0f, width, 30.0f,
                       gfx::Color::rgb(0x3ea6ff), 2);
@@ -1959,6 +1960,8 @@ void App::update(const InputFrame &raw_input, float dt)
     feedback_.clear();
     gfx::set_screen_size(static_cast<float>(settings_.screen_size) / 100.0f);
     apply_language();
+    if (!context_.active_video.empty())
+        last_video_ = context_.active_video;
     const InputFrame &input = gate_input(raw_input, dt);
     clock_ += dt;
     context_.settings_changed = false;

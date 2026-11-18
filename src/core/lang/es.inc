@@ -697,5 +697,6 @@ Scan to open the report on your phone, then share it.	Escanea para abrir el info
 The report could not be uploaded:	No se pudo subir el informe:
 It is in yt.log too.	También está en yt.log.
 Circle: close   Up/Down: scroll   Square: run again	Círculo: cerrar   Arriba/Abajo: desplazar   Cuadrado: repetir
+Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on a paste site, where anyone with the link can read it.	Escanea el código con la cámara del teléfono: abre yt.log, listo para guardar o compartir. El registro está en un sitio de pegado, donde cualquiera con el enlace puede leerlo.
 )TSV"
 // clang-format on

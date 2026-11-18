@@ -44,8 +44,9 @@ struct DiagInput
     std::string gl; // the region YouTube is asked for
     std::string hl;
     bool signed_in = false;
-    std::string settings;   // a line of the settings that matter for playback
-    std::string last_video; // the video played last ("" for none)
+    std::string access_token; // the account's, so its own path is checked too
+    std::string settings;     // a line of the settings that matter for playback
+    std::string last_video;   // the video played last ("" for none)
 };
 
 class Diagnostics
