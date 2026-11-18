@@ -291,6 +291,7 @@ class App
     Frame frame_;
     std::string version_;
     bool quit_ = false;
+    bool settings_save_warned_ = false; // the toast once a run
     bool settings_changed_ = true;
     float save_delay_ = 0.0f;
     float clock_ = 0.0f;

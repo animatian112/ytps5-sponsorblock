@@ -3328,6 +3328,40 @@ bool InnerTube::home(FeedPage *page, const std::string &continuation)
         *page = FeedPage{};
     }
     const bool parsed = impl_->feed_call("browse", extra, target, page);
+    if (fresh && impl_->access_token.empty() && page->items.empty())
+    {
+        // YouTube gives a guest no Home at all now (a search box and "Try
+        // searching to get started"), on the web and the TV alike. Its own
+        // topic channels still answer: a row from each, as a Home.
+        static const char *const kGuestRows[][2] = {
+            {"UC-9-kyTW8ZkZNDHQJ6FgpwQ", "Music"}, {"UCOpNcN46UbXVtpKMrmU4Abg", "Gaming"},
+            {"UCYfdidRxbB8Qhf0Nx7ioOYw", "News"},  {"UCEgdi0XIXXZ-qJOFPf4JSKw", "Sports"},
+            {"UC4R8DWoMoI7CAwX8_LjQHig", "Live"},
+        };
+        FeedPage built;
+        for (const auto &row : kGuestRows)
+        {
+            FeedPage part;
+            if (!browse(row[0], &part))
+                continue;
+            int taken = 0;
+            for (FeedItem &item : part.items)
+            {
+                if (item.video_id.empty())
+                    continue;
+                item.shelf = row[1];
+                built.items.push_back(std::move(item));
+                if (++taken == 16)
+                    break;
+            }
+        }
+        log::line("innertube: guest home built from topics: %zu items", built.items.size());
+        if (!built.items.empty())
+        {
+            *page = std::move(built);
+            return true;
+        }
+    }
     if (!parsed)
         page->error = impl_->error;
     return parsed;

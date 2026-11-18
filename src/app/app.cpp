@@ -379,7 +379,28 @@ bool App::take_settings_changed()
 
 void App::save_settings()
 {
-    save::write_atomic(data_root_ + kSettingsFile, encode_settings(settings_));
+    save_delay_ = 0.0f;
+    const std::string path = data_root_ + kSettingsFile;
+    std::string failure = save::write_atomic(path, encode_settings(settings_));
+    if (failure.empty())
+        return;
+    // A full disk (the app gets 256 MB, most of it pictures): make room and
+    // try once more, so a change isn't lost at the next start or update.
+    yt::log::line("settings: not saved (%s); making room", failure.c_str());
+    if (thumbs_ != nullptr)
+        thumbs_->make_room();
+    failure = save::write_atomic(path, encode_settings(settings_));
+    if (failure.empty())
+    {
+        yt::log::line("settings: saved after making room");
+        return;
+    }
+    yt::log::line("settings: still not saved (%s)", failure.c_str());
+    if (!settings_save_warned_)
+    {
+        settings_save_warned_ = true;
+        toasts_.push(ui::StatusKind::danger, "Settings couldn't be saved", failure);
+    }
 }
 
 // ---- auto-update -----------------------------------------------------------
@@ -2250,7 +2271,11 @@ void App::update(const InputFrame &raw_input, float dt)
     if (ask.open_video && !ask.video_id.empty())
         last_video_ = ask.video_id;
     if (ask.quit)
+    {
         quit_ = true;
+        if (save_delay_ > 0.0f)
+            save_settings(); // a change made just before: kept
+    }
     if (ask.open_video && ask.video_id.size() == 24 && ask.video_id.rfind("UC", 0) == 0)
     {
         // A channel card: its channel page.
@@ -2459,7 +2484,11 @@ void App::update(const InputFrame &raw_input, float dt)
     {
         update_close_in_ -= dt;
         if (update_close_in_ <= 0.0f)
+        {
             quit_ = true;
+            if (save_delay_ > 0.0f)
+                save_settings(); // the update must not undo a change made just before
+        }
     }
 
     if (save_delay_ > 0.0f)

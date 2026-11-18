@@ -271,8 +271,9 @@ struct ThumbCache::Impl
             prune_disk(directory);
     }
 
-    // Oldest pictures first, until the cache is under both limits again.
-    static void prune_disk(const std::string &directory)
+    // Oldest pictures first, until the cache is under both limits again
+    // (half of them, with half: the disk was found full).
+    static void prune_disk(const std::string &directory, bool half = false)
     {
         struct Entry
         {
@@ -294,15 +295,17 @@ struct ThumbCache::Impl
                                static_cast<long long>(info.st_mtime)});
             total += static_cast<long long>(info.st_size);
         }
-        if (entries.size() <= kDiskFiles && total <= kDiskBytes)
+        if (!half && entries.size() <= kDiskFiles && total <= kDiskBytes)
             return;
+        const std::size_t keep_files = half ? entries.size() / 2 : kDiskFiles * 3 / 4;
+        const long long keep_bytes = half ? total / 2 : kDiskBytes * 3 / 4;
         std::sort(entries.begin(), entries.end(),
                   [](const Entry &a, const Entry &b) { return a.when < b.when; });
         std::size_t count = entries.size();
         std::size_t removed = 0;
         for (const Entry &entry : entries)
         {
-            if (count <= kDiskFiles * 3 / 4 && total <= kDiskBytes * 3 / 4)
+            if (count <= keep_files && total <= keep_bytes)
                 break;
             if (std::remove(entry.path.c_str()) == 0)
             {
@@ -393,6 +396,17 @@ void ThumbCache::set_disk_cache(const std::string &directory)
         return;
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->disk_dir = directory;
+}
+
+void ThumbCache::make_room()
+{
+    std::string directory;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        directory = impl_->disk_dir;
+    }
+    if (!directory.empty())
+        Impl::prune_disk(directory, true);
 }
 
 void ThumbCache::set_quiet(bool quiet)
