@@ -2031,6 +2031,24 @@ struct Service::Impl
                         video.subscribers = related_page.subscribers;
                         video.revision++;
                     }
+                    // The day it went up, when neither answer named one (the TV
+                    // client's watch page says "21y ago", its player nothing).
+                    bool absolute = false;
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        absolute = !video.info.publish_date.empty();
+                    }
+                    std::string iso;
+                    std::string day;
+                    if (!absolute && tube.upload_date(video_id, &iso, &day))
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        if (!iso.empty())
+                            video.info.publish_date = iso;
+                        else
+                            video.date_text = day;
+                        video.revision++;
+                    }
                     if (!related_page.chapters.empty())
                     {
                         std::lock_guard<std::mutex> lock(mutex);

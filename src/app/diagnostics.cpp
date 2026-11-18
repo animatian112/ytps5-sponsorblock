@@ -307,10 +307,15 @@ void check_video(Diagnostics::State &state, yt::InnerTube &tube, const std::stri
     tube.related(video_id, &page);
     add(state, page.error.empty() ? DiagStatus::ok : DiagStatus::fail, section,
         "Watch page" + label, feed_detail(page, start));
-    const bool dated = !info.publish_date.empty() || !page.date_text.empty();
-    add(state, dated ? DiagStatus::ok : DiagStatus::warn, section, "Upload date" + label,
-        "player '" + info.publish_date + "', watch page '" + page.date_text + "'" +
-            (dated ? std::string() : " - neither has it; the card's age is used"));
+    // What the player shows when neither has a day: the web client's.
+    std::string iso;
+    std::string day;
+    start = Clock::now();
+    const bool asked = tube.upload_date(video_id, &iso, &day);
+    add(state, !info.publish_date.empty() || asked ? DiagStatus::ok : DiagStatus::warn, section,
+        "Upload date" + label,
+        "player '" + info.publish_date + "', watch page '" + page.date_text + "', web '" +
+            (iso.empty() ? day : iso) + "', " + ms_text(start));
 }
 
 void check_feeds(Diagnostics::State &state, const DiagInput &input, const std::string &token)

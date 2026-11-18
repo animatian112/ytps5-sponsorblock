@@ -83,29 +83,21 @@ std::string upload_line(const yt::VideoView &view, const std::string &card_age)
             std::snprintf(text, sizeof(text), "%s %d, %d", month.c_str(), d, y);
         else
             std::snprintf(text, sizeof(text), "%d %s %d", d, month.c_str(), y);
-        std::string out = text;
         const long long now = static_cast<long long>(std::time(nullptr)) / 86400;
         const long long days = now - days_from_civil(y, m, d);
-        if (days >= 0 && now > 19000) // a console clock that was never set says nothing
+        // A week or newer: how long ago ("3 days ago"); older: the day itself
+        // ("Apr 23, 2005"). A console clock that was never set says nothing.
+        if (days >= 0 && days < 7 && now > 19000)
         {
-            // "%d days ago" and the rest are strings of the language tables.
-            const auto ago = [](long long n, const char *one, const char *many)
-            {
-                std::string line = i18n::tr(n == 1 ? one : many);
-                const std::size_t at = line.find("%d");
-                if (at != std::string::npos)
-                    line.replace(at, 2, std::to_string(n));
-                return line;
-            };
-            const std::string age =
-                days == 0    ? i18n::tr("today")
-                : days < 7   ? ago(days, "%d day ago", "%d days ago")
-                : days < 31  ? ago(days / 7, "%d week ago", "%d weeks ago")
-                : days < 365 ? ago(days / 30 > 0 ? days / 30 : 1, "%d month ago", "%d months ago")
-                             : ago(days / 365, "%d year ago", "%d years ago");
-            out += " (" + age + ")";
+            if (days == 0)
+                return i18n::tr("today");
+            std::string line = i18n::tr(days == 1 ? "%d day ago" : "%d days ago");
+            const std::size_t at = line.find("%d");
+            if (at != std::string::npos)
+                line.replace(at, 2, std::to_string(days));
+            return line;
         }
-        return out;
+        return text;
     }
     if (!view.date_text.empty())
         return view.date_text;

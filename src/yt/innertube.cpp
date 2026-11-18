@@ -4016,6 +4016,49 @@ bool InnerTube::channel_tab(const std::string &channel_id, const std::string &pa
     return parsed;
 }
 
+bool InnerTube::upload_date(const std::string &video_id, std::string *iso, std::string *text)
+{
+    iso->clear();
+    text->clear();
+    // The web player's answer carries the microformat ("2005-04-23") even
+    // when its streams are of no use; asked signed out, as any guest.
+    Impl::Attempt attempt =
+        impl_->post_once("player", field_string("videoId", video_id), kWebClient, true);
+    if (attempt.http_ok)
+    {
+        if (yyjson_doc *doc = yyjson_read(attempt.body.data(), attempt.body.size(), 0))
+        {
+            yyjson_val *micro =
+                yyjson_obj_get(yyjson_obj_get(yyjson_doc_get_root(doc), "microformat"),
+                               "playerMicroformatRenderer");
+            *iso = string_field(micro, "publishDate");
+            if (iso->empty())
+                *iso = string_field(micro, "uploadDate");
+            yyjson_doc_free(doc);
+        }
+    }
+    impl_->log_line("player", video_id + " upload date", attempt, iso->empty() ? 0 : 1);
+    if (!iso->empty())
+        return true;
+    // Else the signed-out web watch page's line, which names the day
+    // ("Apr 23, 2005") where the TV client's says "21y ago".
+    attempt = impl_->post_once("next", field_string("videoId", video_id), kWebClient, true);
+    if (attempt.http_ok)
+    {
+        FeedPage page;
+        parse_feed_page(attempt.body, &page);
+        bool year = false;
+        for (std::size_t i = 0; i + 4 <= page.date_text.size() && !year; ++i)
+            year = std::all_of(page.date_text.begin() + static_cast<std::ptrdiff_t>(i),
+                               page.date_text.begin() + static_cast<std::ptrdiff_t>(i + 4),
+                               [](char c) { return c >= '0' && c <= '9'; });
+        if (year)
+            *text = page.date_text;
+    }
+    impl_->log_line("next", video_id + " upload date", attempt, text->empty() ? 0 : 1);
+    return !text->empty();
+}
+
 bool InnerTube::live_chat_start(const std::string &video_id, std::string *continuation)
 {
     continuation->clear();

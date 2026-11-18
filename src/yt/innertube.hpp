@@ -73,6 +73,10 @@ class InnerTube
     bool player_variants(const std::string &video_id, std::vector<VideoInfo> *out,
                          std::string *error);
     bool related(const std::string &video_id, FeedPage *page);
+    // The day a video went up, asked of the signed-out web client: *iso from
+    // the player's microformat ("2005-04-23"), else *text from its watch page
+    // ("Apr 23, 2005"). False when neither names a day.
+    bool upload_date(const std::string &video_id, std::string *iso, std::string *text);
     // A channel page (browseId "UC..."): header (name, avatar, subscriber
     // line), the channel's tabs and the videos of the tab the response
     // answers with.
