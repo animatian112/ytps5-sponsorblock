@@ -4,6 +4,8 @@
 
 #include "app/subscriptions_screen.hpp"
 
+#include "yt/feed_age.hpp"
+
 #include "app/channel_groups.hpp"
 #include "app/glow.hpp"
 #include "app/theme.hpp"
@@ -104,7 +106,11 @@ void SubscriptionsScreen::refresh_groups()
 
 void SubscriptionsScreen::refresh_from_service()
 {
-    const yt::FeedView view = context_.service.feed(kind_);
+    yt::FeedView view = context_.service.feed(kind_);
+    // The TV client's Subscriptions opens with a "Most relevant" row: the
+    // newest uploads first instead, each once.
+    if (kind_ == yt::FeedKind::subscriptions)
+        yt::sort_newest_first(&view.items);
     if (kind_ == yt::FeedKind::library)
     {
         // Watch later and Liked videos first, then the account's playlists.

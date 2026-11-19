@@ -1911,8 +1911,29 @@ void App::draw_picker(ui::Canvas &canvas) const
              gfx::Align::center);
 }
 
+// How far the screen saver has come in: 0 off .. 1 fully on.
+float App::screen_saver_level() const
+{
+    if (settings_.dim_minutes <= 0)
+        return 0.0f;
+    // A video that plays (or loads) keeps the screen as it is.
+    const int state = context_.remote.state;
+    if (current_ == kPlayerScreen && (state == 1 || state == 3))
+        return 0.0f;
+    const float limit = static_cast<float>(settings_.dim_minutes) * 60.0f;
+    return std::clamp((idle_s_ - limit) / 2.0f, 0.0f, 1.0f);
+}
+
 const InputFrame &App::gate_input(const InputFrame &input, float dt)
 {
+    // The press that wakes the screen saver only wakes it.
+    if (screen_saver_level() > 0.0f && (input.nav != Direction::none || input.pressed != 0))
+    {
+        idle_s_ = 0.0f;
+        locked_input_ = InputFrame{};
+        locked_input_.connected = input.connected;
+        return locked_input_;
+    }
     // Touchpad held + Options: the log's QR code, from anywhere.
     if (!log_qr_open_ && input.is_held(Action::touch) && input.is_pressed(Action::menu))
     {
@@ -2717,14 +2738,34 @@ void App::draw_chrome(Frame &frame)
                                 gfx::Color::rgb(0xffffff));
     }
     // Settings > General > Screen dimming: nothing pressed for a while (and
-    // no video playing) darkens the screen until the next press.
-    if (settings_.dim_minutes > 0 && current_ != kPlayerScreen)
+    // no video playing: a paused or finished one counts as idle) darkens the
+    // screen until the next press, or with Screen saver > Black (for OLED)
+    // turns it black but for a small clock that moves every minute.
+    if (screen_saver_level() > 0.0f)
     {
-        const float limit = static_cast<float>(settings_.dim_minutes) * 60.0f;
-        const float dim = std::clamp((idle_s_ - limit) / 2.0f, 0.0f, 1.0f) * 0.8f;
-        if (dim > 0.0f)
-            overlay.list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
-                                      gfx::Color::rgb(0x000000, dim));
+        const float level = screen_saver_level();
+        const bool black = settings_.dim_style == 1;
+        overlay.list.rounded_rect({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight}, 0.0f,
+                                  gfx::Color::rgb(0x000000, level * (black ? 1.0f : 0.8f)));
+        int hour = 0;
+        int minute = 0;
+        bool twelve = true;
+        if (black && level >= 1.0f && sys::local_clock(&hour, &minute, &twelve))
+        {
+            char text[16];
+            if (settings_.time_24h)
+                std::snprintf(text, sizeof(text), "%02d:%02d", hour, minute);
+            else
+                std::snprintf(text, sizeof(text), "%d:%02d", hour % 12 == 0 ? 12 : hour % 12,
+                              minute);
+            // A new spot each minute, spread over the screen (a fixed mix of
+            // the minute and hour), so no pixel stays lit.
+            const unsigned seed = static_cast<unsigned>(hour * 60 + minute) * 2654435761u;
+            const float x = 200.0f + static_cast<float>(seed % 1521u);
+            const float y = 160.0f + static_cast<float>((seed / 1521u) % 801u);
+            ui::text(overlay.list, fonts_.semibold, text, x, y, 44.0f, gfx::Color::rgb(0x6a6a6a),
+                     gfx::Align::center);
+        }
     }
     toasts_.set_bounds({0.0f, 0.0f, gfx::kVirtualWidth, gfx::kVirtualHeight});
     updates_.draw(overlay);

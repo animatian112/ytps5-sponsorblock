@@ -198,6 +198,7 @@ class App
     // Settings > General > Language, as applied (-1: not yet).
     int language_applied_ = -1;
     void apply_language();
+    float screen_saver_level() const;
     // Settings > Developer > Run diagnostics: the pass, its report's QR code.
     Diagnostics diagnostics_;
     yt::LogShare diag_share_;

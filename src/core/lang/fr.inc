@@ -701,5 +701,10 @@ The report could not be uploaded:	Le rapport n'a pas pu être envoyé :
 It is in yt.log too.	Il est aussi dans yt.log.
 Circle: close   Up/Down: scroll   Square: run again	Rond : fermer   Haut/Bas : défiler   Carré : relancer
 Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on a paste site, where anyone with the link can read it.	Scanne le code avec l'appareil photo du téléphone : il ouvre yt.log, prêt à enregistrer ou partager. Le journal est sur un site de partage, où toute personne ayant le lien peut le lire.
+Darken the screen when nothing happens (not while a video plays; a paused one counts as nothing happening)	Assombrit l'écran quand rien ne se passe (pas pendant une vidéo ; une vidéo en pause compte comme rien)
+Screen saver	Économiseur d'écran
+Dim	Assombrir
+Black (OLED)	Noir (OLED)
+Black turns the screen off but for a small clock that moves every minute, so nothing stays on an OLED panel	Noir éteint l'écran sauf une petite horloge qui bouge chaque minute, pour que rien ne reste affiché sur un écran OLED
 )TSV"
 // clang-format on

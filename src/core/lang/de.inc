@@ -699,5 +699,10 @@ The report could not be uploaded:	Der Bericht konnte nicht hochgeladen werden:
 It is in yt.log too.	Er steht auch in yt.log.
 Circle: close   Up/Down: scroll   Square: run again	Kreis: schließen   Oben/Unten: blättern   Quadrat: erneut
 Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on a paste site, where anyone with the link can read it.	Scanne den Code mit der Handykamera: Er öffnet yt.log, fertig zum Speichern oder Teilen. Das Protokoll liegt auf einer Paste-Seite, wo jeder mit dem Link es lesen kann.
+Darken the screen when nothing happens (not while a video plays; a paused one counts as nothing happening)	Bildschirm abdunkeln, wenn nichts passiert (nicht während ein Video läuft; ein pausiertes zählt als nichts)
+Screen saver	Bildschirmschoner
+Dim	Abdunkeln
+Black (OLED)	Schwarz (OLED)
+Black turns the screen off but for a small clock that moves every minute, so nothing stays on an OLED panel	Schwarz schaltet den Bildschirm aus bis auf eine kleine Uhr, die jede Minute wandert, damit auf einem OLED nichts stehen bleibt
 )TSV"
 // clang-format on

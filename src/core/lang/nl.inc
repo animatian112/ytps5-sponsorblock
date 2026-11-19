@@ -699,5 +699,10 @@ The report could not be uploaded:	Het rapport kon niet worden geüpload:
 It is in yt.log too.	Het staat ook in yt.log.
 Circle: close   Up/Down: scroll   Square: run again	Cirkel: sluiten   Omhoog/Omlaag: scrollen   Vierkant: opnieuw
 Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on a paste site, where anyone with the link can read it.	Scan de code met de camera van je telefoon: hij opent yt.log, klaar om op te slaan of te delen. Het logboek staat op een plaksite, waar iedereen met de link het kan lezen.
+Darken the screen when nothing happens (not while a video plays; a paused one counts as nothing happening)	Dimt het scherm als er niets gebeurt (niet tijdens een video; een gepauzeerde telt als niets)
+Screen saver	Schermbeveiliging
+Dim	Dimmen
+Black (OLED)	Zwart (OLED)
+Black turns the screen off but for a small clock that moves every minute, so nothing stays on an OLED panel	Zwart zet het scherm uit op een klein klokje na dat elke minuut verplaatst, zodat er niets op een OLED-scherm blijft staan
 )TSV"
 // clang-format on

@@ -701,5 +701,10 @@ The report could not be uploaded:	Nie udało się przesłać raportu:
 It is in yt.log too.	Jest też w yt.log.
 Circle: close   Up/Down: scroll   Square: run again	Kółko: zamknij   Góra/Dół: przewiń   Kwadrat: powtórz
 Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on a paste site, where anyone with the link can read it.	Zeskanuj kod aparatem telefonu: otworzy się yt.log, gotowy do zapisania lub udostępnienia. Dziennik jest na stronie z wklejkami, gdzie każdy z linkiem może go przeczytać.
+Darken the screen when nothing happens (not while a video plays; a paused one counts as nothing happening)	Przyciemnia ekran, gdy nic się nie dzieje (nie podczas filmu; wstrzymany liczy się jako nic)
+Screen saver	Wygaszacz ekranu
+Dim	Przyciemnij
+Black (OLED)	Czarny (OLED)
+Black turns the screen off but for a small clock that moves every minute, so nothing stays on an OLED panel	Czarny wyłącza ekran poza małym zegarem, który co minutę zmienia miejsce, by nic nie wypalało się na OLED
 )TSV"
 // clang-format on

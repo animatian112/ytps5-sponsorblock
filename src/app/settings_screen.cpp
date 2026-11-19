@@ -443,7 +443,11 @@ SettingsScreen::SettingsScreen(Context &context) : context_(context)
              "Off pauses history: YouTube is not told what you watch");
     add_steps(general, "Screen dimming", &S::dim_minutes, {0, 1, 3, 5, 10, 30},
               {"Never", "1 min", "3 min", "5 min", "10 min", "30 min"},
-              "Darken the screen when nothing happens (not while a video plays)");
+              "Darken the screen when nothing happens (not while a video plays; a paused one "
+              "counts as nothing happening)");
+    add_steps(general, "Screen saver", &S::dim_style, {0, 1}, {"Dim", "Black (OLED)"},
+              "Black turns the screen off but for a small clock that moves every minute, so "
+              "nothing stays on an OLED panel");
     general.add_toggle(kHaptics, "Haptics", context_.settings.haptics).description =
         "Rumble on clicks and drags";
     general.add_action(kShareLog, "Send the log to your phone").description =

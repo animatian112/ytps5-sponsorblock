@@ -706,5 +706,10 @@ The report could not be uploaded:	Не удалось загрузить отч�
 It is in yt.log too.	Он есть и в yt.log.
 Circle: close   Up/Down: scroll   Square: run again	Круг: закрыть   Вверх/вниз: прокрутка   Квадрат: повторить
 Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on a paste site, where anyone with the link can read it.	Отсканируйте код камерой телефона: откроется yt.log, его можно сохранить или отправить. Журнал лежит на сайте для вставок, его может прочитать любой, у кого есть ссылка.
+Darken the screen when nothing happens (not while a video plays; a paused one counts as nothing happening)	Затемнять экран, когда ничего не происходит (не во время видео; видео на паузе считается за «ничего»)
+Screen saver	Заставка
+Dim	Затемнение
+Black (OLED)	Чёрный (OLED)
+Black turns the screen off but for a small clock that moves every minute, so nothing stays on an OLED panel	Чёрный выключает экран, оставляя маленькие часы, которые каждую минуту переходят на новое место, чтобы на OLED ничего не выгорало
 )TSV"
 // clang-format on

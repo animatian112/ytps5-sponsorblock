@@ -128,6 +128,8 @@ struct Settings
     bool history_enabled = true; // tell YouTube what was watched
     bool time_24h = false;
     int dim_minutes = 0; // dim the screen after this idle time (0: never)
+    // 0 darkens it; 1 (OLED) turns it black, a small clock moving about.
+    int dim_style = 0;
     // User interface
     bool corner_clock = true; // the clock top right of the sections
     int title_lines = 2;      // card title lines, 1..3

@@ -49,6 +49,7 @@ src/yt/image.cpp
 src/yt/innertube.cpp
 src/yt/live_chat.cpp
 src/yt/qr.cpp
+src/yt/feed_age.cpp
 src/yt/log.cpp
 src/yt/log_share.cpp
 src/yt/service.cpp

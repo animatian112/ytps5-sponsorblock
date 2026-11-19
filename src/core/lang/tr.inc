@@ -706,5 +706,10 @@ The report could not be uploaded:	Rapor yüklenemedi:
 It is in yt.log too.	yt.log'da da var.
 Circle: close   Up/Down: scroll   Square: run again	Daire: kapat   Yukarı/Aşağı: kaydır   Kare: tekrar
 Scan the code with your phone's camera: it opens yt.log, ready to save or share. The log is on a paste site, where anyone with the link can read it.	Kodu telefonunun kamerasıyla tara: yt.log açılır, kaydetmeye ya da paylaşmaya hazır. Kayıt bir paylaşım sitesinde durur; bağlantıya sahip herkes okuyabilir.
+Darken the screen when nothing happens (not while a video plays; a paused one counts as nothing happening)	Bir şey olmadığında ekranı karartır (video oynarken değil; duraklatılmış video bir şey olmamış sayılır)
+Screen saver	Ekran koruyucu
+Dim	Karart
+Black (OLED)	Siyah (OLED)
+Black turns the screen off but for a small clock that moves every minute, so nothing stays on an OLED panel	Siyah, her dakika yer değiştiren küçük bir saat dışında ekranı kapatır; OLED ekranda hiçbir şey sabit kalmaz
 )TSV"
 // clang-format on
