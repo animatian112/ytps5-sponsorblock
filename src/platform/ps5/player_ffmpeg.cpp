@@ -92,6 +92,10 @@ constexpr int kMaxOutputWidth = 1920;
 constexpr int kConvertThreads = 4;
 constexpr int kMaxOutputHeight = 1080;
 constexpr int kVideoPacketsPerUpdate = 4;
+// The hardware path's steps are cheap (a read, a hand-over to the decoder
+// thread, a buffer swap): more of them a frame, so a 4K60 superframe stream
+// and the catch-up after a seek keep the decoder fed.
+constexpr int kHardwarePacketsPerUpdate = 8;
 constexpr int kAudioPacketsPerUpdate = 8;
 // Stop feeding the sink once it holds half a second; keeps latency low.
 // One second: a slow frame (a heavy stream, a busy screen) must not empty
@@ -619,6 +623,12 @@ class HardwareWorker
                 event.waiting = static_cast<int>(shown_pts_.size());
                 if (hidden_out)
                     decoded.picture.address = nullptr;
+                // A unit meant to show a picture that failed gives none: its
+                // time leaves the queue too, or every picture after it would
+                // carry the time of the one before.
+                if (!decoded.ok && packet_shows && !shown_pts_.empty() &&
+                    shown_pts_.back() == packet_pts)
+                    shown_pts_.pop_back();
                 if (decoded.ok && decoded.picture.address != nullptr)
                 {
                     if (!shown_pts_.empty())
@@ -628,6 +638,13 @@ class HardwareWorker
                     }
                     else
                         decoded.pts = decoded.picture.tag;
+                    // A picture with no time at all cannot be placed: shown at
+                    // once it would be an extra frame out of step.
+                    if (decoded.pts == AV_NOPTS_VALUE)
+                    {
+                        decoded.picture.address = nullptr;
+                        hidden_out = true;
+                    }
                 }
                 event.given = decoded.pts;
                 events_[event_next_] = event;
@@ -1254,12 +1271,13 @@ class FfmpegPlayer final : public Player
     AVFrame *hardware_frame_ = nullptr; // wraps the decoder's picture for the converter
     int hardware_failures_ = 0;
     std::uint64_t hardware_pictures_ = 0;
-    int hardware_restarts_ = 0;      // decoder restarts after failures, this video
-    int hardware_order_dumps_ = 0;   // out-of-order reports logged, this video
-    int hardware_missing_ = 0;       // frames skipped between pictures (diagnostics)
-    int hardware_out_of_order_ = 0;  // pictures earlier than the one before
-    int hardware_queue_empty_ = 0;   // presents that found no picture queued (5-second line)
-    bool hardware_wait_key_ = false; // after a seek: packets until a keyframe are skipped
+    int hardware_restarts_ = 0;             // decoder restarts after failures, this video
+    int hardware_order_dumps_ = 0;          // out-of-order reports logged, this video
+    int hardware_missing_ = 0;              // frames skipped between pictures (diagnostics)
+    int hardware_out_of_order_ = 0;         // pictures earlier than the one before
+    int hardware_out_of_order_dropped_ = 0; // ... of them left out (diagnostics)
+    int hardware_queue_empty_ = 0;          // presents that found no picture queued (5-second line)
+    bool hardware_wait_key_ = false;        // after a seek: packets until a keyframe are skipped
     int hardware_skipped_to_key_ = 0;
     std::chrono::steady_clock::time_point hardware_log_{};
 
@@ -1763,7 +1781,7 @@ void FfmpegPlayer::update()
     update_deadline_us_.store(start_us + kUpdateBudgetUs);
     if (!paused_)
     {
-        pump_video(kVideoPacketsPerUpdate);
+        pump_video(hardware_active_ ? kHardwarePacketsPerUpdate : kVideoPacketsPerUpdate);
         if (audio_active_)
         {
             pump_audio(kAudioPacketsPerUpdate);
@@ -2134,6 +2152,13 @@ void FfmpegPlayer::pump_video_hardware(int budget)
                 if (!picture.ok)
                 {
                     log::line("ffmpeg: hardware decode failed: %s", picture.error.c_str());
+                    // 0x811d0300 / 0x811d0303: the decoder's reference state
+                    // is broken (after a lost packet); waiting for two more
+                    // failures only shows two more broken frames.
+                    const bool fatal = picture.error.find("0x811d0300") != std::string::npos ||
+                                       picture.error.find("0x811d0303") != std::string::npos;
+                    if (fatal && hardware_pictures_ > 0)
+                        hardware_failures_ = 2;
                     if (++hardware_failures_ >= 3 || hardware_pictures_ == 0)
                     {
                         // Above 1080p software cannot keep up: the decoder
@@ -2214,7 +2239,15 @@ void FfmpegPlayer::pump_video_hardware(int budget)
                 hardware_skipped_to_key_ = 0;
             }
             if (ours)
-                av_bsf_send_packet(hardware_bsf_, video_.packet); // takes the packet
+            {
+                // The filter is empty here (receive said EAGAIN), so it takes
+                // the packet; anything else would leave a frame's references
+                // out until the next keyframe, so it is logged.
+                const int sent = av_bsf_send_packet(hardware_bsf_, video_.packet);
+                if (sent < 0)
+                    log::line("ffmpeg: superframe filter refused a packet: %s",
+                              av_error(sent).c_str());
+            }
             av_packet_unref(video_.packet);
             ++work;
             continue;
@@ -2268,6 +2301,16 @@ void FfmpegPlayer::queue_hardware_picture(HardwareWorker::Picture &picture)
                 log::line("ffmpeg: picture at %.3f after %.3f; the last decodes:", pts,
                           last_video_pts_);
                 hardware_worker_->log_recent(av_q2d(video_.stream->time_base));
+            }
+            // A picture a little behind the one on screen is late: shown now
+            // it would jump back a frame and then forward again (judder).
+            // A big step back is a new start (a loop, a restarted stream)
+            // and is shown.
+            if (gap > -1.0)
+            {
+                ++hardware_out_of_order_dropped_;
+                hardware_worker_->recycle(std::move(picture.bytes), picture.size);
+                return;
             }
         }
         else if (gap > step * 1.5 && gap < 2.0)
@@ -2351,14 +2394,15 @@ void FfmpegPlayer::queue_hardware_picture(HardwareWorker::Picture &picture)
         log::line("ffmpeg: hardware %llu pictures; last 5 s: %d decodes %.1f ms avg %.1f max, "
                   "%d converts %.1f ms avg %.1f max, ahead-full %d, queue empty %d times; "
                   "no picture %d (hidden %d), flagged %d, several %d, missing %d, out of "
-                  "order %d",
+                  "order %d (%d left out)",
                   static_cast<unsigned long long>(hardware_pictures_), t.decodes,
                   t.decodes > 0 ? static_cast<double>(t.decode_us) / 1000.0 / t.decodes : 0.0,
                   static_cast<double>(t.decode_max_us) / 1000.0, t.converts,
                   t.converts > 0 ? static_cast<double>(t.convert_us) / 1000.0 / t.converts : 0.0,
                   static_cast<double>(t.convert_max_us) / 1000.0, t.waits_for_room,
                   hardware_queue_empty_, t.no_picture, t.hidden_dropped, t.flagged, t.several,
-                  hardware_missing_, hardware_out_of_order_);
+                  hardware_missing_, hardware_out_of_order_, hardware_out_of_order_dropped_);
+        hardware_out_of_order_dropped_ = 0;
         hardware_queue_empty_ = 0;
         hardware_missing_ = 0;
         hardware_out_of_order_ = 0;
