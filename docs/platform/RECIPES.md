@@ -43,6 +43,33 @@ mix it with batch reads in the same frame, because both enter the same read
 path. Platform pad structures are ABI declarations, so take them from a
 reviewed public header or use SDL instead of recreating layouts from memory.
 
+### Media remotes
+
+A media remote is a pad of its own, and the console does not say which port it
+is on. Three are candidates: the remote-control port (the PS4 SDK's
+`REMOTE_CONTROL`, 16) of the signed-in user and of the system user `0xff`, and
+the "special" port (2) of the signed-in user, where a Bluetooth remote can
+arrive instead. Open every one of them and read whichever answer — stopping at
+the first port that opens lets a port that opens and then never speaks hide the
+real one. If `scePadOpen` answers `0x80920004` the port is already open
+elsewhere; `scePadGetHandle` borrows that handle, and a borrowed handle is not
+yours to close.
+
+The rule above still holds, per handle: use exactly one read method on a handle
+per frame. The remote-control ports queue samples, so drain them with
+`scePadRead`; the special port queues nothing at all and answers only
+`scePadReadState`, which is the only reason it is readable. The controller's
+own handle stays on batch reads.
+
+A remote's keys are not in the button word. Its d-pad and the face buttons it
+mimics are, but OK, back, play/pause and the transport keys each arrive
+as a key code in one byte of the sample, at offset `0x6c` — the offset PS5-SDL's
+remote backend reads (`src/video/ps5/SDL_ps5remote.c`), which is also where the
+code table comes from. A sample may carry the intercepted bit while the app is
+in front; treat it as the system's only when `sceSystemServiceGetStatus` says
+the system has the screen, and treat a failed call as "the app has it" — the
+other way round silently swallows every remote key.
+
 ## Networking and TLS
 
 For sockets, include the public SDK's standard networking headers and follow the
