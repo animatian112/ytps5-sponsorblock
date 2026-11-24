@@ -29,6 +29,10 @@ ps5-homebrew-ui exists thanks to the maintainers and contributors of:
   thumbnails.
 - Inigo Quilez, whose published signed-distance functions the shape shader
   follows (rounded box, triangle, star and arc).
+- [SDL](https://github.com/ps5-payload-dev/SDL) (zlib), whose PS5 remote backend
+  documents the media remote's key codes and the pad ports they arrive on, and
+  [Jelly5](https://github.com/02dnot/Jelly5) (GPL-3.0), whose pull request #58
+  worked out that those keys arrive as a key code and not as button bits.
 
 The rendering kit, the sound mixer and the sound effects come from
 [ProsperoPuzzles](https://github.com/blackbearreloaded/ProsperoPuzzles) and

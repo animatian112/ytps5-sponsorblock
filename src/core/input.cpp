@@ -39,6 +39,37 @@ float axis(std::uint8_t value)
 
 } // namespace
 
+std::uint32_t remote_key_bits(std::uint8_t key)
+{
+    // The codes a media remote sends in sample byte 0x6c, as PS5-SDL reads
+    // them (src/video/ps5/SDL_ps5remote.c, remote_key_map). Its d-pad is not
+    // here: that arrives in the button word like a controller's.
+    switch (key)
+    {
+    case 13: // OK
+        return pad_bits::kCross;
+    case 15: // back
+        return pad_bits::kCircle;
+    case 22: // play
+    case 26: // pause
+    case 45: // play/pause
+        return pad_bits::kPlayPause;
+    case 23: // rewind
+        // L1/R1, not the triggers: those only jump chapters, and only when an
+        // off-by-default setting is on.
+        return pad_bits::kL1;
+    case 24: // fast forward
+        return pad_bits::kR1;
+    default:
+        return 0;
+    }
+}
+
+bool remote_input_is_ours(std::uint32_t raw_buttons, bool system_has_screen)
+{
+    return (raw_buttons & pad_bits::kIntercepted) == 0 || !system_has_screen;
+}
+
 std::uint32_t InputTracker::map_buttons(const PadSample &sample, bool swap_confirm)
 {
     const std::uint32_t b = sample.buttons;
@@ -64,6 +95,7 @@ std::uint32_t InputTracker::map_buttons(const PadSample &sample, bool swap_confi
     map(pad_bits::kTouchpad, Action::touch);
     map(pad_bits::kL3, Action::l3);
     map(pad_bits::kR3, Action::r3);
+    map(pad_bits::kPlayPause, Action::play_pause);
     if (sample.l2 >= kTriggerThreshold)
         actions |= action_bit(Action::jump_prev);
     if (sample.r2 >= kTriggerThreshold)
