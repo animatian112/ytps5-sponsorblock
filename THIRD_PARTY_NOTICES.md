@@ -46,15 +46,18 @@ project adds.
 | Google Sans Flex Regular, Medium, Bold | `third_party/fonts/GoogleSansFlex-*.ttf` | (c) 2015 Google LLC | SIL Open Font License 1.1 (`GoogleSansFlex-LICENSE.txt`) |
 | Inter Regular, Medium, SemiBold (Cyrillic and Greek letters baked into the Google Sans faces; outlines converted to TrueType quadratics with fontTools) | `third_party/fonts/Inter-*.ttf` | (c) 2016-2023 The Inter Project Authors | SIL Open Font License 1.1 (`Inter-LICENSE.txt`) |
 | DejaVu Sans Mono | `third_party/fonts/DejaVuSansMono.ttf` | (c) 2003 Bitstream, Inc.; DejaVu changes are public domain | Bitstream Vera licence (`DejaVu-LICENSE.txt`) |
+| DejaVu Sans 2.37 (cut down to the Arabic and Hebrew blocks and the Arabic presentation forms with fontTools by `tools/subset-arabic-font.py`) | `third_party/fonts/DejaVuSans-Arabic-Subset.ttf` | (c) 2003 Bitstream, Inc.; DejaVu changes are public domain | Bitstream Vera licence (`DejaVu-LICENSE.txt`) |
 | Noto Sans CJK SC Regular (cut down to about 13,000 characters and converted to TrueType quadratics with fontTools by `tools/subset-cjk-font.py`) | `third_party/fonts/NotoSansCJKsc-Regular-Subset.ttf` | (c) 2014-2021 Adobe (http://www.adobe.com/) | SIL Open Font License 1.1 (`NotoSansCJK-LICENSE.txt`) |
 
 `assets/fonts/*.huifont` are distance-field renderings of these typefaces
 produced by `tools/bake-fonts.sh`; the licence texts ship beside them. The app
-ships exactly these five baked faces: Google Sans Flex Regular, Medium and Bold
+ships exactly these six baked faces: Google Sans Flex Regular, Medium and Bold
 (`fonts.regular`, `fonts.semibold`, `fonts.display`), whose missing Cyrillic and
 Greek letters are taken from Inter Regular, Medium and SemiBold, DejaVu
 Sans Mono (`fonts.mono`), and Noto Sans CJK (`noto-sans-cjk.huifont`), which
-every other face falls back on for Chinese, Japanese and Korean characters.
+every other face falls back on for Chinese, Japanese and Korean characters,
+and DejaVu Sans (`dejavu-sans-arabic.huifont`), the next fallback, for Arabic,
+Persian, Urdu and Hebrew.
 
 The baker uses [stb_truetype](https://github.com/nothings/stb)
 (`third_party/stb/stb_truetype.h`, public domain or MIT) and the host snapshot

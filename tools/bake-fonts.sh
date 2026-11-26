@@ -39,4 +39,10 @@ FONTS
 # holds; 28 pixels is what lets them share one 4096 atlas.
 "$root/build/host/bake_font" "$root/third_party/fonts/NotoSansCJKsc-Regular-Subset.ttf" \
     "$root/assets/fonts/noto-sans-cjk.huifont" 28 4 4096 all 2>/dev/null
+# Arabic, Persian, Urdu and Hebrew: one more face behind every face above,
+# from DejaVu Sans cut down to those blocks (tools/subset-arabic-font.py).
+# It holds the presentation forms (each letter's initial, medial, final and
+# isolated shape) that src/gfx/bidi.cpp swaps in, since nothing shapes text.
+"$root/build/host/bake_font" "$root/third_party/fonts/DejaVuSans-Arabic-Subset.ttf" \
+    "$root/assets/fonts/dejavu-sans-arabic.huifont" 48 6 1024 all 2>/dev/null
 cp "$root"/third_party/fonts/*-LICENSE.txt "$root/assets/fonts/"
