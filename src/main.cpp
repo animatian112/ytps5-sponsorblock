@@ -350,6 +350,15 @@ int main()
         for (gfx::Font *face : {&regular, &semibold, &display_font, &mono})
             face->add_fallback(&cjk, cjk_ref.texture);
     }
+    // Arabic, Persian, Urdu and Hebrew (#5, #6): drawn from their presentation
+    // forms, which gfx/bidi.cpp picks and puts in display order. Under 1 MB.
+    gfx::Font arabic;
+    ui::FontRef arabic_ref;
+    if (load_font(renderer, "dejavu-sans-arabic.huifont", &arabic, &arabic_ref))
+    {
+        for (gfx::Font *face : {&regular, &semibold, &display_font, &mono})
+            face->add_fallback(&arabic, arabic_ref.texture);
+    }
 
     ps5::Pad pad;
     pad.open();
