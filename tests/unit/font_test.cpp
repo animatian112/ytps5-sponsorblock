@@ -234,6 +234,56 @@ TEST(Font, WrapsAtWordsAndNewlines)
     EXPECT_EQ(lines.back(), "Next");
 }
 
+// The Arabic face src/main.cpp hangs behind every other face (#5, #6):
+// Arabic titles were rows of question marks, and would have been backwards
+// and unjoined with a font alone.
+TEST(Font, TheArabicFaceDrawsArabicTitlesJoinedAndRightToLeft)
+{
+    std::string data;
+    ASSERT_TRUE(
+        hui::save::read_file(HUI_SOURCE_DIR "/assets/fonts/dejavu-sans-arabic.huifont", &data));
+    Font arabic;
+    ASSERT_TRUE(arabic.load(data)) << arabic.error();
+
+    Font font = inter();
+    EXPECT_FALSE(font.has_glyph(0x0645)); // م
+    font.add_fallback(&arabic, 7);
+    // Every letter, each joining form, the lam-alef ligatures, the
+    // Arabic-Indic digits and Hebrew.
+    for (std::uint32_t c = 0x0621; c <= 0x063A; ++c)
+        EXPECT_TRUE(font.has_glyph(c)) << std::hex << c;
+    for (std::uint32_t c = 0xFE80; c <= 0xFEFC; ++c)
+        EXPECT_TRUE(font.has_glyph(c)) << std::hex << c;
+    for (std::uint32_t c = 0x0660; c <= 0x0669; ++c)
+        EXPECT_TRUE(font.has_glyph(c)) << std::hex << c;
+    EXPECT_TRUE(font.has_glyph(0x05D0)); // א
+
+    // مرحبا (#6): five letters, five glyphs from the Arabic atlas, none '?'.
+    const std::string hello = "\xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7";
+    std::vector<GlyphQuad> quads;
+    const float width = font.layout(hello, 0.0f, 0.0f, 32.0f, Align::left, quads);
+    ASSERT_EQ(quads.size(), 5u);
+    for (const GlyphQuad &q : quads)
+        EXPECT_EQ(q.texture, 7u);
+    EXPECT_FLOAT_EQ(width, font.measure(hello, 32));
+    // Joined letters are narrower than the same letters standing apart.
+    const std::string apart = "\xD9\x85 \xD8\xB1 \xD8\xAD \xD8\xA8 \xD8\xA7";
+    EXPECT_LT(width, font.measure(apart, 32) - font.measure("    ", 32) + 0.5f);
+
+    // A Latin title with Arabic in it: Latin from the face, Arabic from the
+    // fallback, and wrapping still splits at spaces.
+    const std::string mixed = "Live " + hello + " now";
+    std::vector<GlyphQuad> line;
+    font.layout(mixed, 0.0f, 0.0f, 32.0f, Align::left, line);
+    ASSERT_EQ(line.size(), 4u + 5u + 3u);
+    EXPECT_EQ(line.front().texture, 0u);
+    EXPECT_EQ(line[4].texture, 7u);
+    EXPECT_EQ(line.back().texture, 0u);
+    const auto lines = font.wrap(mixed + " " + hello, 32, font.measure(hello, 32) + 1.0f);
+    ASSERT_GE(lines.size(), 3u);
+    EXPECT_EQ(lines[1], hello);
+}
+
 TEST(Font, BreaksAWordWiderThanTheLine)
 {
     const Font &font = inter();

@@ -288,6 +288,15 @@ int main(int argc, char **argv)
         for (hui::gfx::Font *face : {&regular, &semibold, &display, &mono})
             face->add_fallback(&cjk, cjk_ref.texture);
     }
+    // Arabic, Persian, Urdu and Hebrew (#5, #6): drawn from their presentation
+    // forms, which gfx/bidi.cpp picks and puts in display order. Under 1 MB.
+    hui::gfx::Font arabic;
+    hui::ui::FontRef arabic_ref;
+    if (load_font(renderer, assets + "/fonts/dejavu-sans-arabic.huifont", &arabic, &arabic_ref))
+    {
+        for (hui::gfx::Font *face : {&regular, &semibold, &display, &mono})
+            face->add_fallback(&arabic, arabic_ref.texture);
+    }
 
     const std::string data_root = output + "/.data";
     hui::save::ensure_directory(output);

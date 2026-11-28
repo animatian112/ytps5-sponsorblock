@@ -4,6 +4,7 @@
 
 #include "gfx/font.hpp"
 
+#include "gfx/bidi.hpp"
 #include "gfx/emoji.hpp"
 
 #include <algorithm>
@@ -212,6 +213,14 @@ float Font::measure(std::string_view text, float size, float tracking) const
 
 float Font::measure_raw(std::string_view text, float size, float tracking) const
 {
+    // Arabic letters change shape (and width) with their place in a word,
+    // so a line is measured as it will be drawn.
+    std::string visual;
+    return measure_visual(visual_line(text, &visual), size, tracking);
+}
+
+float Font::measure_visual(std::string_view text, float size, float tracking) const
+{
     float width = 0.0f;
     std::uint32_t previous = 0;
     const Font *previous_face = nullptr;
@@ -249,8 +258,11 @@ float Font::measure_raw(std::string_view text, float size, float tracking) const
 float Font::layout(std::string_view text, float x, float y, float size, Align align,
                    std::vector<GlyphQuad> &quads, float tracking) const
 {
-    text = shown_text(text);
-    const float width = measure_raw(text, size, tracking);
+    // Right-to-left runs are reversed and Arabic shaped (gfx/bidi.hpp); the
+    // glyphs below then go left to right as for any other line.
+    std::string visual;
+    text = visual_line(shown_text(text), &visual);
+    const float width = measure_visual(text, size, tracking);
     float pen = x;
     if (align == Align::center)
         pen -= width * 0.5f;
