@@ -51,6 +51,20 @@ The app checks for a newer release on startup and can download and install it it
 | Square | Pin the sidebar open; on the login screen: new code |
 | Options | Quit |
 
+### Media remote
+
+A PlayStation Media Remote, or a TV remote over HDMI Device Link, drives the app on its own — no controller needs to be paired.
+
+| Key | Action |
+| --- | --- |
+| Arrows | Navigate |
+| OK | Confirm (follows the Confirm/Back swap in Settings) |
+| Back | Back / leave the player |
+| Play / Pause / Play-pause | Start or stop playback, wherever the focus is |
+| Rewind / Fast-forward | Skip by the player's seek step; press again to go further |
+
+The remaining keys (the digits, the colour keys, subtitle, audio and the rest) do nothing yet.
+
 In the sidebar, Up/Down moves between Home, Subscriptions and Settings, and X opens the section.
 
 On a channel page, Left/Right switches between the tabs the channel offers.

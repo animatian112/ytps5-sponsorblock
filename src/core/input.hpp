@@ -30,8 +30,17 @@ constexpr std::uint32_t kCircle = 0x00002000;
 constexpr std::uint32_t kCross = 0x00004000;
 constexpr std::uint32_t kSquare = 0x00008000;
 constexpr std::uint32_t kTouchpad = 0x00100000;
+// Synthesised by the platform layer: the media remote's play/pause key sends a
+// key code and no button bit. See remote_key_bits.
+constexpr std::uint32_t kPlayPause = 0x40000000;
 constexpr std::uint32_t kIntercepted = 0x80000000;
 } // namespace pad_bits
+
+// A media remote's key code (sample offset 0x6c) as pad button bits; 0 for a
+// code this app does not use, and for 0, which it sends with no key down.
+std::uint32_t remote_key_bits(std::uint8_t key);
+// A sample carrying kIntercepted is the system's only while it has the screen.
+bool remote_input_is_ours(std::uint32_t raw_buttons, bool system_has_screen);
 
 struct PadSample
 {
@@ -65,6 +74,7 @@ enum class Action : std::uint8_t
     touch,     // touchpad click
     l3,
     r3,
+    play_pause, // the media remote's play/pause key; no controller sends it
     count,
 };
 

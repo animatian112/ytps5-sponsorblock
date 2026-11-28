@@ -1046,6 +1046,17 @@ void PlayerScreen::update(const InputFrame &input, float dt, ui::Feedback &feedb
     }
     update_captions();
 
+    // A transport key, so unlike X it does not depend on which button the
+    // controls have highlighted, or on the controls being up at all.
+    if (input.is_pressed(Action::play_pause) && player_ != nullptr)
+    {
+        if (ended_)
+            player_->seek(0.0);
+        player_->set_paused(ended_ ? false : !player_->paused());
+        chrome_.show();
+        feedback.play(audio::Cue::select);
+    }
+
     bool back_used = false;
     // Shorts: a tall video with the controls away is a vertical feed, Down
     // the next Short and Up the one before (the controls come with X or
