@@ -141,4 +141,101 @@ TEST(Input, AnalogTriggersMapToJumps)
     EXPECT_EQ(actions & hui::action_bit(Action::jump_prev), 0u);
 }
 
+// ---- The media remote ----
+//
+// Its keys are not in the button word: each is a key code in a byte of its own,
+// which hui::remote_key_bits turns into pad bits before anything else sees it.
+
+TEST(Input, RemoteKeyCodesMapToPadBits)
+{
+    EXPECT_EQ(hui::remote_key_bits(13), bits::kCross);  // OK
+    EXPECT_EQ(hui::remote_key_bits(15), bits::kCircle); // back
+    EXPECT_EQ(hui::remote_key_bits(22), bits::kPlayPause);
+    EXPECT_EQ(hui::remote_key_bits(26), bits::kPlayPause);
+    EXPECT_EQ(hui::remote_key_bits(45), bits::kPlayPause);
+    EXPECT_EQ(hui::remote_key_bits(23), bits::kL1); // rewind
+    EXPECT_EQ(hui::remote_key_bits(24), bits::kR1); // fast forward
+}
+
+TEST(Input, UnmappedRemoteKeysAreIgnored)
+{
+    // 0 is what the remote sends while no key is down.
+    EXPECT_EQ(hui::remote_key_bits(0), 0u);
+    const unsigned unmapped[] = {1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,  14, 16,
+                                 17, 18, 19, 20, 21, 25, 27, 28, 29, 30, 31, 32,  33, 34,
+                                 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 200, 255};
+    for (unsigned key : unmapped)
+        EXPECT_EQ(hui::remote_key_bits(static_cast<std::uint8_t>(key)), 0u) << "key " << key;
+}
+
+TEST(Input, RemoteKeysNeverClaimToBeIntercepted)
+{
+    for (unsigned key = 0; key <= 255; ++key)
+    {
+        const auto decoded = hui::remote_key_bits(static_cast<std::uint8_t>(key));
+        EXPECT_EQ(decoded & bits::kIntercepted, 0u) << "key " << key;
+    }
+    EXPECT_EQ(bits::kPlayPause & bits::kIntercepted, 0u);
+    EXPECT_LT(static_cast<unsigned>(Action::count), 32u);
+}
+
+TEST(Input, RemoteOkFollowsSwapConfirm)
+{
+    const PadSample ok = sample(hui::remote_key_bits(13));
+    EXPECT_NE(InputTracker::map_buttons(ok, false) & hui::action_bit(Action::confirm), 0u);
+    EXPECT_NE(InputTracker::map_buttons(ok, true) & hui::action_bit(Action::back), 0u);
+}
+
+TEST(Input, PlayPauseBitBecomesItsOwnAction)
+{
+    const auto actions = InputTracker::map_buttons(sample(bits::kPlayPause), false);
+    EXPECT_EQ(actions, hui::action_bit(Action::play_pause));
+}
+
+TEST(Input, RemoteRewindAndForwardSeek)
+{
+    EXPECT_EQ(InputTracker::map_buttons(sample(hui::remote_key_bits(23)), false),
+              hui::action_bit(Action::page_prev));
+    EXPECT_EQ(InputTracker::map_buttons(sample(hui::remote_key_bits(24)), false),
+              hui::action_bit(Action::page_next));
+}
+
+TEST(Input, RemotePlayPausePressesAndReleases)
+{
+    InputTracker tracker;
+    const std::vector<PadSample> held = {sample(bits::kPlayPause)};
+    auto frame = tracker.update(held, 0);
+    EXPECT_TRUE(frame.is_pressed(Action::play_pause));
+    EXPECT_TRUE(frame.is_held(Action::play_pause));
+    EXPECT_EQ(frame.nav, Direction::none);
+    // A level that does not change is not a second press.
+    frame = tracker.update(held, 1000);
+    EXPECT_FALSE(frame.is_pressed(Action::play_pause));
+    EXPECT_TRUE(frame.is_held(Action::play_pause));
+    const std::vector<PadSample> up = {sample(0)};
+    frame = tracker.update(up, 2000);
+    EXPECT_NE(frame.released & hui::action_bit(Action::play_pause), 0u);
+    EXPECT_FALSE(frame.is_held(Action::play_pause));
+}
+
+TEST(Input, RemotePlayPauseTapInsideOneFrame)
+{
+    // What Pad::read sends when a key was pressed and let go between frames.
+    InputTracker tracker;
+    const std::vector<PadSample> tap = {sample(0), sample(bits::kPlayPause), sample(0)};
+    const auto frame = tracker.update(tap, 0);
+    EXPECT_TRUE(frame.is_pressed(Action::play_pause));
+    EXPECT_FALSE(frame.is_held(Action::play_pause));
+    EXPECT_NE(frame.released & hui::action_bit(Action::play_pause), 0u);
+}
+
+TEST(Input, RemoteInputIsOursUnlessSystemHasScreen)
+{
+    EXPECT_TRUE(hui::remote_input_is_ours(bits::kCross, false));
+    EXPECT_TRUE(hui::remote_input_is_ours(bits::kCross, true));
+    // Intercepted is the system's only while the system has the screen.
+    EXPECT_TRUE(hui::remote_input_is_ours(bits::kIntercepted | bits::kCross, false));
+    EXPECT_FALSE(hui::remote_input_is_ours(bits::kIntercepted | bits::kCross, true));
+}
+
 } // namespace

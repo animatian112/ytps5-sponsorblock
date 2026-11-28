@@ -126,6 +126,8 @@ class Font
     // missing.
     Resolved resolve(std::uint32_t *codepoint) const;
     float measure_raw(std::string_view text, float size, float tracking = 0.0f) const;
+    // measure_raw for text already in display order (gfx/bidi.hpp).
+    float measure_visual(std::string_view text, float size, float tracking = 0.0f) const;
 
     font_format::Header header_{};
     std::vector<font_format::Glyph> glyphs_;

@@ -51,6 +51,20 @@ The app checks for a newer release on startup and can download and install it it
 | Square | Pin the sidebar open; on the login screen: new code |
 | Options | Quit |
 
+### Media remote
+
+A PlayStation Media Remote, or a TV remote over HDMI Device Link, drives the app on its own — no controller needs to be paired.
+
+| Key | Action |
+| --- | --- |
+| Arrows | Navigate |
+| OK | Confirm (follows the Confirm/Back swap in Settings) |
+| Back | Back / leave the player |
+| Play / Pause / Play-pause | Start or stop playback, wherever the focus is |
+| Rewind / Fast-forward | Skip by the player's seek step; press again to go further |
+
+The remaining keys (the digits, the colour keys, subtitle, audio and the rest) do nothing yet.
+
 In the sidebar, Up/Down moves between Home, Subscriptions and Settings, and X opens the section.
 
 On a channel page, Left/Right switches between the tabs the channel offers.
@@ -77,7 +91,7 @@ While the app is running you can read it over FTP at `/mnt/sandbox/PPSA99350_000
 
 **No device code on the login screen.** The TV client ID may be outdated. The app normally reads a current one at sign-in and only falls back to a built-in value.
 
-**Question marks instead of letters.** The built-in fonts cover Latin, Greek, Cyrillic, Chinese, Japanese and Korean (about 13,000 everyday characters). Other scripts, such as Arabic and Thai, aren't supported yet.
+**Question marks instead of letters.** The built-in fonts cover Latin, Greek, Cyrillic, Chinese, Japanese and Korean (about 13,000 everyday characters), Arabic, Persian, Urdu and Hebrew. Arabic letters join and right-to-left text reads right to left, but it is still left-aligned, and vowel marks sit at a fixed height. Other scripts, such as Thai, aren't supported yet.
 
 **Empty home feed.** Without an account, YouTube often returns no recommendations. Sign in to get your feed.
 
